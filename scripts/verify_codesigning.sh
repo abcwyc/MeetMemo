@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Verify Code Signing Setup for Meetingnotes
+# Verify Code Signing Setup for MeetMemo
 # This script checks if your Apple Developer credentials are properly configured
 
 set -e
@@ -76,10 +76,10 @@ echo ""
 
 # Check entitlements file
 echo "🔍 Entitlements File:"
-if [ -f "meetingnotes/meetingnotes.entitlements" ]; then
-    echo "   ✅ meetingnotes.entitlements found"
+if [ -f "MeetMemo/MeetMemo.entitlements" ]; then
+    echo "   ✅ MeetMemo.entitlements found"
 else
-    echo "   ❌ meetingnotes.entitlements not found"
+    echo "   ❌ MeetMemo.entitlements not found"
 fi
 
 echo ""

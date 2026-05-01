@@ -29,7 +29,7 @@ class AudioManager: NSObject, ObservableObject {
     private var processTap: ProcessTap?
     private let audioProcessController = AudioProcessController()
     private let permission = AudioRecordingPermission()
-    private let tapQueue = DispatchQueue(label: "io.meetingnotes.audiotap", qos: .userInitiated)
+    private let tapQueue = DispatchQueue(label: "io.meetmemo.audiotap", qos: .userInitiated)
     private var isTapActive = false
     private var isRestartingSystemTap = false
 

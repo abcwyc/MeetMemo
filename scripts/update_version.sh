@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# Version Update Script for Meetingnotes
+# Version Update Script for MeetMemo
 # Usage: ./update_version.sh [major|minor|patch|build] [custom_version]
 
 set -e
 
-PROJECT_FILE="Meetingnotes.xcodeproj/project.pbxproj"
+PROJECT_FILE="MeetMemo.xcodeproj/project.pbxproj"
 CURRENT_MARKETING_VERSION=$(grep -m1 "MARKETING_VERSION" "$PROJECT_FILE" | sed 's/.*= \(.*\);/\1/')
 CURRENT_BUILD_VERSION=$(grep -m1 "CURRENT_PROJECT_VERSION" "$PROJECT_FILE" | sed 's/.*= \(.*\);/\1/')
 

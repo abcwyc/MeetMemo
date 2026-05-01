@@ -1,15 +1,15 @@
 //
-//  meetingnotesApp.swift
-//  meetingnotes
+//  MeetMemoApp.swift
+//  MeetMemo
 //
-//  Created by Owen Gretzinger on 2025-07-10.
+//  Created for MeetMemo on 2025-07-10.
 //
 
 import SwiftUI
 import PostHog
 
 @main
-struct MeetingnotesApp: App {
+struct MeetMemoApp: App {
     @StateObject private var appearanceMgr = AppearanceManager.shared
 
     init() {

@@ -1,4 +1,4 @@
-# Contributing to Meetingnotes
+# Contributing to MeetMemo
 
 I anticipate the main users of this app to be technical, given the need to bring your own API key.
 

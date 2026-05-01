@@ -370,155 +370,10 @@ struct MeetingDetailContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            detailHeader
 
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    TextField(langMgr.t("会议标题", "Meeting Title"), text: $viewModel.meeting.title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .textFieldStyle(.plain)
-
-                    Spacer()
-
-                    Menu {
-                        Button(langMgr.t("删除会议", "Delete Meeting"), role: .destructive) {
-                            showDeleteAlert = true
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 12, height: 12)
-                            .foregroundColor(.secondary)
-                    }
-                    .labelStyle(.iconOnly)
-                    .menuIndicator(.hidden)
-                    .menuStyle(BorderlessButtonMenuStyle())
-                    .frame(width: 20, height: 20)
-                }
-                .padding(.bottom, 10)
-
-                HStack {
-                    Picker("", selection: $viewModel.selectedTab) {
-                        ForEach(MeetingViewTab.allCases, id: \.self) { tab in
-                            Text(langMgr.t(tab.chineseLabel, tab.rawValue)).tag(tab)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 260)
-
-                    Spacer()
-
-                    HStack(spacing: 8) {
-                        Menu {
-                            ForEach(viewModel.templates) { template in
-                                Button(template.title) {
-                                    viewModel.selectedTemplateId = template.id
-                                    viewModel.selectedTab = .enhancedNotes
-                                    isEditing = false
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                if viewModel.isGeneratingNotes {
-                                    ProgressView()
-                                        .scaleEffect(0.4)
-                                        .frame(width: 12, height: 12)
-                                } else {
-                                    Image(systemName: "sparkles")
-                                        .font(.caption)
-                                }
-                                Text(langMgr.t("生成", "Generate"))
-                            }
-                            .frame(minWidth: 110, minHeight: 36)
-                            .background(Color.green.opacity(0.1))
-                            .cornerRadius(8)
-                            .overlay(
-                                Group {
-                                    if viewModel.shouldAnimateGenerateButton {
-                                        ShimmerOverlay(color: .green)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    }
-                                }
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(!viewModel.meeting.hasFinalTranscript || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
-                        .help(langMgr.t("使用模板生成增强笔记", "Generate enhanced notes using a template"))
-
-                        Button(action: {
-                            viewModel.toggleRecording()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
-                                    .foregroundColor(viewModel.isRecording ? .red : .accentColor)
-                                Text(viewModel.recordingButtonText)
-                            }
-                            .frame(minWidth: 110, minHeight: 36)
-                            .background(viewModel.isRecording ? Color.red.opacity(0.1) : Color.accentColor.opacity(0.1))
-                            .cornerRadius(8)
-                            .overlay(
-                                Group {
-                                    if viewModel.shouldAnimateTranscribeButton {
-                                        ShimmerOverlay(color: .accentColor)
-                                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    }
-                                }
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(cannotStartRecording || viewModel.isValidatingKey || viewModel.isStartingRecording)
-                        .help(cannotStartRecording
-                            ? langMgr.t("另一个会议正在录制中", "Another meeting is currently being recorded")
-                            : langMgr.t("开始或停止本次会议的录制", "Start or stop recording for this meeting"))
-                    }
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(langMgr.t(viewModel.selectedTab.chineseLabel, viewModel.selectedTab.rawValue))
-                        .font(.headline)
-                        .foregroundColor(.secondary)
-
-                    Spacer()
-
-                    if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
-                        Button(action: {
-                            isEditing.toggle()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: isEditing ? "eye" : "pencil")
-                                Text(isEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"))
-                            }
-                            .frame(minWidth: 75, minHeight: 24)
-                            .font(.caption)
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(6)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    Button(action: {
-                        viewModel.copyCurrentTabContent()
-                        showCopyConfirmation = true
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            showCopyConfirmation = false
-                        }
-                    }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: showCopyConfirmation ? "checkmark.circle.fill" : "doc.on.doc")
-                                .foregroundColor(showCopyConfirmation ? .green : .primary)
-                            Text(showCopyConfirmation ? langMgr.t("已复制！", "Copied!") : langMgr.t("复制", "Copy"))
-                                .foregroundColor(showCopyConfirmation ? .green : .primary)
-                        }
-                        .frame(minWidth: 70, minHeight: 24)
-                        .font(.caption)
-                        .background(showCopyConfirmation ? Color.green.opacity(0.1) : Color.gray.opacity(0.1))
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                }
+                contentToolbar
 
                 switch viewModel.selectedTab {
                 case .context:
@@ -568,6 +423,169 @@ struct MeetingDetailContentView: View {
         }
         .sheet(isPresented: $showAddLinkSheet) {
             addLinkSheet
+        }
+    }
+
+    private var detailHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                TextField(langMgr.t("会议标题", "Meeting Title"), text: $viewModel.meeting.title)
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                    .textFieldStyle(.plain)
+
+                Spacer()
+
+                moreMenu
+            }
+            .padding(.bottom, 10)
+
+            HStack {
+                Picker("", selection: $viewModel.selectedTab) {
+                    ForEach(MeetingViewTab.allCases, id: \.self) { tab in
+                        Text(langMgr.t(tab.chineseLabel, tab.rawValue)).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 260)
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    generateNotesButton
+                    recordingButton
+                }
+            }
+        }
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Button(langMgr.t("删除会议", "Delete Meeting"), role: .destructive) {
+                showDeleteAlert = true
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 12, height: 12)
+                .foregroundColor(.secondary)
+        }
+        .labelStyle(.iconOnly)
+        .menuIndicator(.hidden)
+        .menuStyle(BorderlessButtonMenuStyle())
+        .frame(width: 20, height: 20)
+    }
+
+    private var generateNotesButton: some View {
+        Menu {
+            ForEach(viewModel.templates) { template in
+                Button(template.title) {
+                    viewModel.selectedTemplateId = template.id
+                    viewModel.selectedTab = .enhancedNotes
+                    isEditing = false
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if viewModel.isGeneratingNotes {
+                    ProgressView()
+                        .scaleEffect(0.4)
+                        .frame(width: 12, height: 12)
+                } else {
+                    Image(systemName: "sparkles")
+                        .font(.caption)
+                }
+                Text(langMgr.t("生成", "Generate"))
+            }
+            .frame(minWidth: 110, minHeight: 36)
+            .background(Color.green.opacity(0.1))
+            .cornerRadius(8)
+            .overlay(
+                Group {
+                    if viewModel.shouldAnimateGenerateButton {
+                        ShimmerOverlay(color: .green)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!viewModel.meeting.hasFinalTranscript || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
+        .help(langMgr.t("使用模板生成增强笔记", "Generate enhanced notes using a template"))
+    }
+
+    private var recordingButton: some View {
+        Button {
+            viewModel.toggleRecording()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
+                    .foregroundColor(viewModel.isRecording ? .red : .accentColor)
+                Text(viewModel.recordingButtonText)
+            }
+            .frame(minWidth: 110, minHeight: 36)
+            .background(viewModel.isRecording ? Color.red.opacity(0.1) : Color.accentColor.opacity(0.1))
+            .cornerRadius(8)
+            .overlay(
+                Group {
+                    if viewModel.shouldAnimateTranscribeButton {
+                        ShimmerOverlay(color: .accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(cannotStartRecording || viewModel.isValidatingKey || viewModel.isStartingRecording)
+        .help(cannotStartRecording
+            ? langMgr.t("另一个会议正在录制中", "Another meeting is currently being recorded")
+            : langMgr.t("开始或停止本次会议的录制", "Start or stop recording for this meeting"))
+    }
+
+    private var contentToolbar: some View {
+        HStack(spacing: 8) {
+            Text(langMgr.t(viewModel.selectedTab.chineseLabel, viewModel.selectedTab.rawValue))
+                .font(.headline)
+                .foregroundColor(.secondary)
+
+            Spacer()
+
+            if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
+                Button {
+                    isEditing.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isEditing ? "eye" : "pencil")
+                        Text(isEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"))
+                    }
+                    .frame(minWidth: 75, minHeight: 24)
+                    .font(.caption)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                viewModel.copyCurrentTabContent()
+                showCopyConfirmation = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    showCopyConfirmation = false
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: showCopyConfirmation ? "checkmark.circle.fill" : "doc.on.doc")
+                        .foregroundColor(showCopyConfirmation ? .green : .primary)
+                    Text(showCopyConfirmation ? langMgr.t("已复制！", "Copied!") : langMgr.t("复制", "Copy"))
+                        .foregroundColor(showCopyConfirmation ? .green : .primary)
+                }
+                .frame(minWidth: 70, minHeight: 24)
+                .font(.caption)
+                .background(showCopyConfirmation ? Color.green.opacity(0.1) : Color.gray.opacity(0.1))
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
         }
     }
 

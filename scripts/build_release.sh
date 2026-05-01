@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# Build and Release Script for Meetingnotes
+# Build and Release Script for MeetMemo
 # This script builds the app, creates a DMG, and generates the appcast
 
 set -e  # Exit on any error
 
 # Configuration
-APP_NAME="Meetingnotes"
-BUNDLE_ID="owen.meetingnotes"
-VERSION=$(grep -m1 "MARKETING_VERSION" Meetingnotes.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/')
+APP_NAME="MeetMemo"
+BUNDLE_ID="com.youcai.meetmemo"
+VERSION=$(grep -m1 "MARKETING_VERSION" MeetMemo.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/')
 
 # Source environment variables if .env file exists
 if [ -f ".env" ]; then
@@ -26,7 +26,7 @@ APP_PASSWORD="${APP_PASSWORD:-}"
 
 if [ -z "$VERSION" ]; then
     echo "❌ Could not determine version from project file"
-    echo "   Make sure Meetingnotes.xcodeproj/project.pbxproj exists and contains MARKETING_VERSION"
+    echo "   Make sure MeetMemo.xcodeproj/project.pbxproj exists and contains MARKETING_VERSION"
     exit 1
 fi
 
@@ -81,8 +81,8 @@ ARCHS="arm64 x86_64"
 
 echo "📦 Building universal app (archs: $ARCHS)..."
 xcodebuild \
-  -project Meetingnotes.xcodeproj \
-  -scheme meetingnotes \
+  -project MeetMemo.xcodeproj \
+  -scheme MeetMemo \
   -configuration Release \
   -derivedDataPath "${BUILD_DIR}" \
   -destination 'generic/platform=macOS' \
@@ -153,7 +153,7 @@ echo "🔏 Code signing the main app with hardened runtime..."
 codesign \
   --force \
   --options runtime \
-  --entitlements "meetingnotes/meetingnotes.entitlements" \
+  --entitlements "MeetMemo/MeetMemo.entitlements" \
   --sign "$DEVELOPER_ID" \
   --timestamp \
   "$APP_PATH"
@@ -284,7 +284,7 @@ find "$RELEASES_DIR" -maxdepth 2 -type f -name "*.delta" -exec cp {} "$APPCAST_W
 echo "[DEBUG] Appcast workdir contents:"
 ls -la "$APPCAST_WORK"
 echo "[DEBUG] Running generate_appcast..."
-/opt/homebrew/Caskroom/sparkle/2.7.1/bin/generate_appcast "$APPCAST_WORK" \
+/opt/homebrew/Caskroom/sparkle/2.9.1/bin/generate_appcast "$APPCAST_WORK" \
     -o "appcast.xml" 2>&1 | tee "$BUILD_DIR/generate_appcast.log"
 
 if grep -q "Could not unarchive" "$BUILD_DIR/generate_appcast.log"; then
@@ -295,8 +295,8 @@ fi
 
 echo "🔧 Fixing download URLs in appcast.xml..."
 # Fix ZIP/DMG URLs to include version folder
-# Transform "https://github.com/.../download/Meetingnotes-1.0.3.zip" to "https://github.com/.../download/v1.0.3/Meetingnotes-1.0.3.zip"
-sed -i '' -E 's|url="([^"]*/download/)(Meetingnotes-([0-9]+\.[0-9]+\.[0-9]+)\.(zip\|dmg))"|url="\1v\3/\2"|g' appcast.xml
+# Transform "https://github.com/.../download/MeetMemo-1.0.3.zip" to "https://github.com/.../download/v1.0.3/MeetMemo-1.0.3.zip"
+sed -i '' -E 's|url="([^"]*/download/)(MeetMemo-([0-9]+\.[0-9]+\.[0-9]+)\.(zip\|dmg))"|url="\1v\3/\2"|g' appcast.xml
 
 # Fix delta URLs - they need to be in the version folder of the release they belong to
 # We'll need to parse the appcast to figure out which version each delta belongs to
@@ -327,7 +327,7 @@ for item in root.findall('.//item'):
                     # Extract just the filename
                     filename = url.split('/')[-1]
                     # Set the correct URL with version folder
-                    new_url = f'https://github.com/owengretzinger/meetingnotes/releases/download/v{version}/{filename}'
+                    new_url = f'https://github.com/abcwyc/MeetMemo/releases/download/v{version}/{filename}'
                     enclosure.set('url', new_url)
 
         # Fix the main enclosure URL (ZIP/DMG) to point to the GitHub release asset
@@ -336,7 +336,7 @@ for item in root.findall('.//item'):
             url = main_enclosure.get('url')
             if url:
                 filename = url.split('/')[-1]
-                new_url = f'https://github.com/owengretzinger/meetingnotes/releases/download/v{version}/{filename}'
+                new_url = f'https://github.com/abcwyc/MeetMemo/releases/download/v{version}/{filename}'
                 main_enclosure.set('url', new_url)
 
 # Write the fixed appcast
@@ -352,7 +352,7 @@ EOF
 
 echo "🚚 Moving only NEW delta files into version folder..."
 # Get the build number from the project
-BUILD_NUMBER=$(grep -m1 "CURRENT_PROJECT_VERSION" Meetingnotes.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/')
+BUILD_NUMBER=$(grep -m1 "CURRENT_PROJECT_VERSION" MeetMemo.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/')
 if compgen -G "$APPCAST_WORK/${APP_NAME}${BUILD_NUMBER}-"*.delta > /dev/null 2>&1; then
     echo "[DEBUG] Moving new delta files for build $BUILD_NUMBER..."
     mv "$APPCAST_WORK/${APP_NAME}${BUILD_NUMBER}-"*.delta "$VERSION_DIR/" 2>/dev/null || true
@@ -371,7 +371,7 @@ echo "   Version: $VERSION"
 echo "   ZIP: $ZIP_NAME ($(du -h "$ZIP_PATH" | cut -f1))"
 echo "   DMG: $DMG_NAME ($(du -h "$DMG_PATH" | cut -f1))"
 echo "   Location: $VERSION_DIR"
-echo "   Code Signing: ✅ Production (Owen's Developer ID)"
+echo "   Code Signing: ✅ Production (production Developer ID)"
 echo "   Notarization (DMG): ✅ Complete"
 echo ""
 echo "🎉 Production release ready! Next steps:"

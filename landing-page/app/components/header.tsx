@@ -11,10 +11,10 @@ export default function Header() {
         <a href="/" className="flex items-center space-x-2 hover:opacity-80 transition-opacity">
           <img
             src="/logo.svg"
-            alt="Meetingnotes logo"
+            alt="MeetMemo logo"
             className="w-8 h-8"
           />
-          <span className="text-xl font-bold">Meetingnotes</span>
+          <span className="text-xl font-bold">MeetMemo</span>
         </a>
 
         <nav className="hidden md:flex items-center space-x-8">
@@ -25,7 +25,7 @@ export default function Header() {
             Pricing
           </a>
           <a
-            href="https://github.com/owengretzinger/meetingnotes"
+            href="https://github.com/abcwyc/MeetMemo"
             className="text-gray-300 hover:text-white transition-colors"
           >
             GitHub
@@ -39,7 +39,7 @@ export default function Header() {
             className="border-gray-600 text-gray-300 hover:bg-gray-800 bg-transparent"
             asChild
           >
-            <a href="https://github.com/owengretzinger/meetingnotes">
+            <a href="https://github.com/abcwyc/MeetMemo">
               <Github className="w-4 h-4 md:mr-2" />
               <span className="hidden md:inline">Star</span>
             </a>

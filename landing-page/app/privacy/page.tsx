@@ -11,10 +11,10 @@ export default function PrivacyPolicy() {
           <section className="mb-8">
             <h2 className="text-2xl font-semibold mb-4">1. Introduction</h2>
             <p className="text-gray-300 mb-4">
-              Welcome to Meetingnotes ("we," "our," or "us"). This Privacy Policy explains how we collect, use, and protect your information when you use our free, open-source AI meeting notetaker application for macOS.
+              Welcome to MeetMemo ("we," "our," or "us"). This Privacy Policy explains how we collect, use, and protect your information when you use our free, open-source AI meeting notetaker application for macOS.
             </p>
             <p className="text-gray-300 mb-4">
-              Meetingnotes is developed by Owen Gretzinger, an individual developer based in Burlington, Ontario, Canada.
+              MeetMemo is developed by the MeetMemo Team.
             </p>
           </section>
 
@@ -23,7 +23,7 @@ export default function PrivacyPolicy() {
             
             <h3 className="text-xl font-semibold mb-3">2.1 Audio Data</h3>
             <p className="text-gray-300 mb-4">
-              Meetingnotes captures audio from your device's microphone and system audio during meetings. The audio is processed locally for capture and then sent to the transcription and summarization providers you configure in the app.
+              MeetMemo captures audio from your device's microphone and system audio during meetings. The audio is processed locally for capture and then sent to the transcription and summarization providers you configure in the app.
             </p>
             
             <h3 className="text-xl font-semibold mb-3">2.2 Meeting Data</h3>
@@ -132,9 +132,9 @@ export default function PrivacyPolicy() {
               If you have any questions about this Privacy Policy, please contact us at:
             </p>
             <p className="text-gray-300 mb-4">
-              Owen Gretzinger<br />
+              MeetMemo Team<br />
               Burlington, Ontario, Canada<br />
-              Email: <a href="mailto:owengretzinger@gmail.com" className="text-blue-400 hover:text-blue-300">owengretzinger@gmail.com</a>
+              Email: <a href="mailto:abcwyc@gmail.com" className="text-blue-400 hover:text-blue-300">abcwyc@gmail.com</a>
             </p>
           </section>
         </div>

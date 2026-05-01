@@ -1,8 +1,8 @@
 //
 //  ContentView.swift
-//  meetingnotes
+//  MeetMemo
 //
-//  Created by Owen Gretzinger on 2025-07-10.
+//  Created for MeetMemo on 2025-07-10.
 //
 
 import SwiftUI

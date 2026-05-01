@@ -12,29 +12,29 @@ export default function Footer() {
             <div className="flex items-center space-x-2 mb-4">
               <img
                 src="/logo.svg"
-                alt="Meetingnotes logo"
+                alt="MeetMemo logo"
                 className="w-8 h-8"
               />
-              <span className="text-xl font-bold">Meetingnotes</span>
+              <span className="text-xl font-bold">MeetMemo</span>
             </div>
             <p className="text-gray-400 mb-4">
               Free Open-Source AI Notetaker for macOS
             </p>
             <div className="flex space-x-4">
               <a
-                href="https://github.com/owengretzinger/meetingnotes"
+                href="https://github.com/abcwyc/MeetMemo"
                 className="text-gray-400 hover:text-white transition-colors"
               >
                 <Github className="w-5 h-5" />
               </a>
               <a
-                href="https://x.com/owengretzinger"
+                href="https://x.com/abcwyc"
                 className="text-gray-400 hover:text-white transition-colors"
               >
                 <Twitter className="w-5 h-5" />
               </a>
               <a
-                href="mailto:owengretzinger@gmail.com"
+                href="mailto:abcwyc@gmail.com"
                 className="text-gray-400 hover:text-white transition-colors"
               >
                 <Mail className="w-5 h-5" />
@@ -77,7 +77,7 @@ export default function Footer() {
             <ul className="space-y-2 text-gray-400">
               <li>
                 <a
-                  href="https://github.com/owengretzinger/meetingnotes"
+                  href="https://github.com/abcwyc/MeetMemo"
                   className="hover:text-white transition-colors"
                 >
                   GitHub Repo
@@ -85,7 +85,7 @@ export default function Footer() {
               </li>
               <li>
                 <a
-                  href="https://github.com/owengretzinger/meetingnotes/blob/main/README.md"
+                  href="https://github.com/abcwyc/MeetMemo/blob/main/README.md"
                   className="hover:text-white transition-colors"
                 >
                   Documentation
@@ -93,7 +93,7 @@ export default function Footer() {
               </li>
               <li>
                 <a
-                  href="https://github.com/owengretzinger/meetingnotes/blob/main/CONTRIBUTING.md"
+                  href="https://github.com/abcwyc/MeetMemo/blob/main/CONTRIBUTING.md"
                   className="hover:text-white transition-colors"
                 >
                   Contribute
@@ -101,7 +101,7 @@ export default function Footer() {
               </li>
               <li>
                 <a
-                  href="https://github.com/owengretzinger/meetingnotes/issues"
+                  href="https://github.com/abcwyc/MeetMemo/issues"
                   className="hover:text-white transition-colors"
                 >
                   Report Issues
@@ -128,7 +128,7 @@ export default function Footer() {
               </li>
               <li>
                 <a
-                  href="https://github.com/owengretzinger/meetingnotes/blob/main/LICENSE"
+                  href="https://github.com/abcwyc/MeetMemo/blob/main/LICENSE"
                   className="hover:text-white transition-colors"
                 >
                   LGPL-3.0 License
@@ -136,7 +136,7 @@ export default function Footer() {
               </li>
               <li>
                 <a
-                  href="mailto:owengretzinger@gmail.com"
+                  href="mailto:abcwyc@gmail.com"
                   className="hover:text-white transition-colors"
                 >
                   Contact
@@ -148,11 +148,11 @@ export default function Footer() {
 
         <div className="border-t border-gray-800 pt-8 flex flex-col items-center space-y-4 md:flex-row md:justify-between md:space-y-0">
           <p className="text-gray-400 text-sm mb-0 text-center">
-            Copyright © Owen Gretzinger {new Date().getFullYear()}. Licensed
+            Copyright © MeetMemo Team {new Date().getFullYear()}. Licensed
             under LGPL-3.0 License. All rights reserved.
           </p>
           <p className="text-gray-400 text-sm text-center">
-            Created by Owen Gretzinger with ❤️ for the community
+            Created for the community
           </p>
         </div>
       </div>

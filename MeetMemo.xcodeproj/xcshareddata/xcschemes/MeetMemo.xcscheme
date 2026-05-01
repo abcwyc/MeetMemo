@@ -17,8 +17,8 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "CC5718172E201D8D0042BA88"
                BuildableName = "MeetMemo.app"
-               BlueprintName = "Meetingnotes"
-               ReferencedContainer = "container:Meetingnotes.xcodeproj">
+               BlueprintName = "MeetMemo"
+               ReferencedContainer = "container:MeetMemo.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -38,7 +38,7 @@
                BlueprintIdentifier = "CC9000062F00000100000001"
                BuildableName = "MeetMemoTests.xctest"
                BlueprintName = "MeetMemoTests"
-               ReferencedContainer = "container:Meetingnotes.xcodeproj">
+               ReferencedContainer = "container:MeetMemo.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -59,8 +59,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "CC5718172E201D8D0042BA88"
             BuildableName = "MeetMemo.app"
-            BlueprintName = "Meetingnotes"
-            ReferencedContainer = "container:Meetingnotes.xcodeproj">
+            BlueprintName = "MeetMemo"
+            ReferencedContainer = "container:MeetMemo.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -76,8 +76,8 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "CC5718172E201D8D0042BA88"
             BuildableName = "MeetMemo.app"
-            BlueprintName = "Meetingnotes"
-            ReferencedContainer = "container:Meetingnotes.xcodeproj">
+            BlueprintName = "MeetMemo"
+            ReferencedContainer = "container:MeetMemo.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

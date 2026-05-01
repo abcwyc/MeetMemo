@@ -103,7 +103,7 @@ export default function Pricing() {
                 <h4 className="text-xl font-bold mb-3 text-yellow-400">Compare to Alternatives</h4>
                 <div className="grid md:grid-cols-4 gap-4 text-sm">
                   <div className="text-center">
-                    <div className="font-semibold text-white">Meetingnotes</div>
+                    <div className="font-semibold text-white">MeetMemo</div>
                     <div className="text-green-400">$0 + API costs</div>
                     <div className="text-gray-400">~$0.20/hour</div>
                   </div>

@@ -7,7 +7,7 @@ export function cn(...inputs: ClassValue[]) {
 
 export function downloadAndNavigate() {
   // Open download URL in a new tab/window (this will trigger the download)
-  window.open('https://github.com/owengretzinger/meetingnotes/releases/latest/download/Meetingnotes.dmg', '_blank')
+  window.open('https://github.com/abcwyc/MeetMemo/releases/latest/download/MeetMemo.dmg', '_blank')
   
   // Navigate to download page
   window.location.href = '/download'

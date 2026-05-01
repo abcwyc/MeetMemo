@@ -4,7 +4,7 @@ This document records the current provider architecture. It replaces the origina
 
 ## Current State
 
-- STT is abstracted behind `STTProvider` in `meetingnotes/Providers/ProviderProtocols.swift`.
+- STT is abstracted behind `STTProvider` in `MeetMemo/Providers/ProviderProtocols.swift`.
 - `AudioManager` receives an `STTProviderFactory` and creates separate provider instances for microphone and system audio.
 - The implemented STT provider is `DoubaoSTTProvider`.
 - LLM calls are abstracted behind `LLMProvider`.
@@ -18,11 +18,11 @@ This document records the current provider architecture. It replaces the origina
 
 Files:
 
-- `meetingnotes/Providers/STTProviderConfig.swift`
-- `meetingnotes/Providers/ProviderProtocols.swift`
-- `meetingnotes/Providers/DoubaoProtocol.swift`
-- `meetingnotes/Providers/DoubaoSTTProvider.swift`
-- `meetingnotes/Managers/AudioManager.swift`
+- `MeetMemo/Providers/STTProviderConfig.swift`
+- `MeetMemo/Providers/ProviderProtocols.swift`
+- `MeetMemo/Providers/DoubaoProtocol.swift`
+- `MeetMemo/Providers/DoubaoSTTProvider.swift`
+- `MeetMemo/Managers/AudioManager.swift`
 
 `DoubaoSTTProvider` connects to `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` with:
 
@@ -37,10 +37,10 @@ Audio is converted to 16 kHz mono PCM before streaming. Transcript callbacks use
 
 Files:
 
-- `meetingnotes/Providers/LLMProviderConfig.swift`
-- `meetingnotes/Providers/LLMClient.swift`
-- `meetingnotes/Providers/ProviderProtocols.swift`
-- `meetingnotes/Services/NotesGenerator.swift`
+- `MeetMemo/Providers/LLMProviderConfig.swift`
+- `MeetMemo/Providers/LLMClient.swift`
+- `MeetMemo/Providers/ProviderProtocols.swift`
+- `MeetMemo/Services/NotesGenerator.swift`
 
 `LLMProviderConfig.defaultBaseURL` is `https://api.anthropic.com`.
 
@@ -65,14 +65,14 @@ The test target is `MeetMemoTests`.
 
 Current provider-related tests include:
 
-- `meetingnotesTests/LLMProviderConfigTests.swift`
-- `meetingnotesTests/MeetingTranscriptFormattingTests.swift`
-- `meetingnotesTests/UtteranceDiffTrackerTests.swift`
+- `MeetMemoTests/LLMProviderConfigTests.swift`
+- `MeetMemoTests/MeetingTranscriptFormattingTests.swift`
+- `MeetMemoTests/UtteranceDiffTrackerTests.swift`
 
 Useful command:
 
 ```bash
-xcodebuild test -project Meetingnotes.xcodeproj -scheme meetingnotes -configuration Debug -destination 'platform=macOS,arch=arm64'
+xcodebuild test -project MeetMemo.xcodeproj -scheme MeetMemo -configuration Debug -destination 'platform=macOS,arch=arm64'
 ```
 
 ## Remaining Work

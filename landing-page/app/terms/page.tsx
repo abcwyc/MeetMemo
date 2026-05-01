@@ -11,17 +11,17 @@ export default function TermsOfService() {
           <section className="mb-8">
             <h2 className="text-2xl font-semibold mb-4">1. Acceptance of Terms</h2>
             <p className="text-gray-300 mb-4">
-              By downloading, installing, or using Meetingnotes ("the App"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use the App.
+              By downloading, installing, or using MeetMemo ("the App"), you agree to be bound by these Terms of Service ("Terms"). If you do not agree to these Terms, do not use the App.
             </p>
             <p className="text-gray-300 mb-4">
-              These Terms constitute a legal agreement between you and Owen Gretzinger ("we," "us," or "our"), the developer of Meetingnotes, located in Burlington, Ontario, Canada.
+              These Terms constitute a legal agreement between you and MeetMemo Team ("we," "us," or "our"), the developer of MeetMemo, located in Burlington, Ontario, Canada.
             </p>
           </section>
 
           <section className="mb-8">
             <h2 className="text-2xl font-semibold mb-4">2. Description of Service</h2>
             <p className="text-gray-300 mb-4">
-              Meetingnotes is a free, open-source AI meeting notetaker application for macOS that:
+              MeetMemo is a free, open-source AI meeting notetaker application for macOS that:
             </p>
             <ul className="text-gray-300 mb-4 list-disc list-inside">
               <li>Captures audio from your device's microphone and system audio</li>
@@ -86,7 +86,7 @@ export default function TermsOfService() {
           <section className="mb-8">
             <h2 className="text-2xl font-semibold mb-4">5. Open Source License</h2>
             <p className="text-gray-300 mb-4">
-              Meetingnotes is released under the LGPL-3.0 License. The source code is available on GitHub, and you may inspect, modify, and distribute the code in accordance with the terms of this license.
+              MeetMemo is released under the LGPL-3.0 License. The source code is available on GitHub, and you may inspect, modify, and distribute the code in accordance with the terms of this license.
             </p>
             <p className="text-gray-300 mb-4">
               While the App is open source, these Terms of Service still apply to your use of the compiled application.
@@ -183,16 +183,16 @@ export default function TermsOfService() {
               If you have any questions about these Terms, please contact us at:
             </p>
             <p className="text-gray-300 mb-4">
-              Owen Gretzinger<br />
+              MeetMemo Team<br />
               Burlington, Ontario, Canada<br />
-              Email: <a href="mailto:owengretzinger@gmail.com" className="text-blue-400 hover:text-blue-300">owengretzinger@gmail.com</a>
+              Email: <a href="mailto:abcwyc@gmail.com" className="text-blue-400 hover:text-blue-300">abcwyc@gmail.com</a>
             </p>
           </section>
 
           <section className="mb-8">
             <h2 className="text-2xl font-semibold mb-4">15. Acknowledgment</h2>
             <p className="text-gray-300 mb-4">
-              By using Meetingnotes, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.
+              By using MeetMemo, you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.
             </p>
           </section>
         </div>

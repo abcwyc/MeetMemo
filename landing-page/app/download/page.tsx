@@ -16,7 +16,7 @@ import { downloadAndNavigate } from "@/lib/utils";
 function triggerDownload() {
   // Just trigger the download without navigation since we're already on the download page
   window.open(
-    "https://github.com/owengretzinger/meetingnotes/releases/latest/download/Meetingnotes.dmg",
+    "https://github.com/abcwyc/MeetMemo/releases/latest/download/MeetMemo.dmg",
     "_blank"
   );
 }
@@ -50,7 +50,7 @@ export default function DownloadPage() {
                   asChild
                 >
                   <a
-                    href="https://github.com/owengretzinger/meetingnotes"
+                    href="https://github.com/abcwyc/MeetMemo"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -83,7 +83,7 @@ export default function DownloadPage() {
                   asChild
                 >
                   <a
-                    href="https://cal.com/owengretzinger"
+                    href="https://cal.com/abcwyc"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -110,7 +110,7 @@ export default function DownloadPage() {
                   asChild
                 >
                   <a
-                    href="https://github.com/owengretzinger/meetingnotes"
+                    href="https://github.com/abcwyc/MeetMemo"
                     target="_blank"
                     rel="noopener noreferrer"
                   >
@@ -124,7 +124,7 @@ export default function DownloadPage() {
 
           <p className="text-center text-gray-400 text-sm mb-12">
             <a
-              href="https://github.com/owengretzinger/meetingnotes/releases/latest/download/Meetingnotes.dmg"
+              href="https://github.com/abcwyc/MeetMemo/releases/latest/download/MeetMemo.dmg"
               className="text-blue-400 hover:text-blue-300 underline transition-colors"
             >
               Download didn't start automatically?{" "}
@@ -144,7 +144,7 @@ export default function DownloadPage() {
                 asChild
               >
                 <a
-                  href="https://cal.com/owengretzinger"
+                  href="https://cal.com/abcwyc"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -158,7 +158,7 @@ export default function DownloadPage() {
                 className="border-gray-600 text-gray-300 hover:bg-gray-800 bg-transparent"
                 asChild
               >
-                <a href="mailto:owengretzinger@gmail.com">Contact Me</a>
+                <a href="mailto:abcwyc@gmail.com">Contact Me</a>
               </Button>
             </div>
           </div>

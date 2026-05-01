@@ -46,10 +46,10 @@ export default function Community() {
           <h3 className="text-2xl font-bold mb-4">Help Build the Future</h3>
           <p className="text-gray-300 mb-4">
             Add integrations, templates, or custom models! Every contribution
-            makes Meetingnotes better for everyone.
+            makes MeetMemo better for everyone.
           </p>
           {/* <blockquote className="text-lg font-medium text-gray-200 mb-4">
-            "As an open-source project, Meetingnotes is transparent and
+            "As an open-source project, MeetMemo is transparent and
             customizable—perfect for privacy-focused users."
           </blockquote>
           <cite className="text-purple-400 font-semibold">
@@ -63,13 +63,13 @@ export default function Community() {
             className="bg-gray-800 hover:bg-gray-700 border border-gray-600"
             asChild
           >
-            <a href="https://github.com/owengretzinger/meetingnotes">
+            <a href="https://github.com/abcwyc/MeetMemo">
               <Star className="w-5 h-5 mr-2" />
               Star on GitHub
             </a>
           </Button>
           <Button size="lg" className="bg-blue-600 hover:bg-blue-700" asChild>
-            <a href="https://github.com/owengretzinger/meetingnotes/fork">
+            <a href="https://github.com/abcwyc/MeetMemo/fork">
               <GitFork className="w-5 h-5 mr-2" />
               Fork & Contribute
             </a>

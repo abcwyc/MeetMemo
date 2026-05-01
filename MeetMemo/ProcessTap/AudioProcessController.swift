@@ -49,7 +49,7 @@ extension String: @retroactive LocalizedError {
 @Observable
 final class AudioProcessController {
 
-    private let logger = Logger(subsystem: "owen.meetingnotes", category: String(describing: AudioProcessController.self))
+    private let logger = Logger(subsystem: "com.youcai.meetmemo", category: String(describing: AudioProcessController.self))
 
     private(set) var processes = [AudioProcess]() {
         didSet {

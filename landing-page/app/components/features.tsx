@@ -39,7 +39,7 @@ export default function Features() {
         {/* <div className="text-center mb-16">
           <h2 className="text-4xl md:text-5xl font-bold mb-6">Powerful Features, All Free and Open Source</h2>
           <p className="text-xl text-gray-300 max-w-3xl mx-auto">
-            Meetingnotes handles your meeting notes effortlessly, from live transcription to AI-generated summaries.
+            MeetMemo handles your meeting notes effortlessly, from live transcription to AI-generated summaries.
             Customize it to fit your workflow, and contribute to make it even better.
           </p>
         </div> */}
@@ -80,7 +80,7 @@ export default function Features() {
           </p>
           <p className="text-blue-400 text-center font-semibold">
             <a
-              href="https://github.com/owengretzinger/meetingnotes"
+              href="https://github.com/abcwyc/MeetMemo"
               target="_blank"
               className="text-blue-400 hover:text-blue-300 underline transition-colors"
             >

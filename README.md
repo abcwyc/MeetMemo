@@ -2,21 +2,21 @@
   <!-- REMOVE THIS IF YOU DON'T HAVE A LOGO -->
     <img src="https://github.com/user-attachments/assets/309577e8-94db-431f-b8df-a53a763b4c87" alt="Logo" width="80" height="80">
 
-<h3 align="center">Meetingnotes</h3>
+<h3 align="center">MeetMemo</h3>
 
   <p align="center">
     The Free, Open-Source AI Notetaker for Busy Engineers
     <br />
-     <a href="https://github.com/owengretzinger/meetingnotes/releases/latest/download/Meetingnotes.dmg">Download for macOS 15+</a>
+     <a href="https://github.com/abcwyc/MeetMemo/releases/latest/download/MeetMemo.dmg">Download for macOS 15+</a>
   </p>
 </div>
 
 ## Recall.ai - Meeting Transcription API
 
-Meetingnotes runs locally, capturing two streams: system & mic.
+MeetMemo runs locally, capturing two streams: system & mic.
 
 If you’re looking for a transcription API for meetings, consider checking out [Recall.ai](
-https://www.recall.ai?utm_source=github&utm_medium=sponsorship&utm_campaign=owengretzinger+meetingnotes), an API that works with Zoom, Google Meet, Microsoft Teams, and more. Recall.ai diarizes by pulling the speaker data and separate audio streams from the meeting platforms, which means 100% accurate speaker diarization with actual speaker names.
+https://www.recall.ai?utm_source=github&utm_medium=sponsorship&utm_campaign=abcwyc+MeetMemo), an API that works with Zoom, Google Meet, Microsoft Teams, and more. Recall.ai diarizes by pulling the speaker data and separate audio streams from the meeting platforms, which means 100% accurate speaker diarization with actual speaker names.
 
 ## Demo
 
@@ -101,10 +101,10 @@ Follow these steps to create a new release with auto-updates:
 
 3. **Create GitHub Release:**
 
-   - Go to [GitHub Releases](https://github.com/owengretzinger/meetingnotes/releases)
+   - Go to [GitHub Releases](https://github.com/abcwyc/MeetMemo/releases)
    - Click "Create a new release"
    - Tag: `v1.0.1` (match the version number)
-   - Title: `Meetingnotes v1.0.1`
+   - Title: `MeetMemo v1.0.1`
    - Upload the DMG and zip files from `releases/` folder
    - Generate release notes
 
