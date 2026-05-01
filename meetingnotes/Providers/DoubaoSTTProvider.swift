@@ -1,0 +1,485 @@
+import Foundation
+
+final class DoubaoSTTProvider: STTProvider {
+    var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)?
+    var onError: ((String) -> Void)?
+
+    private let endpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
+    private let resourceId = "volc.seedasr.sauc.duration"
+    private let stateLock = NSLock()
+
+    private var session: URLSession?
+    private var socketTask: URLSessionWebSocketTask?
+    private var currentConnectID: String?
+    private var isDisconnecting = false
+    private var didSendFinalAudio = false
+    private var isConnected = false
+    private var nextAudioSequence: Int32 = 2
+
+    /// Tracks seen utterances by (startTime, endTime) to detect changes in full-result mode.
+    /// When result_type is "full", the server sends ALL utterances each time. We diff against
+    /// the last known state so we only emit updates for new or changed utterances.
+    private var utteranceTracker = UtteranceDiffTracker()
+
+    func connect(config: STTProviderConfig) async throws {
+        guard config.isConfigured else {
+            throw ProviderValidationError.missingSTTConfig
+        }
+
+        disconnect()
+
+        let connectID = UUID().uuidString
+        let request = buildRequest(config: config, connectID: connectID)
+        let session = URLSession(configuration: .default)
+        let task = session.webSocketTask(with: request)
+
+        stateLock.lock()
+        self.session = session
+        self.socketTask = task
+        self.currentConnectID = connectID
+        self.isDisconnecting = false
+        self.didSendFinalAudio = false
+        self.isConnected = false
+        self.nextAudioSequence = 2
+        stateLock.unlock()
+
+        task.resume()
+
+        let fullRequest = try buildFullClientRequest()
+        do {
+            try await send(data: fullRequest, on: task)
+        } catch {
+            disconnect()
+            throw error
+        }
+
+        stateLock.lock()
+        if currentConnectID == connectID {
+            isConnected = true
+        }
+        stateLock.unlock()
+
+        receiveNextMessage(on: task, connectID: connectID)
+    }
+
+    func sendAudio(_ pcmData: Data) {
+        sendAudioFrame(pcmData, isLast: false)
+    }
+
+    func sendLastAudio() {
+        sendAudioFrame(Data(), isLast: true)
+    }
+
+    func disconnect() {
+        let task: URLSessionWebSocketTask?
+
+        stateLock.lock()
+        isDisconnecting = true
+        didSendFinalAudio = true
+        isConnected = false
+        task = socketTask
+        socketTask = nil
+        session = nil
+        currentConnectID = nil
+        stateLock.unlock()
+
+        utteranceTracker.reset()
+        task?.cancel(with: .normalClosure, reason: nil)
+    }
+
+    func testConnection(config: STTProviderConfig, timeout: TimeInterval = 5) async throws {
+        guard config.isConfigured else {
+            throw ProviderValidationError.missingSTTConfig
+        }
+
+        let testState = ConnectionTestState()
+        let testProvider = DoubaoSTTProvider()
+        testProvider.onError = { message in
+            Task {
+                await testState.recordError(message)
+            }
+        }
+
+        try await testProvider.connect(config: config)
+        defer { testProvider.disconnect() }
+
+        let pollingInterval: UInt64 = 250_000_000
+        let iterations = max(1, Int(timeout * 1_000_000_000 / Double(pollingInterval)))
+
+        for _ in 0..<iterations {
+            if let message = await testState.errorMessage {
+                throw NSError(domain: "DoubaoSTTProvider", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: message
+                ])
+            }
+
+            try await Task.sleep(nanoseconds: pollingInterval)
+        }
+    }
+
+    private func buildRequest(config: STTProviderConfig, connectID: String) -> URLRequest {
+        var request = URLRequest(url: endpoint)
+        request.addValue(config.appId, forHTTPHeaderField: "X-Api-App-Key")
+        request.addValue(config.accessToken, forHTTPHeaderField: "X-Api-Access-Key")
+        request.addValue(resourceId, forHTTPHeaderField: "X-Api-Resource-Id")
+        request.addValue(connectID, forHTTPHeaderField: "X-Api-Connect-Id")
+        return request
+    }
+
+    private func buildFullClientRequest() throws -> Data {
+        let payload = DoubaoFullClientRequest(
+            user: DoubaoFullClientRequest.User(uid: "user"),
+            audio: DoubaoFullClientRequest.Audio(format: "pcm", rate: 16_000, bits: 16, channel: 1),
+            request: DoubaoFullClientRequest.Request(
+                modelName: "bigmodel",
+                resultType: "full",
+                showUtterances: true,
+                enableItn: true,
+                enablePunc: true,
+                enableNonstream: true,
+                enableSpeakerInfo: true,
+                ssdVersion: "200"
+            )
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = []
+        let jsonData = try encoder.encode(payload)
+        return try DoubaoFrame.encodeFullClientRequest(json: jsonData)
+    }
+
+    private func send(data: Data, on task: URLSessionWebSocketTask) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            task.send(.data(data)) { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: ())
+                }
+            }
+        }
+    }
+
+    private func sendAudioFrame(_ pcmData: Data, isLast: Bool) {
+        let task: URLSessionWebSocketTask?
+        let sequence: Int32
+        let frame: Data
+
+        stateLock.lock()
+        guard !isDisconnecting,
+              !didSendFinalAudio,
+              let socketTask else {
+            stateLock.unlock()
+            return
+        }
+
+        sequence = nextAudioSequence
+        nextAudioSequence &+= 1
+
+        if isLast {
+            didSendFinalAudio = true
+        }
+
+        task = socketTask
+        stateLock.unlock()
+
+        do {
+            frame = try DoubaoFrame.encodeAudioData(pcmData: pcmData, sequence: sequence, isLast: isLast)
+        } catch {
+            DispatchQueue.main.async { [weak self] in
+                self?.onError?(ErrorHandler.shared.handleError(error))
+            }
+            return
+        }
+
+        task?.send(.data(frame)) { [weak self] error in
+            guard let self else { return }
+
+            if let error = error,
+               (error as? URLError)?.code != .cancelled {
+                DispatchQueue.main.async {
+                    self.onError?(ErrorHandler.shared.handleError(error))
+                }
+            }
+        }
+    }
+
+    private func receiveNextMessage(on task: URLSessionWebSocketTask, connectID: String) {
+        task.receive { [weak self] result in
+            guard let self else { return }
+
+            if !self.isCurrentConnection(connectID) {
+                return
+            }
+
+            switch result {
+            case .success(let message):
+                self.handle(message)
+                self.receiveNextMessage(on: task, connectID: connectID)
+
+            case .failure(let error):
+                if (error as? URLError)?.code == .cancelled || self.isDisconnecting {
+                    return
+                }
+
+                DispatchQueue.main.async {
+                    self.onError?(ErrorHandler.shared.handleError(error))
+                }
+            }
+        }
+    }
+
+    private func handle(_ message: URLSessionWebSocketTask.Message) {
+        switch message {
+        case .data(let data):
+            guard let response = DoubaoFrame.decode(data) else { return }
+            switch response.messageType {
+            case .fullServerResponse:
+                handleTranscriptResponse(response)
+            case .errorMessage:
+                handleErrorResponse(response)
+            default:
+                break
+            }
+
+        case .string(let string):
+            let message = Self.normalizeServerMessage(string)
+            DispatchQueue.main.async {
+                self.onError?(message)
+            }
+
+        @unknown default:
+            break
+        }
+    }
+
+    private func handleTranscriptResponse(_ response: DoubaoResponse) {
+        guard let utterances = response.transcript?.result?.utterances, !utterances.isEmpty else {
+            if let text = response.transcript?.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !text.isEmpty {
+                DispatchQueue.main.async {
+                    self.onTranscriptUpdate?(STTTranscriptUpdate(
+                        text: text,
+                        isFinal: true,
+                        speakerTag: nil,
+                        speakerId: nil,
+                        startTime: nil,
+                        endTime: nil,
+                        isCorrection: false
+                    ))
+                }
+            }
+            return
+        }
+
+        let changes = utteranceTracker.diff(utterances)
+
+        for change in changes {
+            switch change {
+            case .new(let utterance), .updated(let utterance):
+                let text = utterance.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+
+                let isCorrection: Bool
+                if case .updated = change {
+                    isCorrection = true
+                } else {
+                    isCorrection = false
+                }
+
+                DispatchQueue.main.async {
+                    self.onTranscriptUpdate?(STTTranscriptUpdate(
+                        text: text,
+                        isFinal: utterance.definite ?? false,
+                        speakerTag: utterance.speakerTag,
+                        speakerId: utterance.speakerId,
+                        startTime: utterance.startTime,
+                        endTime: utterance.endTime,
+                        isCorrection: isCorrection
+                    ))
+                }
+            }
+        }
+    }
+
+    private func handleErrorResponse(_ response: DoubaoResponse) {
+        guard let error = response.error else { return }
+        let message = ErrorHandler.shared.handleDoubaoError(code: Int(error.code), message: error.message)
+        DispatchQueue.main.async {
+            self.onError?(message)
+        }
+    }
+
+    private func isCurrentConnection(_ connectID: String) -> Bool {
+        stateLock.lock()
+        let matches = currentConnectID == connectID && socketTask != nil
+        stateLock.unlock()
+        return matches
+    }
+
+    private static func normalizeServerMessage(_ string: String) -> String {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let json = object as? [String: Any] else {
+            return trimmed
+        }
+
+        if let error = json["error"] {
+            if let errorString = error as? String {
+                return errorString.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            if let errorDict = error as? [String: Any] {
+                if let message = errorDict["message"] as? String {
+                    return message.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+
+                if let detail = errorDict["detail"] as? String {
+                    return detail.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+        }
+
+        if let message = json["message"] as? String {
+            return message.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        return trimmed
+    }
+}
+
+private actor ConnectionTestState {
+    private var errorMessageValue: String?
+
+    func recordError(_ message: String) {
+        errorMessageValue = message
+    }
+
+    var errorMessage: String? {
+        errorMessageValue
+    }
+}
+
+/// Tracks utterances across full-result responses. With result_type="full", the server
+/// sends ALL utterances on every response. This tracker diffs against the previous state
+/// so only new or changed utterances are emitted.
+///
+/// The key for each utterance is (start_time, end_time). When a previously seen utterance
+/// has its text or speaker tag updated (e.g. by the nonstream second-pass or by the
+/// speaker clustering algorithm), it is emitted again as an .updated change.
+struct UtteranceDiffTracker {
+    enum Change {
+        case new(DoubaoUtterance)
+        case updated(DoubaoUtterance)
+    }
+
+    private struct UtteranceSnapshot: Hashable {
+        let text: String
+        let speakerTag: String?
+        let speakerId: Int?
+        let definite: Bool
+    }
+
+    /// Maps (startTime, endTime) → last known snapshot
+    private var seen: [String: UtteranceSnapshot] = [:]
+
+    private static func key(for utterance: DoubaoUtterance) -> String {
+        let start = utterance.startTime ?? -1
+        let end = utterance.endTime ?? -1
+        return "\(start):\(end)"
+    }
+
+    mutating func diff(_ utterances: [DoubaoUtterance]) -> [Change] {
+        var changes: [Change] = []
+        var currentKeys: Set<String> = []
+
+        for utterance in utterances {
+            let k = Self.key(for: utterance)
+            currentKeys.insert(k)
+
+            let snapshot = UtteranceSnapshot(
+                text: utterance.text,
+                speakerTag: utterance.speakerTag,
+                speakerId: utterance.speakerId,
+                definite: utterance.definite ?? false
+            )
+
+            if let prev = seen[k] {
+                if prev != snapshot {
+                    changes.append(.updated(utterance))
+                    seen[k] = snapshot
+                }
+            } else {
+                changes.append(.new(utterance))
+                seen[k] = snapshot
+            }
+        }
+
+        // Prune utterances that disappeared (shouldn't normally happen with "full",
+        // but protects against stale entries)
+        for k in seen.keys where !currentKeys.contains(k) {
+            seen.removeValue(forKey: k)
+        }
+
+        return changes
+    }
+
+    mutating func reset() {
+        seen.removeAll()
+    }
+}
+
+private struct DoubaoFullClientRequest: Encodable {
+    struct User: Encodable {
+        let uid: String
+    }
+
+    struct Audio: Encodable {
+        let format: String
+        let rate: Int
+        let bits: Int
+        let channel: Int
+    }
+
+    struct Request: Encodable {
+        let modelName: String
+        let resultType: String
+        let showUtterances: Bool
+        let enableItn: Bool
+        let enablePunc: Bool
+        let enableNonstream: Bool
+        let enableSpeakerInfo: Bool
+        let ssdVersion: String
+
+        private enum CodingKeys: String, CodingKey {
+            case modelName = "model_name"
+            case resultType = "result_type"
+            case showUtterances = "show_utterances"
+            case enableItn = "enable_itn"
+            case enablePunc = "enable_punc"
+            case enableNonstream = "enable_nonstream"
+            case enableSpeakerInfo = "enable_speaker_info"
+            case ssdVersion = "ssd_version"
+        }
+    }
+
+    let user: User
+    let audio: Audio
+    let request: Request
+}
+
+struct STTTranscriptUpdate {
+    let text: String
+    let isFinal: Bool
+    let speakerTag: String?
+    let speakerId: Int?
+    let startTime: Int?
+    let endTime: Int?
+    /// When true, this update corrects a previously emitted final chunk (e.g. speaker tag
+    /// or text was revised by the second-pass or clustering algorithm). The receiver should
+    /// replace the existing chunk matching (source, startTime, endTime) rather than append.
+    let isCorrection: Bool
+}

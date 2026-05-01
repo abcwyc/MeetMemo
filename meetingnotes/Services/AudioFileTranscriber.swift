@@ -1,0 +1,299 @@
+@preconcurrency import AVFoundation
+import Foundation
+
+struct AudioFileTranscriptionResult {
+    let chunks: [TranscriptChunk]
+}
+
+final class AudioFileTranscriber {
+    static let shared = AudioFileTranscriber()
+
+    private let sttProviderFactory: STTProviderFactory
+
+    private init(sttProviderFactory: STTProviderFactory = DoubaoSTTProviderFactory()) {
+        self.sttProviderFactory = sttProviderFactory
+    }
+
+    func transcribe(url: URL) async throws -> AudioFileTranscriptionResult {
+        let validationResult = await APIKeyValidator.shared.validateSTTConfig(APIKeyValidator.shared.currentSTTConfig())
+        switch validationResult {
+        case .success:
+            break
+        case .failure(let error):
+            throw error
+        }
+
+        let state = AudioFileTranscriptionState()
+        let provider = sttProviderFactory.makeProvider()
+
+        provider.onTranscriptUpdate = { update in
+            Task {
+                await state.apply(update, source: .mic)
+            }
+        }
+
+        provider.onError = { message in
+            Task {
+                await state.recordError(message, isTransportError: Self.isSocketTransportError(message))
+            }
+        }
+
+        try await provider.connect(config: APIKeyValidator.shared.currentSTTConfig())
+        defer {
+            provider.disconnect()
+        }
+
+        try await streamAudioFile(url, to: provider, state: state)
+        await state.beginFinalizing()
+        provider.sendLastAudio()
+        try await waitForFinalTranscript(state: state)
+
+        let chunks = await state.finalChunks()
+        guard !chunks.isEmpty else {
+            throw AudioFileTranscriberError.noTranscript
+        }
+
+        return AudioFileTranscriptionResult(chunks: chunks)
+    }
+
+    private func streamAudioFile(_ url: URL, to provider: STTProvider, state: AudioFileTranscriptionState) async throws {
+        let file = try AVAudioFile(forReading: url)
+        let sourceFormat = file.processingFormat
+
+        guard let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 16_000,
+            channels: 1,
+            interleaved: false
+        ) else {
+            throw AudioFileTranscriberError.unsupportedAudioFormat
+        }
+
+        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
+            throw AudioFileTranscriberError.unsupportedAudioFormat
+        }
+
+        let chunkDuration: TimeInterval = 0.1
+        let readCapacity = AVAudioFrameCount(max(1, sourceFormat.sampleRate * chunkDuration))
+
+        while file.framePosition < file.length {
+            try Task.checkCancellation()
+            if let error = await state.errorMessage {
+                throw AudioFileTranscriberError.providerError(error)
+            }
+
+            let remainingFrames = AVAudioFrameCount(file.length - file.framePosition)
+            let framesToRead = min(readCapacity, remainingFrames)
+
+            guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: framesToRead) else {
+                throw AudioFileTranscriberError.unsupportedAudioFormat
+            }
+
+            try file.read(into: inputBuffer, frameCount: framesToRead)
+            guard inputBuffer.frameLength > 0 else { continue }
+
+            let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
+            let outputCapacity = AVAudioFrameCount(Double(inputBuffer.frameLength) * ratio) + 32
+
+            guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
+                throw AudioFileTranscriberError.unsupportedAudioFormat
+            }
+
+            var didProvideInput = false
+            var conversionError: NSError?
+            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+                if didProvideInput {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+
+                didProvideInput = true
+                outStatus.pointee = .haveData
+                return inputBuffer
+            }
+
+            if let conversionError {
+                throw conversionError
+            }
+
+            guard status == .haveData || status == .inputRanDry || status == .endOfStream else {
+                continue
+            }
+
+            guard let channelData = outputBuffer.int16ChannelData?[0], outputBuffer.frameLength > 0 else {
+                continue
+            }
+
+            let frameCount = Int(outputBuffer.frameLength)
+            let data = Data(bytes: channelData, count: frameCount * MemoryLayout<Int16>.size)
+            provider.sendAudio(data)
+
+            let audioDuration = Double(outputBuffer.frameLength) / targetFormat.sampleRate
+            try await Task.sleep(nanoseconds: UInt64(audioDuration * 1_000_000_000))
+        }
+    }
+
+    private func waitForFinalTranscript(state: AudioFileTranscriptionState) async throws {
+        let start = Date()
+        var lastCount = await state.updateCount
+        var lastChange = Date()
+
+        while Date().timeIntervalSince(start) < 12 {
+            try Task.checkCancellation()
+
+            if let error = await state.errorMessage {
+                throw AudioFileTranscriberError.providerError(error)
+            }
+
+            try await Task.sleep(for: .milliseconds(300))
+
+            let currentCount = await state.updateCount
+            if currentCount != lastCount {
+                lastCount = currentCount
+                lastChange = Date()
+                continue
+            }
+
+            if Date().timeIntervalSince(lastChange) >= 1.8 {
+                break
+            }
+        }
+    }
+
+    private static func isSocketTransportError(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("socket is not connected")
+            || normalized.contains("socket is not open")
+            || normalized.contains("connection lost")
+            || normalized.contains("network connection was lost")
+    }
+}
+
+private actor AudioFileTranscriptionState {
+    private struct InterimTranscriptState {
+        var text: String
+        var speakerTag: String?
+        var speakerId: Int?
+        var startTime: Int?
+        var endTime: Int?
+    }
+
+    private var chunks: [TranscriptChunk] = []
+    private var currentInterim: [AudioSource: InterimTranscriptState] = [:]
+    private var errorMessageValue: String?
+    private var updateCountValue = 0
+    private var isFinalizing = false
+
+    var errorMessage: String? {
+        errorMessageValue
+    }
+
+    var updateCount: Int {
+        updateCountValue
+    }
+
+    func finalChunks() -> [TranscriptChunk] {
+        chunks.filter { $0.isFinal }
+    }
+
+    func beginFinalizing() {
+        isFinalizing = true
+    }
+
+    func recordError(_ message: String, isTransportError: Bool) {
+        if isFinalizing && isTransportError && !chunks.isEmpty {
+            return
+        }
+
+        errorMessageValue = message
+    }
+
+    func apply(_ update: STTTranscriptUpdate, source: AudioSource) {
+        updateCountValue += 1
+
+        let inheritedState = currentInterim[source]
+        let resolvedUpdate = STTTranscriptUpdate(
+            text: update.text,
+            isFinal: update.isFinal,
+            speakerTag: update.speakerTag ?? inheritedState?.speakerTag,
+            speakerId: update.speakerId ?? inheritedState?.speakerId,
+            startTime: update.startTime ?? inheritedState?.startTime,
+            endTime: update.endTime ?? inheritedState?.endTime,
+            isCorrection: update.isCorrection
+        )
+
+        if update.isCorrection {
+            if let idx = chunks.lastIndex(where: {
+                $0.source == source && $0.isFinal &&
+                $0.startTime == resolvedUpdate.startTime &&
+                $0.endTime == resolvedUpdate.endTime
+            }) {
+                chunks[idx] = TranscriptChunk(
+                    id: chunks[idx].id,
+                    timestamp: chunks[idx].timestamp,
+                    source: source,
+                    text: resolvedUpdate.text,
+                    isFinal: true,
+                    speakerTag: resolvedUpdate.speakerTag,
+                    speakerId: resolvedUpdate.speakerId,
+                    startTime: resolvedUpdate.startTime,
+                    endTime: resolvedUpdate.endTime
+                )
+                chunks.removeAll { !$0.isFinal && $0.source == source }
+            }
+            return
+        }
+
+        if update.isFinal {
+            chunks.removeAll { !$0.isFinal && $0.source == source }
+            chunks.append(TranscriptChunk(
+                timestamp: Date(),
+                source: source,
+                text: resolvedUpdate.text,
+                isFinal: true,
+                speakerTag: resolvedUpdate.speakerTag,
+                speakerId: resolvedUpdate.speakerId,
+                startTime: resolvedUpdate.startTime,
+                endTime: resolvedUpdate.endTime
+            ))
+            currentInterim.removeValue(forKey: source)
+        } else {
+            currentInterim[source] = InterimTranscriptState(
+                text: resolvedUpdate.text,
+                speakerTag: resolvedUpdate.speakerTag,
+                speakerId: resolvedUpdate.speakerId,
+                startTime: resolvedUpdate.startTime,
+                endTime: resolvedUpdate.endTime
+            )
+
+            chunks.removeAll { !$0.isFinal && $0.source == source }
+            chunks.append(TranscriptChunk(
+                timestamp: Date(),
+                source: source,
+                text: resolvedUpdate.text,
+                isFinal: false,
+                speakerTag: resolvedUpdate.speakerTag,
+                speakerId: resolvedUpdate.speakerId,
+                startTime: resolvedUpdate.startTime,
+                endTime: resolvedUpdate.endTime
+            ))
+        }
+    }
+}
+
+enum AudioFileTranscriberError: LocalizedError {
+    case unsupportedAudioFormat
+    case noTranscript
+    case providerError(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedAudioFormat:
+            return LanguageManager.shared.t("不支持此音频格式。", "This audio format is not supported.")
+        case .noTranscript:
+            return LanguageManager.shared.t("未能从音频中识别出转录内容。", "No transcript could be recognized from this audio.")
+        case .providerError(let message):
+            return message
+        }
+    }
+}
