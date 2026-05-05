@@ -40,7 +40,7 @@ struct RenderedNotesView: View {
         } else if let level = headingLevel(for: trimmed) {
             let content = String(trimmed.dropFirst(level + 1)).trimmingCharacters(in: .whitespaces)
             Text(inlineMarkdown(content))
-                .font(.system(size: headingSize(for: level), weight: .bold))
+                .font(.system(size: headingSize(for: level), weight: headingWeight(for: level)))
                 .foregroundColor(.primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, level <= 2 ? 4 : 0)
@@ -78,10 +78,18 @@ struct RenderedNotesView: View {
 
     private func headingSize(for level: Int) -> CGFloat {
         switch level {
-        case 1: return 22
-        case 2: return 20
-        case 3: return 17
-        default: return 15
+        case 1: return 18
+        case 2: return 16
+        case 3: return 15
+        default: return 14
+        }
+    }
+
+    private func headingWeight(for level: Int) -> Font.Weight {
+        switch level {
+        case 1: return .semibold
+        case 2: return .semibold
+        default: return .medium
         }
     }
 

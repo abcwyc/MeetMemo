@@ -53,35 +53,27 @@ struct MeetingListView: View {
 
     private var sidebarContent: some View {
         VStack(spacing: 0) {
+            sidebarActionRow
+                .padding(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                 TextField(langMgr.t("搜索会议...", "Search meetings..."), text: $viewModel.searchText)
                     .textFieldStyle(.plain)
             }
-            .padding(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+            .padding(EdgeInsets(top: 2, leading: 12, bottom: 10, trailing: 12))
 
             Divider()
 
-            Spacer().frame(height: 12)
-
             List(selection: $selectedMeeting) {
-                ForEach(groupedMeetings, id: \.day) { dayGroup in
-                    Section {
-                        ForEach(dayGroup.meetings, id: \.id) { meeting in
-                            meetingRow(meeting)
-                        }
-                        .onDelete { indexSet in
-                            deleteMeetings(at: indexSet, in: dayGroup)
-                        }
-                    } header: {
-                        Text(dayGroup.day)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.primary)
-                    }
+                ForEach(sortedMeetings, id: \.id) { meeting in
+                    meetingRow(meeting)
                 }
+                .onDelete(perform: deleteMeetings)
             }
+            .contentMargins(.top, 12, for: .scrollContent)
+            .tint(.accentColor)
             .overlay {
                 if viewModel.filteredMeetings.isEmpty && !viewModel.isLoading {
                     ContentUnavailableView(
@@ -113,6 +105,45 @@ struct MeetingListView: View {
         }
     }
 
+    private var sidebarActionRow: some View {
+        HStack(spacing: 4) {
+            Button {
+                createAndSelectMeeting()
+            } label: {
+                Label(langMgr.t("创建会议", "Create Meeting"), systemImage: "plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(SidebarPrimaryActionButtonStyle())
+            .controlSize(.large)
+            .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
+            .help(recordingSessionManager.isRecording
+                ? langMgr.t("录制中无法创建新会议", "Cannot create new meeting while recording is active")
+                : langMgr.t("新建会议", "New Meeting"))
+
+            Button {
+                isImportingAudioFile = true
+            } label: {
+                Label(langMgr.t("导入", "Import"), systemImage: "arrow.down.to.line")
+            }
+            .buttonStyle(SidebarSecondaryActionButtonStyle())
+            .controlSize(.large)
+            .frame(width: 96)
+            .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
+            .help(recordingSessionManager.isRecording
+                ? langMgr.t("录制中无法导入音频", "Cannot import audio while recording is active")
+                : langMgr.t("导入音频并转录", "Import audio and transcribe it"))
+        }
+        .padding(4)
+        .background {
+            Capsule(style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.32), lineWidth: 1)
+                }
+        }
+    }
+
     private var detailContent: some View {
         NavigationStack(path: $navigationPath) {
             Group {
@@ -120,6 +151,9 @@ struct MeetingListView: View {
                     MeetingDetailContentView(
                         meeting: selectedMeeting.placeholderMeeting,
                         initialSelectedTab: selectedMeeting.hasGeneratedNotes ? .enhancedNotes : .transcript,
+                        onOpenSettings: {
+                            navigationPath.append("settings")
+                        },
                         onDelete: {
                             self.selectedMeeting = nil
                         }
@@ -135,35 +169,15 @@ struct MeetingListView: View {
             }
             .navigationTitle("")
             .toolbar {
-                ToolbarItemGroup(placement: .navigation) {
-                    Button {
-                        createAndSelectMeeting()
-                    } label: {
-                        Label(langMgr.t("创建", "Create"), systemImage: "plus")
-                    }
-                    .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
-                    .help(recordingSessionManager.isRecording
-                        ? langMgr.t("录制中无法创建新会议", "Cannot create new meeting while recording is active")
-                        : langMgr.t("新建会议", "New Meeting"))
-
-                    Button {
-                        isImportingAudioFile = true
-                    } label: {
-                        Label(langMgr.t("导入", "Import"), systemImage: "arrow.down.to.line")
-                    }
-                    .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
-                    .help(recordingSessionManager.isRecording
-                        ? langMgr.t("录制中无法导入音频", "Cannot import audio while recording is active")
-                        : langMgr.t("导入音频并转录", "Import audio and transcribe it"))
-                }
-
                 ToolbarItemGroup(placement: .primaryAction) {
-                    Button {
-                        navigationPath.append("settings")
-                    } label: {
-                        Image(systemName: "gearshape")
+                    if selectedMeeting == nil {
+                        Button {
+                            navigationPath.append("settings")
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .help(langMgr.t("设置", "Settings"))
                     }
-                    .help(langMgr.t("设置", "Settings"))
                 }
             }
             .navigationDestination(for: String.self) { path in
@@ -176,29 +190,8 @@ struct MeetingListView: View {
         }
     }
 
-    private var groupedMeetings: [DayGroup] {
-        let calendar = Calendar.current
-        let now = Date()
-
-        let grouped = Dictionary(grouping: viewModel.filteredMeetings) { meeting in
-            calendar.startOfDay(for: meeting.date)
-        }
-
-        return grouped.map { (date, meetings) in
-            let dayString: String
-
-            if calendar.isDateInToday(date) {
-                dayString = langMgr.t("今天", "Today")
-            } else if calendar.isDateInYesterday(date) {
-                dayString = langMgr.t("昨天", "Yesterday")
-            } else if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
-                dayString = date.formatted(.dateTime.weekday(.wide))
-            } else {
-                dayString = date.formatted(.dateTime.weekday(.wide).month(.abbreviated).day())
-            }
-
-            return DayGroup(day: dayString, date: date, meetings: meetings.sorted { $0.date > $1.date })
-        }.sorted { $0.date > $1.date }
+    private var sortedMeetings: [MeetingSummary] {
+        viewModel.filteredMeetings.sorted { $0.date > $1.date }
     }
 
     private func meetingRow(_ meeting: MeetingSummary) -> some View {
@@ -222,9 +215,9 @@ struct MeetingListView: View {
         }
     }
 
-    private func deleteMeetings(at indexSet: IndexSet, in dayGroup: DayGroup) {
+    private func deleteMeetings(at indexSet: IndexSet) {
         for index in indexSet {
-            deleteMeeting(dayGroup.meetings[index])
+            deleteMeeting(sortedMeetings[index])
         }
     }
 
@@ -248,10 +241,131 @@ struct MeetingListView: View {
     }
 }
 
-struct DayGroup {
-    let day: String
-    let date: Date
-    let meetings: [MeetingSummary]
+private struct SidebarPrimaryActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        SidebarPrimaryActionButtonBody(configuration: configuration, isEnabled: isEnabled)
+    }
+}
+
+private struct SidebarPrimaryActionButtonBody: View {
+    let configuration: SidebarPrimaryActionButtonStyle.Configuration
+    let isEnabled: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(isEnabled ? .white : .secondary)
+            .padding(.horizontal, 14)
+            .frame(height: 30)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(backgroundColor)
+                    .overlay {
+                        Capsule(style: .continuous)
+                            .stroke(borderColor, lineWidth: 1)
+                    }
+            }
+            .contentShape(Capsule(style: .continuous))
+            .onHover { isHovering = $0 }
+    }
+
+    private var backgroundColor: Color {
+        if !isEnabled {
+            return Color.secondary.opacity(0.14)
+        }
+
+        if configuration.isPressed {
+            return Color.accentColor.opacity(0.78)
+        }
+
+        return Color.accentColor.opacity(isHovering ? 0.88 : 1)
+    }
+
+    private var borderColor: Color {
+        isHovering && isEnabled ? Color.white.opacity(0.26) : Color.clear
+    }
+}
+
+private struct SidebarSecondaryActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        SidebarSecondaryActionButtonBody(configuration: configuration, isEnabled: isEnabled)
+    }
+}
+
+private struct SidebarSecondaryActionButtonBody: View {
+    let configuration: SidebarSecondaryActionButtonStyle.Configuration
+    let isEnabled: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(isEnabled ? .primary : .secondary)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(backgroundColor)
+            }
+            .contentShape(Capsule(style: .continuous))
+            .onHover { isHovering = $0 }
+    }
+
+    private var backgroundColor: Color {
+        if !isEnabled {
+            return Color.secondary.opacity(0.08)
+        }
+
+        if configuration.isPressed {
+            return Color.secondary.opacity(0.18)
+        }
+
+        return Color.secondary.opacity(isHovering ? 0.12 : 0)
+    }
+}
+
+private struct DetailHeaderActionButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    var isConfirmed = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(foregroundColor)
+            .labelStyle(.titleAndIcon)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(backgroundColor(isPressed: configuration.isPressed))
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+    }
+
+    private var foregroundColor: Color {
+        if !isEnabled {
+            return .secondary
+        }
+
+        return isConfirmed ? .green : .primary
+    }
+
+    private func backgroundColor(isPressed: Bool) -> Color {
+        if !isEnabled {
+            return Color.secondary.opacity(0.06)
+        }
+
+        if isConfirmed {
+            return Color.green.opacity(isPressed ? 0.16 : 0.1)
+        }
+
+        return Color.secondary.opacity(isPressed ? 0.14 : 0.08)
+    }
 }
 
 struct MeetingRowView: View {
@@ -274,7 +388,7 @@ struct MeetingRowView: View {
                     .lineLimit(1)
             }
             HStack {
-                Text(meeting.date, style: .time)
+                Text(timestampText)
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Spacer()
@@ -294,6 +408,13 @@ struct MeetingRowView: View {
                 Label(langMgr.t("删除", "Delete"), systemImage: "trash")
             }
         }
+    }
+
+    private var timestampText: String {
+        let locale = langMgr.language == .chinese ? Locale(identifier: "zh_CN") : Locale(identifier: "en_US")
+        let datePart = meeting.date.formatted(.dateTime.locale(locale).month(.abbreviated).day())
+        let timePart = meeting.date.formatted(.dateTime.locale(locale).hour().minute())
+        return "\(datePart) · \(timePart)"
     }
 }
 
@@ -353,14 +474,22 @@ struct MeetingDetailContentView: View {
     @State private var showDeleteAlert = false
     @State private var isEditing = false
     @State private var showCopyConfirmation = false
-    @State private var showAddLinkSheet = false
-    @State private var linkURLText = ""
-    @State private var linkContextText = ""
     @State private var isImportingContextFile = false
+    @State private var hoveredTab: MeetingViewTab?
+    @State private var isSettingsButtonHovered = false
+    @State private var isGenerateButtonHovered = false
+    @State private var isRecordingButtonHovered = false
+    let onOpenSettings: () -> Void
     let onDelete: () -> Void
 
-    init(meeting: Meeting, initialSelectedTab: MeetingViewTab? = nil, onDelete: @escaping () -> Void) {
+    init(
+        meeting: Meeting,
+        initialSelectedTab: MeetingViewTab? = nil,
+        onOpenSettings: @escaping () -> Void,
+        onDelete: @escaping () -> Void
+    ) {
         self._viewModel = StateObject(wrappedValue: MeetingViewModel(meeting: meeting, initialSelectedTab: initialSelectedTab))
+        self.onOpenSettings = onOpenSettings
         self.onDelete = onDelete
     }
 
@@ -369,24 +498,25 @@ struct MeetingDetailContentView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            detailHeader
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 25) {
+                detailHeader
 
-            VStack(alignment: .leading, spacing: 8) {
-                contentToolbar
-
-                switch viewModel.selectedTab {
-                case .context:
-                    contextView
-                case .transcript:
-                    transcriptView
-                case .enhancedNotes:
-                    enhancedNotesView
+                VStack(alignment: .leading, spacing: 0) {
+                    switch viewModel.selectedTab {
+                    case .context:
+                        contextView
+                    case .transcript:
+                        transcriptView
+                    case .enhancedNotes:
+                        enhancedNotesView
+                    }
                 }
+                .frame(maxHeight: .infinity)
             }
+            .padding(EdgeInsets(top: 12, leading: 16, bottom: 16, trailing: 16))
             .frame(maxHeight: .infinity)
         }
-        .padding()
         .overlay {
             if viewModel.isLoadingMeeting {
                 ProgressView(langMgr.t("加载会议内容中...", "Loading meeting..."))
@@ -421,42 +551,212 @@ struct MeetingDetailContentView: View {
         ) { result in
             importContextFile(result)
         }
-        .sheet(isPresented: $showAddLinkSheet) {
-            addLinkSheet
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                detailActionButtons
+            }
+
+            ToolbarItemGroup(placement: .primaryAction) {
+                HStack(spacing: 10) {
+                    detailTabBar
+
+                    Button {
+                        onOpenSettings()
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .frame(width: 34, height: 34)
+                            .background {
+                                Circle()
+                                    .fill(settingsButtonBackgroundColor)
+                                    .overlay {
+                                        Circle()
+                                            .stroke(settingsButtonBorderColor, lineWidth: 1)
+                                    }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { isSettingsButtonHovered = $0 }
+                    .help(langMgr.t("设置", "Settings"))
+                }
+                .fixedSize()
+            }
         }
+    }
+
+    private var detailActionButtons: some View {
+        HStack(spacing: 4) {
+            recordingButton
+            generateNotesButton
+        }
+        .padding(4)
+        .background {
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(.separator.opacity(0.32), lineWidth: 1)
+                }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var detailTabBar: some View {
+        HStack(spacing: 3) {
+            ForEach(MeetingViewTab.displayOrder, id: \.self) { tab in
+                Button {
+                    viewModel.selectedTab = tab
+                } label: {
+                    Text(langMgr.t(tab.chineseLabel, tab.rawValue))
+                        .font(.system(size: 13, weight: viewModel.selectedTab == tab ? .semibold : .medium))
+                        .foregroundColor(viewModel.selectedTab == tab ? .primary : .secondary)
+                        .lineLimit(1)
+                        .frame(width: 86, height: 30)
+                        .background {
+                            if viewModel.selectedTab == tab || hoveredTab == tab {
+                                Capsule(style: .continuous)
+                                    .fill(tabButtonBackgroundColor(for: tab))
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .onHover { isHovering in
+                    hoveredTab = isHovering ? tab : (hoveredTab == tab ? nil : hoveredTab)
+                }
+            }
+        }
+        .padding(4)
+        .background {
+            Capsule(style: .continuous)
+                .fill(.ultraThinMaterial)
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(.separator.opacity(0.32), lineWidth: 1)
+                }
+        }
+        .fixedSize()
+    }
+
+    private var settingsButtonBackgroundColor: Color {
+        isSettingsButtonHovered ? Color.secondary.opacity(0.16) : Color.secondary.opacity(0.08)
+    }
+
+    private var settingsButtonBorderColor: Color {
+        isSettingsButtonHovered ? Color.secondary.opacity(0.22) : Color(nsColor: .separatorColor).opacity(0.32)
+    }
+
+    private func tabButtonBackgroundColor(for tab: MeetingViewTab) -> Color {
+        if viewModel.selectedTab == tab {
+            return Color.secondary.opacity(0.18)
+        }
+
+        return Color.secondary.opacity(0.10)
     }
 
     private var detailHeader: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(alignment: .center, spacing: 12) {
                 TextField(langMgr.t("会议标题", "Meeting Title"), text: $viewModel.meeting.title)
                     .font(.title2)
                     .fontWeight(.semibold)
                     .textFieldStyle(.plain)
+                    .frame(minWidth: 180)
 
                 Spacer()
 
+                titleActionButtons
                 moreMenu
             }
-            .padding(.bottom, 10)
-
-            HStack {
-                Picker("", selection: $viewModel.selectedTab) {
-                    ForEach(MeetingViewTab.allCases, id: \.self) { tab in
-                        Text(langMgr.t(tab.chineseLabel, tab.rawValue)).tag(tab)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 260)
-
-                Spacer()
-
-                HStack(spacing: 8) {
-                    generateNotesButton
-                    recordingButton
-                }
-            }
         }
+    }
+
+    private var meetingStatusLine: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(statusIndicatorColor)
+                    .frame(width: 7, height: 7)
+
+                Text(statusText(now: timeline.date))
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundColor(statusTextColor)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var statusIndicatorColor: Color {
+        if viewModel.isRecording || viewModel.isStartingRecording {
+            return .red
+        }
+
+        if viewModel.isGeneratingNotes {
+            return .accentColor
+        }
+
+        if viewModel.hasGeneratedNotes {
+            return .green
+        }
+
+        return .secondary.opacity(0.55)
+    }
+
+    private var statusTextColor: Color {
+        viewModel.errorMessage == nil ? .secondary : .red
+    }
+
+    private func statusText(now: Date) -> String {
+        if let error = viewModel.errorMessage {
+            return langMgr.t("出现错误：", "Error: ") + error
+        }
+
+        if viewModel.isStartingRecording || viewModel.isValidatingKey {
+            return langMgr.t("正在检查转录配置...", "Checking transcription settings...")
+        }
+
+        if viewModel.isRecording {
+            let elapsed = formattedElapsedTime(since: viewModel.recordingStartedAt, now: now)
+            return langMgr.t(
+                "正在录制 \(elapsed) · 已转写 \(viewModel.transcriptCharacterCount) 字",
+                "Recording \(elapsed) · \(viewModel.transcriptCharacterCount) characters transcribed"
+            )
+        }
+
+        if viewModel.isGeneratingNotes {
+            return langMgr.t("正在生成会议纪要...", "Generating meeting notes...")
+        }
+
+        if viewModel.hasGeneratedNotes {
+            return langMgr.t("会议纪要已生成，可编辑或重新生成", "Meeting notes generated. You can edit or regenerate them.")
+        }
+
+        if viewModel.meeting.hasFinalTranscript {
+            return langMgr.t("转录已就绪，可以生成会议纪要", "Transcript is ready. You can generate meeting notes.")
+        }
+
+        if viewModel.meeting.transcriptChunks.isEmpty {
+            return langMgr.t("尚未开始录制", "Recording has not started yet.")
+        }
+
+        return langMgr.t("暂无完整转录，继续录制后再生成纪要", "No final transcript yet. Resume recording before generating notes.")
+    }
+
+    private func formattedElapsedTime(since startDate: Date?, now: Date) -> String {
+        guard let startDate else { return "00:00" }
+
+        let elapsedSeconds = max(0, Int(now.timeIntervalSince(startDate)))
+        let hours = elapsedSeconds / 3600
+        let minutes = (elapsedSeconds % 3600) / 60
+        let seconds = elapsedSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+
+        return String(format: "%02d:%02d", minutes, seconds)
     }
 
     private var moreMenu: some View {
@@ -477,115 +777,223 @@ struct MeetingDetailContentView: View {
         .frame(width: 20, height: 20)
     }
 
-    private var generateNotesButton: some View {
-        Menu {
-            ForEach(viewModel.templates) { template in
-                Button(template.title) {
-                    viewModel.selectedTemplateId = template.id
-                    viewModel.selectedTab = .enhancedNotes
-                    isEditing = false
-                }
-            }
-        } label: {
-            HStack(spacing: 4) {
-                if viewModel.isGeneratingNotes {
-                    ProgressView()
-                        .scaleEffect(0.4)
-                        .frame(width: 12, height: 12)
-                } else {
-                    Image(systemName: "sparkles")
-                        .font(.caption)
-                }
-                Text(langMgr.t("生成", "Generate"))
-            }
-            .frame(minWidth: 110, minHeight: 36)
-            .background(Color.green.opacity(0.1))
-            .cornerRadius(8)
-            .overlay(
-                Group {
-                    if viewModel.shouldAnimateGenerateButton {
-                        ShimmerOverlay(color: .green)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(!viewModel.meeting.hasFinalTranscript || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
-        .help(langMgr.t("使用模板生成增强笔记", "Generate enhanced notes using a template"))
-    }
-
-    private var recordingButton: some View {
-        Button {
-            viewModel.toggleRecording()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
-                    .foregroundColor(viewModel.isRecording ? .red : .accentColor)
-                Text(viewModel.recordingButtonText)
-            }
-            .frame(minWidth: 110, minHeight: 36)
-            .background(viewModel.isRecording ? Color.red.opacity(0.1) : Color.accentColor.opacity(0.1))
-            .cornerRadius(8)
-            .overlay(
-                Group {
-                    if viewModel.shouldAnimateTranscribeButton {
-                        ShimmerOverlay(color: .accentColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                }
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(cannotStartRecording || viewModel.isValidatingKey || viewModel.isStartingRecording)
-        .help(cannotStartRecording
-            ? langMgr.t("另一个会议正在录制中", "Another meeting is currently being recorded")
-            : langMgr.t("开始或停止本次会议的录制", "Start or stop recording for this meeting"))
-    }
-
-    private var contentToolbar: some View {
+    private var titleActionButtons: some View {
         HStack(spacing: 8) {
-            Text(langMgr.t(viewModel.selectedTab.chineseLabel, viewModel.selectedTab.rawValue))
-                .font(.headline)
-                .foregroundColor(.secondary)
-
-            Spacer()
-
             if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
                 Button {
                     isEditing.toggle()
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: isEditing ? "eye" : "pencil")
-                        Text(isEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"))
-                    }
-                    .frame(minWidth: 75, minHeight: 24)
-                    .font(.caption)
-                    .background(Color.gray.opacity(0.1))
-                    .cornerRadius(6)
+                    Label(
+                        isEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"),
+                        systemImage: isEditing ? "eye" : "pencil"
+                    )
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(DetailHeaderActionButtonStyle())
+            }
+
+            if viewModel.selectedTab == .context && isEditing {
+                Button {
+                    viewModel.addTextContextItem()
+                } label: {
+                    Label(langMgr.t("添加文本", "Add Text"), systemImage: "text.alignleft")
+                }
+                .buttonStyle(DetailHeaderActionButtonStyle())
+
+                Button {
+                    isImportingContextFile = true
+                } label: {
+                    Label(langMgr.t("导入文件", "Import File"), systemImage: "doc.badge.plus")
+                }
+                .buttonStyle(DetailHeaderActionButtonStyle())
             }
 
             Button {
-                viewModel.copyCurrentTabContent()
-                showCopyConfirmation = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    showCopyConfirmation = false
+                copyCurrentTabContent()
+            } label: {
+                Label(
+                    showCopyConfirmation ? langMgr.t("已复制", "Copied") : langMgr.t("复制", "Copy"),
+                    systemImage: showCopyConfirmation ? "checkmark.circle.fill" : "doc.on.doc"
+                )
+            }
+            .buttonStyle(DetailHeaderActionButtonStyle(isConfirmed: showCopyConfirmation))
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var generateNotesButton: some View {
+        Menu {
+            Button {
+                Task {
+                    await generateNotesWithTemplate(viewModel.selectedTemplateId)
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: showCopyConfirmation ? "checkmark.circle.fill" : "doc.on.doc")
-                        .foregroundColor(showCopyConfirmation ? .green : .primary)
-                    Text(showCopyConfirmation ? langMgr.t("已复制！", "Copied!") : langMgr.t("复制", "Copy"))
-                        .foregroundColor(showCopyConfirmation ? .green : .primary)
-                }
-                .frame(minWidth: 70, minHeight: 24)
-                .font(.caption)
-                .background(showCopyConfirmation ? Color.green.opacity(0.1) : Color.gray.opacity(0.1))
-                .cornerRadius(6)
+                Label(
+                    viewModel.hasGeneratedNotes ? langMgr.t("重新生成纪要", "Regenerate Notes") : langMgr.t("按当前模板生成", "Generate with Current Template"),
+                    systemImage: "sparkles"
+                )
             }
-            .buttonStyle(.plain)
+
+            Divider()
+
+            ForEach(viewModel.templates) { template in
+                Button(template.title) {
+                    Task {
+                        await generateNotesWithTemplate(template.id)
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                if viewModel.isGeneratingNotes {
+                    ProgressView()
+                        .scaleEffect(0.4)
+                        .frame(width: 12, height: 12)
+                }
+                Text(generateButtonTitle)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(generateButtonForegroundColor)
+            .frame(minWidth: 106, minHeight: 30)
+            .padding(.horizontal, 12)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(generateButtonBackgroundColor)
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(generateButtonBorderColor, lineWidth: 1)
+            }
+            .overlay(
+                Group {
+                    if viewModel.shouldAnimateGenerateButton {
+                        ShimmerOverlay(color: .green)
+                            .clipShape(Capsule(style: .continuous))
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isGenerateButtonHovered = $0 }
+        .disabled(!viewModel.meeting.hasFinalTranscript || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
+        .help(generateButtonHelp)
+    }
+
+    private var recordingButton: some View {
+        Button {
+            print("🎙️ Recording toolbar button tapped for meeting: \(viewModel.meeting.id)")
+            viewModel.toggleRecording()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: viewModel.recordingButtonIconName)
+                    .foregroundColor(viewModel.isRecording ? .red : .accentColor)
+                Text(viewModel.recordingButtonText)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundColor(recordingButtonForegroundColor)
+            .frame(minWidth: 104, minHeight: 30)
+            .padding(.horizontal, 12)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(recordingButtonBackgroundColor)
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .stroke(recordingButtonBorderColor, lineWidth: 1)
+            }
+            .contentShape(Capsule(style: .continuous))
+            .overlay(
+                Group {
+                    if viewModel.shouldAnimateTranscribeButton {
+                        ShimmerOverlay(color: .accentColor)
+                            .clipShape(Capsule(style: .continuous))
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isRecordingButtonHovered = $0 }
+        .disabled(cannotStartRecording || viewModel.isValidatingKey || viewModel.isStartingRecording)
+        .help(cannotStartRecording
+            ? langMgr.t("另一个会议正在录制中", "Another meeting is currently being recorded")
+            : langMgr.t("开始、继续或结束本次会议的录制", "Start, resume, or end recording for this meeting"))
+    }
+
+    private var generateButtonTitle: String {
+        if viewModel.isGeneratingNotes {
+            return langMgr.t("生成中", "Generating")
+        }
+
+        return viewModel.hasGeneratedNotes ? langMgr.t("重新生成纪要", "Regenerate Notes") : langMgr.t("生成纪要", "Generate Notes")
+    }
+
+    private var generateButtonHelp: String {
+        if viewModel.isRecording || viewModel.isStartingRecording {
+            return langMgr.t("录制结束后可以生成会议纪要", "End recording before generating notes")
+        }
+
+        if !viewModel.meeting.hasFinalTranscript {
+            return langMgr.t("需要完整转录后才能生成会议纪要", "A final transcript is required before generating notes")
+        }
+
+        return langMgr.t("使用模板生成或重新生成会议纪要", "Generate or regenerate meeting notes using a template")
+    }
+
+    private var generateButtonForegroundColor: Color {
+        viewModel.meeting.hasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording ? .green : .secondary
+    }
+
+    private var generateButtonBackgroundColor: Color {
+        if viewModel.meeting.hasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
+            return Color.green.opacity(isGenerateButtonHovered ? 0.24 : 0.18)
+        }
+
+        return Color.secondary.opacity(isGenerateButtonHovered ? 0.14 : 0.08)
+    }
+
+    private var generateButtonBorderColor: Color {
+        if viewModel.meeting.hasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
+            return Color.green.opacity(isGenerateButtonHovered ? 0.42 : 0.3)
+        }
+
+        return isGenerateButtonHovered ? Color.secondary.opacity(0.18) : Color.clear
+    }
+
+    private var recordingButtonForegroundColor: Color {
+        viewModel.isRecording ? .red : .accentColor
+    }
+
+    private var recordingButtonBackgroundColor: Color {
+        if viewModel.isRecording {
+            return Color.red.opacity(isRecordingButtonHovered ? 0.22 : 0.16)
+        }
+
+        return Color.accentColor.opacity(isRecordingButtonHovered ? 0.22 : 0.16)
+    }
+
+    private var recordingButtonBorderColor: Color {
+        if viewModel.isRecording {
+            return Color.red.opacity(isRecordingButtonHovered ? 0.42 : 0.3)
+        }
+
+        return Color.accentColor.opacity(isRecordingButtonHovered ? 0.38 : 0.26)
+    }
+
+    private func generateNotesWithTemplate(_ templateId: UUID?) async {
+        viewModel.selectedTab = .enhancedNotes
+        isEditing = false
+
+        if viewModel.selectedTemplateId == templateId {
+            await viewModel.generateNotes()
+        } else {
+            viewModel.selectedTemplateId = templateId
+        }
+    }
+
+    private func copyCurrentTabContent() {
+        viewModel.copyCurrentTabContent()
+        showCopyConfirmation = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            showCopyConfirmation = false
         }
     }
 
@@ -595,32 +1003,6 @@ struct MeetingDetailContentView: View {
         VStack(alignment: .leading, spacing: 0) {
             if isEditing {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 8) {
-                        Button {
-                            viewModel.addTextContextItem()
-                        } label: {
-                            Label(langMgr.t("添加文本", "Add Text"), systemImage: "text.alignleft")
-                        }
-
-                        Button {
-                            linkURLText = ""
-                            linkContextText = ""
-                            showAddLinkSheet = true
-                        } label: {
-                            Label(langMgr.t("添加链接", "Add Link"), systemImage: "link")
-                        }
-
-                        Button {
-                            isImportingContextFile = true
-                        } label: {
-                            Label(langMgr.t("导入文件", "Import File"), systemImage: "doc.badge.plus")
-                        }
-
-                        Spacer()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-
                     if viewModel.meeting.contextItems.isEmpty {
                         Text(langMgr.t("添加会议议程、背景材料、客户信息或你的补充判断。", "Add an agenda, background material, customer details, or your own notes."))
                             .foregroundColor(.secondary)
@@ -634,12 +1016,7 @@ struct MeetingDetailContentView: View {
                                 ForEach(viewModel.meeting.contextItems) { item in
                                     ContextEditorCard(
                                         item: contextItemBinding(for: item),
-                                        onDelete: { viewModel.deleteContextItem(item) },
-                                        onRefresh: {
-                                            if let currentItem = viewModel.meeting.contextItems.first(where: { $0.id == item.id }) {
-                                                viewModel.refreshLinkContextItem(currentItem)
-                                            }
-                                        }
+                                        onDelete: { viewModel.deleteContextItem(item) }
                                     )
                                 }
                             }
@@ -661,8 +1038,7 @@ struct MeetingDetailContentView: View {
                     .cornerRadius(8)
                 } else {
                     ContextPreviewList(
-                        items: viewModel.meeting.contextItems,
-                        onRefresh: { viewModel.refreshLinkContextItem($0) }
+                        items: viewModel.meeting.contextItems
                     )
                         .font(.body)
                         .background(Color.gray.opacity(0.05))
@@ -671,39 +1047,6 @@ struct MeetingDetailContentView: View {
                 }
             }
         }
-    }
-
-    private var addLinkSheet: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(langMgr.t("添加链接上下文", "Add Link Context"))
-                .font(.headline)
-
-            TextField("https://example.com", text: $linkURLText)
-                .textFieldStyle(.roundedBorder)
-
-            IMESafeTextEditor(text: $linkContextText, minHeight: 120)
-                .frame(minHeight: 120)
-                .background(Color.gray.opacity(0.06))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                )
-
-            HStack {
-                Spacer()
-                Button(langMgr.t("取消", "Cancel")) {
-                    showAddLinkSheet = false
-                }
-                Button(langMgr.t("添加", "Add")) {
-                    viewModel.addLinkContextItem(urlString: linkURLText, notes: linkContextText)
-                    showAddLinkSheet = false
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
     }
 
     private func importContextFile(_ result: Result<[URL], Error>) {
@@ -775,7 +1118,6 @@ private struct ContextEditorCard: View {
     @EnvironmentObject var langMgr: LanguageManager
     @Binding var item: MeetingContextItem
     let onDelete: () -> Void
-    let onRefresh: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -792,15 +1134,6 @@ private struct ContextEditorCard: View {
                     .font(.headline)
 
                 Spacer()
-
-                if item.kind == .link {
-                    Button(action: onRefresh) {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(item.extractionStatus == .extracting)
-                    .help(langMgr.t("重新读取链接", "Read link again"))
-                }
 
                 Button(role: .destructive, action: onDelete) {
                     Image(systemName: "trash")
@@ -945,7 +1278,6 @@ private struct IMESafeTextEditor: NSViewRepresentable {
 private struct ContextPreviewList: View {
     @EnvironmentObject var langMgr: LanguageManager
     let items: [MeetingContextItem]
-    let onRefresh: (MeetingContextItem) -> Void
 
     var body: some View {
         ScrollView {
@@ -961,17 +1293,6 @@ private struct ContextPreviewList: View {
                             Text(langMgr.t(item.kind.displayName, item.kind.englishDisplayName))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
-
-                            if item.kind == .link {
-                                Button {
-                                    onRefresh(item)
-                                } label: {
-                                    Image(systemName: "arrow.clockwise")
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(item.extractionStatus == .extracting)
-                                .help(langMgr.t("重新读取链接", "Read link again"))
-                            }
                         }
 
                         if let source = item.source, !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

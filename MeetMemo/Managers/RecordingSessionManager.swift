@@ -11,6 +11,7 @@ class RecordingSessionManager: ObservableObject {
     @Published var activeMeetingId: UUID?
     @Published var errorMessage: String?
     @Published var activeRecordingTranscriptChunksUpdated: [TranscriptChunk] = []
+    @Published var activeRecordingStartedAt: Date?
     
     private let audioManager = AudioManager.shared
     private var cancellables = Set<AnyCancellable>()
@@ -72,6 +73,7 @@ class RecordingSessionManager: ObservableObject {
         }
         
         activeMeetingId = meetingId
+        activeRecordingStartedAt = Date()
         audioManager.startRecording()
     }
     
@@ -86,6 +88,7 @@ class RecordingSessionManager: ObservableObject {
         }
         
         activeMeetingId = nil
+        activeRecordingStartedAt = nil
         activeRecordingTranscriptChunks = []
     }
     

@@ -11,15 +11,17 @@ extension Notification.Name {
 }
 
 enum MeetingViewTab: String, CaseIterable {
-    case context = "Context"
+    case context = "Prep"
     case transcript = "Transcript"
-    case enhancedNotes = "Enhanced Notes"
+    case enhancedNotes = "Smart Notes"
+
+    static let displayOrder: [MeetingViewTab] = [.context, .transcript, .enhancedNotes]
 
     var chineseLabel: String {
         switch self {
-        case .context: return "上下文"
-        case .transcript: return "转录"
-        case .enhancedNotes: return "增强笔记"
+        case .context: return "会前资料"
+        case .transcript: return "转录原文"
+        case .enhancedNotes: return "智能纪要"
         }
     }
 }
@@ -36,6 +38,7 @@ class MeetingViewModel: ObservableObject {
     @Published var isStartingRecording = false // Indicates recording start in progress
     @Published var isLoadingMeeting = false
     @Published var transcriptDisplayChunks: [TranscriptDisplayChunk] = []
+    @Published private var hasStartedRecordingSession = false
     
     // Computed property to determine if Generate button should animate
     var shouldAnimateGenerateButton: Bool {
@@ -78,6 +81,7 @@ class MeetingViewModel: ObservableObject {
         self.meeting = meeting
         self.transcriptDisplayChunks = meeting.transcriptDisplayChunks
         self.selectedTab = initialSelectedTab ?? Self.preferredInitialTab(for: meeting)
+        self.hasStartedRecordingSession = !meeting.transcriptChunks.isEmpty
 
         // Detect if this is a new meeting based on content, not storage existence
         isNewMeeting = isEmpty
@@ -194,9 +198,31 @@ class MeetingViewModel: ObservableObject {
     var recordingButtonText: String {
         let lang = LanguageManager.shared
         if isRecording {
-            return lang.t("停止", "Stop")
+            return lang.t("结束录制", "End Recording")
         }
-        return meeting.transcriptChunks.isEmpty ? lang.t("转录", "Transcribe") : lang.t("继续", "Resume")
+        return hasStartedRecordingSession ? lang.t("继续录制", "Resume Recording") : lang.t("开始录制", "Start Recording")
+    }
+
+    var recordingButtonIconName: String {
+        if isRecording {
+            return "stop.circle.fill"
+        }
+        return hasStartedRecordingSession ? "record.circle" : "record.circle.fill"
+    }
+
+    var recordingStartedAt: Date? {
+        guard isRecording else { return nil }
+        return recordingSessionManager.activeRecordingStartedAt
+    }
+
+    var transcriptCharacterCount: Int {
+        meeting.transcriptChunks.reduce(0) { total, chunk in
+            total + chunk.text.trimmingCharacters(in: .whitespacesAndNewlines).count
+        }
+    }
+
+    var hasGeneratedNotes: Bool {
+        !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
     func toggleRecording() {
@@ -230,6 +256,7 @@ class MeetingViewModel: ObservableObject {
             self.meeting = savedMeeting
             self.refreshTranscriptDisplayChunks()
             self.isNewMeeting = self.isEmpty
+            self.hasStartedRecordingSession = !savedMeeting.transcriptChunks.isEmpty
             self.selectedTab = Self.preferredInitialTab(for: savedMeeting)
             self.loadTemplates()
             self.isLoadingMeeting = false
@@ -257,6 +284,7 @@ class MeetingViewModel: ObservableObject {
             switch validationResult {
             case .success():
                 // Transcription config is valid, proceed with recording
+                hasStartedRecordingSession = true
                 recordingSessionManager.startRecording(for: meeting.id)
             case .failure(let error):
                 // Show error message
@@ -394,87 +422,6 @@ class MeetingViewModel: ObservableObject {
                 extractedText: ""
             )
         )
-    }
-
-    func addLinkContextItem(urlString: String, notes: String) {
-        let trimmedURL = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedURL.isEmpty || !trimmedNotes.isEmpty else { return }
-
-        let contextItem = MeetingContextItem(
-            kind: .link,
-            title: trimmedURL.isEmpty ? LanguageManager.shared.t("链接", "Link") : trimmedURL,
-            source: trimmedURL.isEmpty ? nil : trimmedURL,
-            extractedText: trimmedNotes,
-            extractionStatus: trimmedURL.isEmpty ? .idle : .extracting
-        )
-
-        meeting.contextItems.append(contextItem)
-
-        guard !trimmedURL.isEmpty else { return }
-        extractLinkContext(for: contextItem.id, urlString: trimmedURL, userNotes: trimmedNotes)
-    }
-
-    func refreshLinkContextItem(_ item: MeetingContextItem) {
-        guard item.kind == .link, let source = item.source, !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
-        }
-
-        updateContextItem(id: item.id) { contextItem in
-            contextItem.extractionStatus = .extracting
-            contextItem.extractionError = nil
-        }
-
-        extractLinkContext(for: item.id, urlString: source, userNotes: "")
-    }
-
-    private func extractLinkContext(for itemId: UUID, urlString: String, userNotes: String) {
-        Task { [weak self] in
-            do {
-                let extracted = try await ContextExtractorService.shared.extractWebPage(from: urlString)
-                await MainActor.run {
-                    self?.updateContextItem(id: itemId) { item in
-                        item.title = extracted.title
-                        item.source = extracted.source
-                        item.extractedText = self?.mergedLinkContext(userNotes: userNotes, extractedText: extracted.text) ?? extracted.text
-                        item.extractionStatus = .succeeded
-                        item.extractionError = nil
-                        item.fetchedAt = Date()
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    self?.updateContextItem(id: itemId) { item in
-                        item.extractionStatus = .failed
-                        item.extractionError = error.localizedDescription
-                        if item.extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            item.extractedText = userNotes
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    private func mergedLinkContext(userNotes: String, extractedText: String) -> String {
-        let trimmedNotes = userNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedNotes.isEmpty else { return extractedText }
-
-        return [
-            "用户补充：",
-            trimmedNotes,
-            "",
-            "网页内容：",
-            extractedText
-        ].joined(separator: "\n")
-    }
-
-    private func updateContextItem(id: UUID, update: (inout MeetingContextItem) -> Void) {
-        guard let index = meeting.contextItems.firstIndex(where: { $0.id == id }) else {
-            return
-        }
-
-        update(&meeting.contextItems[index])
     }
 
     func addFileContextItem(url: URL, text: String) {
