@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
@@ -6,6 +7,9 @@ struct SettingsView: View {
     @ObservedObject private var appearanceMgr = AppearanceManager.shared
     @Binding var navigationPath: NavigationPath
     @State private var selectedSection: SettingsSection = .general
+    @State private var micPermissionGranted = false
+    @State private var systemAudioPermissionGranted = false
+    @State private var audioRecordingPermission = AudioRecordingPermission()
 
     init(viewModel: SettingsViewModel, navigationPath: Binding<NavigationPath> = .constant(NavigationPath())) {
         self.viewModel = viewModel
@@ -14,13 +18,8 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Picker("", selection: $selectedSection) {
-                ForEach(SettingsSection.allCases) { section in
-                    Text(section.title(using: langMgr)).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 360)
+            SettingsSectionTabBar(selectedSection: $selectedSection)
+                .environmentObject(langMgr)
             .padding(.horizontal, 24)
             .padding(.top, 20)
             .padding(.bottom, 16)
@@ -48,6 +47,13 @@ struct SettingsView: View {
         .onAppear {
             viewModel.loadTemplates()
             viewModel.loadProviderConfig()
+            checkPermissions()
+        }
+        .onChange(of: audioRecordingPermission.status) { _, newValue in
+            systemAudioPermissionGranted = (newValue == .authorized)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            checkPermissions()
         }
         .onDisappear {
             DispatchQueue.main.async {
@@ -65,6 +71,33 @@ struct SettingsView: View {
 
     private var generalSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 16) {
+                Text(langMgr.t("所需权限", "Required Permissions"))
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                VStack(spacing: 12) {
+                    PermissionRow(
+                        title: langMgr.t("麦克风权限", "Microphone Access"),
+                        description: langMgr.t("用于转录您在会议中说的话", "Required to transcribe what you say in meetings"),
+                        isGranted: micPermissionGranted,
+                        grantedLabel: langMgr.t("已授权", "Granted"),
+                        enableLabel: langMgr.t("授权", "Enable"),
+                        action: requestMicrophonePermission
+                    )
+
+                    PermissionRow(
+                        title: langMgr.t("系统录音权限", "System Audio Recording"),
+                        description: langMgr.t("用于转录会议中他人说的话", "Required to transcribe what others say in meetings"),
+                        isGranted: systemAudioPermissionGranted,
+                        grantedLabel: langMgr.t("已授权", "Granted"),
+                        enableLabel: langMgr.t("授权", "Enable"),
+                        action: requestSystemAudioPermission
+                    )
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             VStack(alignment: .leading, spacing: 8) {
                 Text(langMgr.t("语言", "Language"))
                     .font(.headline)
@@ -289,6 +322,95 @@ struct SettingsView: View {
         }
         .padding(.top)
     }
+
+    private func checkPermissions() {
+        micPermissionGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        systemAudioPermissionGranted = (audioRecordingPermission.status == .authorized)
+    }
+
+    private func requestMicrophonePermission() {
+        AVCaptureDevice.requestAccess(for: .audio) { granted in
+            DispatchQueue.main.async {
+                micPermissionGranted = granted
+                if !granted {
+                    viewModel.activeAlert = AlertMessage(
+                        title: langMgr.t("需要权限", "Permission Required"),
+                        message: langMgr.t(
+                            "录制会议需要麦克风权限，请在「系统设置 > 隐私与安全性 > 麦克风」中开启。",
+                            "Microphone access is required for recording meetings. Please enable it in System Preferences > Security & Privacy > Privacy > Microphone."
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private func requestSystemAudioPermission() {
+        audioRecordingPermission.request()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if audioRecordingPermission.status == .denied {
+                viewModel.activeAlert = AlertMessage(
+                    title: langMgr.t("需要权限", "Permission Required"),
+                    message: langMgr.t(
+                        "需要系统录音权限才能捕获他人的声音，请在「系统设置 > 隐私与安全性 > 麦克风」中为本应用开启。",
+                        "System audio recording access is required to capture what others say in meetings. Please enable this app in System Preferences > Security & Privacy > Privacy > Microphone."
+                    )
+                )
+            }
+        }
+    }
+}
+
+private struct SettingsSectionTabBar: View {
+    @EnvironmentObject var langMgr: LanguageManager
+    @Binding var selectedSection: SettingsSection
+    @State private var hoveredSection: SettingsSection?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(SettingsSection.allCases) { section in
+                Button {
+                    selectedSection = section
+                } label: {
+                    Text(section.title(using: langMgr))
+                        .font(.system(size: 13, weight: selectedSection == section ? .semibold : .medium))
+                        .foregroundColor(selectedSection == section ? .primary : .secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background {
+                            if selectedSection == section || hoveredSection == section {
+                                Capsule(style: .continuous)
+                                    .fill(tabBackgroundColor(for: section))
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .contentShape(Capsule(style: .continuous))
+                .onHover { isHovering in
+                    hoveredSection = isHovering ? section : (hoveredSection == section ? nil : hoveredSection)
+                }
+            }
+        }
+        .padding(4)
+        .background {
+            Capsule(style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.32), lineWidth: 1)
+                }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func tabBackgroundColor(for section: SettingsSection) -> Color {
+        if selectedSection == section {
+            return Color.secondary.opacity(0.18)
+        }
+
+        return Color.secondary.opacity(0.10)
+    }
 }
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
@@ -305,7 +427,7 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         case .model:
             return langMgr.t("模型", "Model")
         case .prompt:
-            return "Prompt"
+            return langMgr.t("提示词", "Prompt")
         }
     }
 }

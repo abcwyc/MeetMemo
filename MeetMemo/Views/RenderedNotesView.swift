@@ -16,6 +16,7 @@ struct RenderedNotesView: View {
                 }
             }
             .padding()
+            .textSelection(.enabled)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -147,6 +148,7 @@ private struct MarkdownTableView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color.secondary.opacity(0.24), lineWidth: 1)
             )
+            .textSelection(.enabled)
         }
         .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
