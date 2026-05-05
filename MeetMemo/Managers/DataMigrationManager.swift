@@ -48,7 +48,10 @@ class DataMigrationManager {
     /// Performs a backup of the meetings directory before migration
     /// - Returns: The backup directory URL, or nil if backup failed
     func backupMeetingsDirectory() -> URL? {
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("❌ Failed to resolve Documents directory for migration backup")
+            return nil
+        }
         let meetingsDirectory = documentsDirectory.appendingPathComponent("Meetings")
         
         let formatter = DateFormatter()

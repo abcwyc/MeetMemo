@@ -36,7 +36,7 @@ final class APIKeyValidator {
 
         guard let components = URLComponents(string: config.normalizedBaseURL),
               let scheme = components.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
+              scheme == "https",
               components.host?.isEmpty == false else {
             return .failure(.invalidURL)
         }

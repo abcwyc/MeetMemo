@@ -13,9 +13,17 @@ class LocalStorageManager {
     private let templatesDirectory: URL
     
     private init() {
-        // Get the app's documents directory
-        documentsDirectory = FileManager.default.urls(for: .documentDirectory, 
-                                                    in: .userDomainMask).first!
+        // The Documents directory should always exist for the app container, but keep
+        // storage initialization fallible-safe so a system lookup failure cannot crash launch.
+        if let directory = FileManager.default.urls(for: .documentDirectory,
+                                                    in: .userDomainMask).first {
+            documentsDirectory = directory
+        } else {
+            let fallbackDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("MeetMemo", isDirectory: true)
+            print("⚠️ Failed to resolve Documents directory. Using temporary fallback: \(fallbackDirectory)")
+            documentsDirectory = fallbackDirectory
+        }
         
         // Create meetings subdirectory
         meetingsDirectory = documentsDirectory.appendingPathComponent("Meetings")

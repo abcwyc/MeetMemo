@@ -355,10 +355,12 @@ class AudioManager: NSObject, ObservableObject {
             throw NSError(domain: "AudioManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create AVAudioFormat from tap."])
         }
 
-        let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
-                                         sampleRate: 16_000,
-                                         channels: 1,
-                                         interleaved: false)!
+        guard let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16,
+                                               sampleRate: 16_000,
+                                               channels: 1,
+                                               interleaved: false) else {
+            throw NSError(domain: "AudioManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create target audio format for system tap."])
+        }
 
         guard let converter = AVAudioConverter(from: format, to: targetFormat) else {
             throw NSError(domain: "AudioManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to create audio converter for system tap."])

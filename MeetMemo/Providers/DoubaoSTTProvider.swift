@@ -7,6 +7,7 @@ final class DoubaoSTTProvider: STTProvider {
     private let endpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
     private let resourceId = "volc.seedasr.sauc.duration"
     private let stateLock = NSLock()
+    private let utteranceTrackerLock = NSLock()
 
     private var session: URLSession?
     private var socketTask: URLSessionWebSocketTask?
@@ -33,15 +34,15 @@ final class DoubaoSTTProvider: STTProvider {
         let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: request)
 
-        stateLock.lock()
-        self.session = session
-        self.socketTask = task
-        self.currentConnectID = connectID
-        self.isDisconnecting = false
-        self.didSendFinalAudio = false
-        self.isConnected = false
-        self.nextAudioSequence = 2
-        stateLock.unlock()
+        stateLock.withLock {
+            self.session = session
+            self.socketTask = task
+            self.currentConnectID = connectID
+            self.isDisconnecting = false
+            self.didSendFinalAudio = false
+            self.isConnected = false
+            self.nextAudioSequence = 2
+        }
 
         task.resume()
 
@@ -53,11 +54,11 @@ final class DoubaoSTTProvider: STTProvider {
             throw error
         }
 
-        stateLock.lock()
-        if currentConnectID == connectID {
-            isConnected = true
+        stateLock.withLock {
+            if currentConnectID == connectID {
+                isConnected = true
+            }
         }
-        stateLock.unlock()
 
         receiveNextMessage(on: task, connectID: connectID)
     }
@@ -83,7 +84,9 @@ final class DoubaoSTTProvider: STTProvider {
         currentConnectID = nil
         stateLock.unlock()
 
-        utteranceTracker.reset()
+        utteranceTrackerLock.withLock {
+            utteranceTracker.reset()
+        }
         task?.cancel(with: .normalClosure, reason: nil)
     }
 
@@ -272,7 +275,9 @@ final class DoubaoSTTProvider: STTProvider {
             return
         }
 
-        let changes = utteranceTracker.diff(utterances)
+        let changes = utteranceTrackerLock.withLock {
+            utteranceTracker.diff(utterances)
+        }
 
         for change in changes {
             switch change {

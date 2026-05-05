@@ -59,10 +59,13 @@ class MeetingListViewModel: ObservableObject {
         }
         errorMessage = nil
         
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            let loadedMeetings = LocalStorageManager.shared.loadMeetingSummaries()
+        Task { [weak self] in
+            let loadedMeetings = await Task.detached(priority: .userInitiated) {
+                LocalStorageManager.shared.loadMeetingSummaries()
+            }.value
             print("📋 Loaded \(loadedMeetings.count) meetings")
+
+            guard let self else { return }
             self.meetings = loadedMeetings
             if showLoadingIndicator {
                 self.isLoading = false

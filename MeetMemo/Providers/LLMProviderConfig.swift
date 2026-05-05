@@ -51,6 +51,9 @@ struct LLMProviderConfig: Codable, Hashable {
             guard let url = URL(string: normalizedBaseURL) else {
                 throw ProviderValidationError.invalidURL
             }
+            guard url.scheme?.lowercased() == "https" else {
+                throw ProviderValidationError.invalidURL
+            }
             return url
         }
 
@@ -62,6 +65,9 @@ struct LLMProviderConfig: Codable, Hashable {
         }
 
         guard let url = URL(string: finalString) else {
+            throw ProviderValidationError.invalidURL
+        }
+        guard url.scheme?.lowercased() == "https" else {
             throw ProviderValidationError.invalidURL
         }
         return url
