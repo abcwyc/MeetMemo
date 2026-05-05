@@ -36,10 +36,8 @@ Implemented:
 - Ability to edit the system prompt
 - Configure STT credentials and LLM API key/base URL/model
 - Anthropic Messages API and OpenAI-compatible chat completions for note generation
-- Auto updates
 - Text formatting
 - Different note templates
-- Integrate with PostHog for anonymous analytics (installs, opens, meetings created)
 - Onboarding screen to enable settings and configure providers
 
 Todo:
@@ -62,11 +60,11 @@ Open the project in Xcode. Command+R to build it and run it.
 
 ## Releasing a New Version
 
-Follow these steps to create a new release with auto-updates:
+Follow these steps to create a new signed and notarized DMG release:
 
 ### Prerequisites
 
-- Homebrew packages: `brew install create-dmg sparkle`
+- Homebrew packages: `brew install create-dmg`
 - Make scripts executable: `chmod +x scripts/update_version.sh scripts/build_release.sh`
 
 ### Release Process
@@ -97,7 +95,6 @@ Follow these steps to create a new release with auto-updates:
 
    - Clean build the app in Release mode
    - Create a signed DMG file
-   - Generate the appcast.xml for auto-updates
 
 3. **Create GitHub Release:**
 
@@ -105,13 +102,5 @@ Follow these steps to create a new release with auto-updates:
    - Click "Create a new release"
    - Tag: `v1.0.1` (match the version number)
    - Title: `MeetMemo v1.0.1`
-   - Upload the DMG and zip files from `releases/` folder
+   - Upload the DMG file from `releases/` folder
    - Generate release notes
-
-4. **Update appcast:**
-
-   ```bash
-   git add appcast.xml
-   git commit -m "Update appcast for v1.0.1"
-   git push
-   ```

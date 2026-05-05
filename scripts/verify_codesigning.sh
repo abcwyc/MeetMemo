@@ -31,7 +31,7 @@ else
 fi
 
 if [ -n "$APP_PASSWORD" ]; then
-    echo "   ✅ APP_PASSWORD: $APP_PASSWORD"
+    echo "   ✅ APP_PASSWORD: Set"
 else
     echo "   ❌ APP_PASSWORD: Not set (REQUIRED for notarization)"
 fi
@@ -117,4 +117,4 @@ echo ""
 echo "💡 Quick setup with .env file:"
 echo "   1. Copy .env.template to .env: cp .env.template .env"
 echo "   2. Edit .env with your Apple ID and app-specific password"
-echo "   3. Load and verify: source .env && ./scripts/verify_codesigning.sh" 
+echo "   3. Load and verify: source .env && ./scripts/verify_codesigning.sh"

@@ -6,11 +6,6 @@
 	objectVersion = 77;
 	objects = {
 
-/* Begin PBXBuildFile section */
-		CCBA53E72E212F1C00469D84 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = CCBA53E62E212F1C00469D84 /* Sparkle */; };
-		CCC33F812E236B6F00EDE382 /* PostHog in Frameworks */ = {isa = PBXBuildFile; productRef = CCC33F802E236B6F00EDE382 /* PostHog */; };
-/* End PBXBuildFile section */
-
 /* Begin PBXContainerItemProxy section */
 		CC90000A2F00000100000001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -57,8 +52,6 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				CCC33F812E236B6F00EDE382 /* PostHog in Frameworks */,
-				CCBA53E72E212F1C00469D84 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -118,8 +111,6 @@
 			);
 			name = MeetMemo;
 			packageProductDependencies = (
-				CCBA53E62E212F1C00469D84 /* Sparkle */,
-				CCC33F802E236B6F00EDE382 /* PostHog */,
 			);
 			productName = MeetMemo;
 			productReference = CC5718182E201D8D0042BA88 /* MeetMemo.app */;
@@ -177,8 +168,6 @@
 			mainGroup = CC57180F2E201D8D0042BA88;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				CCBA53E52E212F1C00469D84 /* XCRemoteSwiftPackageReference "Sparkle" */,
-				CCC33F7F2E236B6F00EDE382 /* XCRemoteSwiftPackageReference "posthog-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = CC5718192E201D8D0042BA88 /* Products */;
@@ -367,7 +356,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"MeetMemo/Preview Content\"";
 				DEVELOPMENT_TEAM = 423SMX6Z4A;
 				ENABLE_PREVIEWS = YES;
@@ -381,7 +370,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.11;
+				MARKETING_VERSION = 0.12;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
 				PRODUCT_BUNDLE_IDENTIFIER = com.youcai.meetmemo;
@@ -404,7 +393,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEVELOPMENT_ASSET_PATHS = "\"MeetMemo/Preview Content\"";
 				DEVELOPMENT_TEAM = 423SMX6Z4A;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -419,7 +408,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.11;
+				MARKETING_VERSION = 0.12;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_SWIFT_FLAGS = "$(inherited) -D ENABLE_TCC_SPI";
 				PRODUCT_BUNDLE_IDENTIFIER = com.youcai.meetmemo;
@@ -493,38 +482,6 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
-
-/* Begin XCRemoteSwiftPackageReference section */
-		CCBA53E52E212F1C00469D84 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 2.7.1;
-			};
-		};
-		CCC33F7F2E236B6F00EDE382 /* XCRemoteSwiftPackageReference "posthog-ios" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 3.28.2;
-			};
-		};
-/* End XCRemoteSwiftPackageReference section */
-
-/* Begin XCSwiftPackageProductDependency section */
-		CCBA53E62E212F1C00469D84 /* Sparkle */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = CCBA53E52E212F1C00469D84 /* XCRemoteSwiftPackageReference "Sparkle" */;
-			productName = Sparkle;
-		};
-		CCC33F802E236B6F00EDE382 /* PostHog */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = CCC33F7F2E236B6F00EDE382 /* XCRemoteSwiftPackageReference "posthog-ios" */;
-			productName = PostHog;
-		};
-/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = CC5718102E201D8D0042BA88 /* Project object */;
 }

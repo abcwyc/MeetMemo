@@ -1,7 +1,6 @@
 import Foundation
 import SwiftUI
 import Combine
-import PostHog
 
 @MainActor
 class MeetingListViewModel: ObservableObject {
@@ -118,8 +117,6 @@ class MeetingListViewModel: ObservableObject {
         let newMeeting = Meeting()
         meetings.insert(MeetingSummary(meeting: newMeeting), at: 0)
         _ = LocalStorageManager.shared.saveMeeting(newMeeting)
-        // Track meeting creation event
-        PostHogSDK.shared.capture("meeting_created")
         return newMeeting
     }
 
@@ -152,7 +149,6 @@ class MeetingListViewModel: ObservableObject {
             }
 
             upsertMeeting(MeetingSummary(meeting: meeting))
-            PostHogSDK.shared.capture("meeting_imported")
             NotificationCenter.default.post(name: .meetingSaved, object: meeting)
             return meeting
         } catch {

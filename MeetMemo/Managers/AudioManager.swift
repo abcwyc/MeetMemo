@@ -87,24 +87,12 @@ class AudioManager: NSObject, ObservableObject {
 
         stopRecordingInternal()
 
-        Task {
-            let validationResult = await APIKeyValidator.shared.validateSTTConfig(APIKeyValidator.shared.currentSTTConfig())
-            switch validationResult {
-            case .failure(let error):
-                let errorMsg = error.localizedDescription
-                print("❌ STT validation failed: \(errorMsg)")
-                DispatchQueue.main.async {
-                    self.errorMessage = errorMsg
-                }
-            case .success:
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-                    guard let self else { return }
-                    Task {
-                        let micStarted = await self.startMicrophoneTap()
-                        if micStarted {
-                            await self.startSystemAudioTap()
-                        }
-                    }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
+            Task {
+                let micStarted = await self.startMicrophoneTap()
+                if micStarted {
+                    await self.startSystemAudioTap()
                 }
             }
         }
