@@ -7,11 +7,13 @@ class MeetingListViewModel: ObservableObject {
     @Published var meetings: [MeetingSummary] = []
     @Published var isLoading = false
     @Published var isImportingAudio = false
+    @Published var audioImportProgress: Double?
     @Published var errorMessage: String?
     @Published var searchText: String = ""
     
     private var cancellables = Set<AnyCancellable>()
     private let recordingSessionManager = RecordingSessionManager.shared
+    private var audioImportTask: Task<Meeting?, Never>?
     
     // Computed property to filter meetings based on search text
     var filteredMeetings: [MeetingSummary] {
@@ -124,11 +126,35 @@ class MeetingListViewModel: ObservableObject {
     }
 
     func importAudioFile(url: URL) async -> Meeting? {
+        guard audioImportTask == nil else { return nil }
+
+        let task = Task { [weak self] () -> Meeting? in
+            guard let self else { return nil }
+            return await self.runImportAudioFile(url: url)
+        }
+        audioImportTask = task
+        let meeting = await task.value
+        audioImportTask = nil
+        return meeting
+    }
+
+    func cancelAudioImport() {
+        audioImportTask?.cancel()
+        audioImportTask = nil
+        isImportingAudio = false
+        audioImportProgress = nil
+    }
+
+    private func runImportAudioFile(url: URL) async -> Meeting? {
         guard !isImportingAudio else { return nil }
 
         isImportingAudio = true
+        audioImportProgress = 0
         errorMessage = nil
-        defer { isImportingAudio = false }
+        defer {
+            isImportingAudio = false
+            audioImportProgress = nil
+        }
 
         let didAccess = url.startAccessingSecurityScopedResource()
         defer {
@@ -138,7 +164,11 @@ class MeetingListViewModel: ObservableObject {
         }
 
         do {
-            let result = try await AudioFileTranscriber.shared.transcribe(url: url)
+            let result = try await AudioFileTranscriber.shared.transcribe(url: url) { [weak self] progress in
+                Task { @MainActor in
+                    self?.audioImportProgress = progress
+                }
+            }
             let title = url.deletingPathExtension().lastPathComponent
             let meeting = Meeting(
                 title: title.isEmpty ? LanguageManager.shared.t("导入的会议", "Imported Meeting") : title,
@@ -154,6 +184,8 @@ class MeetingListViewModel: ObservableObject {
             upsertMeeting(MeetingSummary(meeting: meeting))
             NotificationCenter.default.post(name: .meetingSaved, object: meeting)
             return meeting
+        } catch is CancellationError {
+            return nil
         } catch {
             errorMessage = error.localizedDescription
             return nil

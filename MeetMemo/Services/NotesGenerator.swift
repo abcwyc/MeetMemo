@@ -33,7 +33,7 @@ final class NotesGenerator {
         templateId: UUID? = nil
     ) -> AsyncStream<GenerationResult> {
         AsyncStream<GenerationResult> { continuation in
-            Task {
+            let generationTask = Task {
                 let config = APIKeyValidator.shared.currentLLMConfig()
                 let validationResult = await APIKeyValidator.shared.validateLLMConfig(config)
                 switch validationResult {
@@ -108,6 +108,19 @@ final class NotesGenerator {
                     continuation.yield(.error(errorMessage))
                     continuation.finish()
                 }
+            }
+
+            let timeoutTask = Task {
+                try? await Task.sleep(for: .seconds(120))
+                guard !Task.isCancelled else { return }
+                continuation.yield(.error("生成会议纪要超时，请稍后重试。"))
+                continuation.finish()
+                generationTask.cancel()
+            }
+
+            continuation.onTermination = { _ in
+                generationTask.cancel()
+                timeoutTask.cancel()
             }
         }
     }

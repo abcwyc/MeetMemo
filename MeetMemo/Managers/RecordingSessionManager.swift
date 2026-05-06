@@ -16,6 +16,8 @@ class RecordingSessionManager: ObservableObject {
     private let audioManager = AudioManager.shared
     private var cancellables = Set<AnyCancellable>()
     private let transcriptUpdateSubject = PassthroughSubject<[TranscriptChunk], Never>()
+    private var isStoppingFromSessionManager = false
+    private var hasObservedAudioRecordingStart = false
     
     // Store transcript chunks for the active recording session
     private var activeRecordingTranscriptChunks: [TranscriptChunk] = []
@@ -29,13 +31,39 @@ class RecordingSessionManager: ObservableObject {
         // Bind to audio manager state
         audioManager.$isRecording
             .sink { [weak self] isRecording in
-                self?.isRecording = isRecording
+                guard let self else { return }
+                self.isRecording = isRecording
+
+                if isRecording {
+                    self.hasObservedAudioRecordingStart = true
+                    return
+                }
+
+                guard self.activeMeetingId != nil,
+                      !self.isStoppingFromSessionManager,
+                      self.hasObservedAudioRecordingStart else {
+                    return
+                }
+
+                print("🧹 Audio manager stopped unexpectedly. Cleaning up recording session.")
+                self.finishActiveSession(saveFinalTranscript: true)
             }
             .store(in: &cancellables)
         
         audioManager.$errorMessage
             .sink { [weak self] errorMessage in
-                self?.errorMessage = errorMessage
+                guard let self else { return }
+                self.errorMessage = errorMessage
+
+                guard errorMessage != nil,
+                      self.activeMeetingId != nil,
+                      !self.isRecording,
+                      !self.isStoppingFromSessionManager else {
+                    return
+                }
+
+                print("🧹 Audio manager reported a startup error. Cleaning up recording session.")
+                self.finishActiveSession(saveFinalTranscript: true)
             }
             .store(in: &cancellables)
         
@@ -74,22 +102,28 @@ class RecordingSessionManager: ObservableObject {
         
         activeMeetingId = meetingId
         activeRecordingStartedAt = Date()
+        hasObservedAudioRecordingStart = false
         audioManager.startRecording()
     }
     
     func stopRecording() {
         print("🛑 Stopping recording for meeting: \(activeMeetingId?.uuidString ?? "unknown")")
-        
+
+        isStoppingFromSessionManager = true
         audioManager.stopRecording()
-        
-        // Perform a final, immediate save of transcript chunks to the meeting
-        if let activeMeetingId = activeMeetingId {
+        isStoppingFromSessionManager = false
+        finishActiveSession(saveFinalTranscript: true)
+    }
+
+    private func finishActiveSession(saveFinalTranscript: Bool) {
+        if saveFinalTranscript, let activeMeetingId = activeMeetingId {
             updateActiveMeetingTranscript(meetingId: activeMeetingId, chunks: activeRecordingTranscriptChunks)
         }
-        
+
         activeMeetingId = nil
         activeRecordingStartedAt = nil
         activeRecordingTranscriptChunks = []
+        hasObservedAudioRecordingStart = false
     }
     
     func isRecordingMeeting(_ meetingId: UUID) -> Bool {

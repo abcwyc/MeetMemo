@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mac App 安全提示处理教程</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                   "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      background: #f5f5f7;
+      color: #1d1d1f;
+      line-height: 1.7;
+      padding: 40px 20px 80px;
+    }
+
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+    header h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    header p {
+      color: #6e6e73;
+      margin-top: 8px;
+      font-size: 0.95rem;
+    }
+
+    .step {
+      background: #fff;
+      border-radius: 16px;
+      padding: 32px 32px 28px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04);
+    }
+
+    .step-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .step-num {
+      flex-shrink: 0;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #0071e3;
+      color: #fff;
+      font-weight: 700;
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .step-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+
+    .step-body {
+      font-size: 0.95rem;
+      color: #3a3a3c;
+    }
+    .step-body p { margin-bottom: 10px; }
+
+    .step-body ul {
+      list-style: none;
+      padding-left: 0;
+      margin: 10px 0;
+    }
+    .step-body ul li {
+      padding: 4px 0 4px 22px;
+      position: relative;
+    }
+    .step-body ul li::before {
+      content: "✅";
+      position: absolute;
+      left: 0;
+      top: 4px;
+      font-size: 0.85em;
+    }
+
+    .tip {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      background: #fff9e6;
+      border-left: 4px solid #f5a623;
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin: 14px 0;
+      font-size: 0.9rem;
+      color: #5a4000;
+    }
+    .tip.warn {
+      background: #fff2f2;
+      border-color: #e03e3e;
+      color: #6b0000;
+    }
+    .tip.info {
+      background: #f0f6ff;
+      border-color: #0071e3;
+      color: #003070;
+    }
+    .tip-icon { flex-shrink: 0; font-size: 1.1em; }
+
+    code {
+      background: #f0f0f5;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.88em;
+    }
+
+    /* 路径导航样式 */
+    .path {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #f0f0f5;
+      border-radius: 8px;
+      padding: 6px 12px;
+      margin: 10px 0;
+      font-size: 0.9rem;
+      flex-wrap: wrap;
+    }
+    .path-sep {
+      color: #aeaeb2;
+      font-size: 0.85em;
+    }
+    .path-item {
+      font-weight: 500;
+      color: #1d1d1f;
+    }
+
+    /* 步骤内嵌小步骤 */
+    .sub-steps {
+      counter-reset: sub;
+      margin: 12px 0;
+    }
+    .sub-step {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .sub-step-num {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #e8e8ed;
+      color: #3a3a3c;
+      font-size: 0.75rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px;
+    }
+
+    /* 模拟系统对话框 */
+    .dialog-mock {
+      background: #ffffff;
+      border: 1px solid #d1d1d6;
+      border-radius: 12px;
+      padding: 20px 22px;
+      margin: 14px 0;
+      box-shadow: 0 4px 20px rgba(0,0,0,.1);
+      max-width: 400px;
+    }
+    .dialog-mock .dialog-icon {
+      font-size: 2.5rem;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    .dialog-mock .dialog-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-align: center;
+      margin-bottom: 6px;
+      color: #1d1d1f;
+    }
+    .dialog-mock .dialog-body {
+      font-size: 0.82rem;
+      color: #6e6e73;
+      text-align: center;
+      margin-bottom: 14px;
+      line-height: 1.5;
+    }
+    .dialog-mock .dialog-btns {
+      display: flex;
+      gap: 8px;
+      justify-content: center;
+    }
+    .btn-cancel {
+      flex: 1;
+      padding: 6px 0;
+      border-radius: 7px;
+      border: 1px solid #d1d1d6;
+      background: #f5f5f7;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #1d1d1f;
+      cursor: default;
+      text-align: center;
+    }
+    .btn-primary {
+      flex: 1;
+      padding: 6px 0;
+      border-radius: 7px;
+      border: none;
+      background: #0071e3;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #fff;
+      cursor: default;
+      text-align: center;
+    }
+    .btn-danger {
+      flex: 1;
+      padding: 6px 0;
+      border-radius: 7px;
+      border: none;
+      background: #e03e3e;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #fff;
+      cursor: default;
+      text-align: center;
+    }
+
+    .img-wrap {
+      margin-top: 18px;
+      border-radius: 10px;
+      overflow: hidden;
+      cursor: zoom-in;
+      display: inline-block;
+      width: 100%;
+    }
+    .img-wrap + .img-wrap { margin-top: 12px; }
+    .img-wrap img {
+      width: 100%;
+      display: block;
+      border-radius: 10px;
+      border: 1px solid #e8e8ed;
+      transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .img-wrap:hover img {
+      transform: scale(1.01);
+      box-shadow: 0 8px 24px rgba(0,0,0,.12);
+    }
+    .img-caption {
+      font-size: 0.78rem;
+      color: #aeaeb2;
+      text-align: center;
+      margin-top: 6px;
+    }
+
+    /* ── Lightbox ── */
+    #lb {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.85);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px);
+      cursor: zoom-out;
+    }
+    #lb.open { display: flex; }
+    #lb img {
+      max-width: 92vw;
+      max-height: 90vh;
+      border-radius: 12px;
+      box-shadow: 0 24px 64px rgba(0,0,0,.5);
+      object-fit: contain;
+      animation: pop .18s ease;
+    }
+    @keyframes pop {
+      from { transform: scale(.88); opacity: 0; }
+      to   { transform: scale(1);   opacity: 1; }
+    }
+    #lb-close {
+      position: fixed;
+      top: 20px;
+      right: 24px;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.15);
+      color: #fff;
+      font-size: 1.3rem;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .15s;
+    }
+    #lb-close:hover { background: rgba(255,255,255,.3); }
+
+    footer {
+      text-align: center;
+      color: #aeaeb2;
+      font-size: 0.8rem;
+      margin-top: 48px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="page">
+
+  <header>
+    <h1>🛡️ Mac App 安全提示处理</h1>
+    <p>无开发者证书应用 · 绕过 Gatekeeper 正常打开指南</p>
+  </header>
+
+  <!-- Step 1 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">1</div>
+      <div class="step-title">双击安装包，出现安全警告</div>
+    </div>
+    <div class="step-body">
+      <p>双击 <code>.dmg</code> 或 <code>.app</code> 文件时，macOS 会弹出如下提示，并<strong>自动将 App 移入废纸篓</strong>：</p>
+
+      <div class="dialog-mock">
+        <div class="dialog-icon">🚫</div>
+        <div class="dialog-title">"XXX.app" 已损坏，无法打开</div>
+        <div class="dialog-body">您应该将它移到废纸篓。<br/>Apple 无法检查其是否包含恶意软件。</div>
+        <div class="dialog-btns">
+          <div class="btn-cancel">取消</div>
+          <div class="btn-danger">移到废纸篓</div>
+        </div>
+      </div>
+
+      <div class="tip warn">
+        <span class="tip-icon">⚠️</span>
+        <span>这并不代表 App 真的损坏或有病毒，只是该开发者<strong>未签名 Apple 证书</strong>，macOS 默认拦截。按下方步骤操作即可正常使用。</span>
+      </div>
+      <p>点击「<strong>移到废纸篓</strong>」或「<strong>取消</strong>」都没关系，<strong>不要从废纸篓彻底删除</strong>，继续下一步。</p>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">2</div>
+      <div class="step-title">打开「系统设置」→「隐私与安全性」</div>
+    </div>
+    <div class="step-body">
+      <p>点击左上角  苹果菜单，选择「<strong>系统设置</strong>」（macOS Ventura 及以上）或「<strong>系统偏好设置</strong>」（macOS Monterey 及以下）。</p>
+
+      <div class="sub-steps">
+        <div class="sub-step">
+          <div class="sub-step-num">①</div>
+          <div>点击左侧边栏「<strong>隐私与安全性</strong>」</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-num">②</div>
+          <div>向下滚动到「<strong>安全性</strong>」区域</div>
+        </div>
+      </div>
+
+      <div class="path">
+        <span class="path-item"> 系统设置</span>
+        <span class="path-sep">›</span>
+        <span class="path-item">🔒 隐私与安全性</span>
+        <span class="path-sep">›</span>
+        <span class="path-item">安全性（向下滚动）</span>
+      </div>
+
+      <div class="tip">
+        <span class="tip-icon">💡</span>
+        <span>必须在<strong>尝试打开 App 后 1 小时内</strong>来这里操作，否则提示会消失，需重新双击 App 触发拦截。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">3</div>
+      <div class="step-title">找到拦截提示，点击「仍要打开」</div>
+    </div>
+    <div class="step-body">
+      <p>在「安全性」区域底部，你会看到类似如下提示：</p>
+
+      <div class="dialog-mock" style="max-width:100%">
+        <div style="font-size:0.85rem; color:#3a3a3c; line-height:1.6;">
+          <span style="font-size:1.1em;">🔒</span>
+          已阻止使用「<strong>XXX.app</strong>」，因为它来自身份不明的开发者。
+        </div>
+        <div class="dialog-btns" style="margin-top:12px;">
+          <div class="btn-primary">仍要打开</div>
+        </div>
+      </div>
+
+      <p style="margin-top:14px;">点击「<strong>仍要打开</strong>」按钮。</p>
+
+      <div class="tip warn">
+        <span class="tip-icon">⚠️</span>
+        <span>系统会要求你输入 <strong>Mac 开机密码</strong>（或 Touch ID）进行授权，这一步是必须的。</span>
+      </div>
+
+      <div class="tip">
+        <span class="tip-icon">💡</span>
+        <span>如果没有看到「仍要打开」按钮，说明超过 1 小时，回到应用程序目录（或废纸篓）再次双击 App，重新触发拦截后返回此页。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">4</div>
+      <div class="step-title">在弹出框中再次确认「打开」</div>
+    </div>
+    <div class="step-body">
+      <p>点击「仍要打开」后，macOS 会再次弹出最终确认框：</p>
+
+      <div class="dialog-mock">
+        <div class="dialog-icon">⚠️</div>
+        <div class="dialog-title">您确定要打开它吗？</div>
+        <div class="dialog-body">通过打开此 App，您将覆盖系统安全性，该 App<br/>可能会使您的 Mac 面临恶意软件的侵害。</div>
+        <div class="dialog-btns">
+          <div class="btn-cancel">取消</div>
+          <div class="btn-primary">打开</div>
+        </div>
+      </div>
+
+      <p style="margin-top:14px;">点击「<strong>打开</strong>」，App 即可正常启动 🎉</p>
+
+      <div class="tip">
+        <span class="tip-icon">💡</span>
+        <span>此后再次打开该 App 将<strong>不再弹出任何警告</strong>，系统已记住你的授权选择。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 5 – 废纸篓找回 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num">5</div>
+      <div class="step-title">如果 App 被移入废纸篓，先还原</div>
+    </div>
+    <div class="step-body">
+      <p>若第一步时你点击了「移到废纸篓」，需要先把 App 还原，再执行步骤 2–4：</p>
+
+      <div class="sub-steps">
+        <div class="sub-step">
+          <div class="sub-step-num">①</div>
+          <div>Dock 栏点击「<strong>废纸篓</strong>」打开</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-num">②</div>
+          <div>找到该 <code>.app</code>，右键 →「<strong>放回原处</strong>」</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-num">③</div>
+          <div>回到「<strong>应用程序</strong>」文件夹，双击 App，触发拦截</div>
+        </div>
+        <div class="sub-step">
+          <div class="sub-step-num">④</div>
+          <div>立即前往「<strong>系统设置 → 隐私与安全性</strong>」完成步骤 3–4</div>
+        </div>
+      </div>
+
+      <div class="tip warn">
+        <span class="tip-icon">⚠️</span>
+        <span><strong>不要</strong>「清倒废纸篓」，否则 App 将被永久删除，需重新下载。</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 常见问题 -->
+  <div class="step">
+    <div class="step-header">
+      <div class="step-num" style="background:#34c759;">?</div>
+      <div class="step-title">常见问题</div>
+    </div>
+    <div class="step-body">
+      <p><strong>Q：安全性区域没有出现「仍要打开」按钮？</strong></p>
+      <p>超过 1 小时后按钮会消失。重新双击 App 触发拦截，在 1 小时内立刻去「隐私与安全性」操作。</p>
+
+      <p style="margin-top:14px;"><strong>Q：提示「已损坏，无法打开」，而不是「身份不明的开发者」？</strong></p>
+      <p>通常出现在从网络下载后 macOS 添加了隔离标记。打开「终端」，执行以下命令后再双击：</p>
+      <code style="display:block;padding:10px 14px;margin:8px 0;border-radius:8px;background:#f0f0f5;font-size:0.85rem;line-height:1.8;">
+        xattr -cr /Applications/你的App名称.app
+      </code>
+      <div class="tip info">
+        <span class="tip-icon">ℹ️</span>
+        <span>将 <code>你的App名称.app</code> 替换为实际文件名，注意大小写。也可以将 <code>.app</code> 文件直接拖入终端窗口自动补全路径。</span>
+      </div>
+
+      <p style="margin-top:14px;"><strong>Q：这样操作安全吗？</strong></p>
+      <ul>
+        <li>仅对你<strong>信任来源</strong>的 App 执行此操作</li>
+        <li>未签名 ≠ 恶意软件，大量独立开发者的优质 App 均未购买 Apple 证书</li>
+        <li>操作完成后 macOS 仍在正常运行，不影响其他安全保护</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>按 Esc 或点击背景可关闭放大图 · 遇到问题请联系分发方获取支持</footer>
+</div>
+
+<!-- Lightbox -->
+<div id="lb">
+  <button id="lb-close" aria-label="关闭">✕</button>
+  <img id="lb-img" src="" alt="" />
+</div>
+
+<script>
+  const lb      = document.getElementById('lb');
+  const lbImg   = document.getElementById('lb-img');
+  const lbClose = document.getElementById('lb-close');
+
+  document.querySelectorAll('.img-wrap img').forEach(img => {
+    img.addEventListener('click', () => {
+      lbImg.src = img.src;
+      lbImg.alt = img.alt;
+      lb.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    });
+  });
+
+  function closeLb() {
+    lb.classList.remove('open');
+    lbImg.src = '';
+    document.body.style.overflow = '';
+  }
+
+  lb.addEventListener('click', e => { if (e.target === lb) closeLb(); });
+  lbClose.addEventListener('click', closeLb);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLb(); });
+</script>
+
+</body>
+</html>

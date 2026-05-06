@@ -14,7 +14,10 @@ final class AudioFileTranscriber {
         self.sttProviderFactory = sttProviderFactory
     }
 
-    func transcribe(url: URL) async throws -> AudioFileTranscriptionResult {
+    func transcribe(
+        url: URL,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> AudioFileTranscriptionResult {
         let validationResult = await APIKeyValidator.shared.validateSTTConfig(APIKeyValidator.shared.currentSTTConfig())
         switch validationResult {
         case .success:
@@ -43,8 +46,9 @@ final class AudioFileTranscriber {
             provider.disconnect()
         }
 
-        try await streamAudioFile(url, to: provider, state: state)
+        try await streamAudioFile(url, to: provider, state: state, progress: progress)
         await state.beginFinalizing()
+        progress?(1.0)
         provider.sendLastAudio()
         try await waitForFinalTranscript(state: state)
 
@@ -56,9 +60,15 @@ final class AudioFileTranscriber {
         return AudioFileTranscriptionResult(chunks: chunks)
     }
 
-    private func streamAudioFile(_ url: URL, to provider: STTProvider, state: AudioFileTranscriptionState) async throws {
+    private func streamAudioFile(
+        _ url: URL,
+        to provider: STTProvider,
+        state: AudioFileTranscriptionState,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws {
         let file = try AVAudioFile(forReading: url)
         let sourceFormat = file.processingFormat
+        progress?(0.0)
 
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -127,6 +137,7 @@ final class AudioFileTranscriber {
             let frameCount = Int(outputBuffer.frameLength)
             let data = Data(bytes: channelData, count: frameCount * MemoryLayout<Int16>.size)
             provider.sendAudio(data)
+            progress?(min(0.98, Double(file.framePosition) / Double(max(file.length, 1))))
 
             let audioDuration = Double(outputBuffer.frameLength) / targetFormat.sampleRate
             try await Task.sleep(nanoseconds: UInt64(audioDuration * 1_000_000_000))

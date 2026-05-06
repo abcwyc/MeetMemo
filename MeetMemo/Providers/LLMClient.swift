@@ -58,6 +58,7 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
                     let url = try buildRequestURL(config: config)
                     var request = URLRequest(url: url)
                     request.httpMethod = "POST"
+                    request.timeoutInterval = 60
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.httpBody = try buildRequestBody(config: config, messages: messages, stream: true)
@@ -248,6 +249,7 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
                     let url = try buildRequestURL(config: config)
                     var request = URLRequest(url: url)
                     request.httpMethod = "POST"
+                    request.timeoutInterval = 60
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")

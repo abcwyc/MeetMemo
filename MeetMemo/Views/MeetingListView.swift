@@ -2,6 +2,24 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum SidebarLayout {
+    static let horizontalPadding: CGFloat = 12
+    static let actionCapsuleInset: CGFloat = 4
+    static let actionSpacing: CGFloat = 4
+    static let primaryButtonMinWidth: CGFloat = 112
+    static let secondaryButtonMinWidth: CGFloat = 76
+    static let secondaryButtonPreferredWidth: CGFloat = 96
+    static let sidebarMinimumWidth: CGFloat = 230
+    static let sidebarPreferredWidth: CGFloat = 260
+
+    static var actionRowPreferredWidth: CGFloat {
+        primaryButtonMinWidth
+            + secondaryButtonPreferredWidth
+            + actionSpacing
+            + actionCapsuleInset * 2
+    }
+}
+
 struct MeetingListView: View {
     @StateObject private var viewModel = MeetingListViewModel()
     @ObservedObject var settingsViewModel: SettingsViewModel
@@ -26,10 +44,24 @@ struct MeetingListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color.clear)
             } else if viewModel.isImportingAudio {
-                ProgressView(langMgr.t("正在导入并转录音频...", "Importing and transcribing audio..."))
-                    .padding(18)
-                    .background(.regularMaterial)
-                    .cornerRadius(10)
+                VStack(spacing: 12) {
+                    ProgressView(
+                        value: viewModel.audioImportProgress,
+                        total: 1
+                    ) {
+                        Text(langMgr.t("正在导入并转录音频...", "Importing and transcribing audio..."))
+                    }
+                    .frame(width: 260)
+
+                    Button(role: .cancel) {
+                        viewModel.cancelAudioImport()
+                    } label: {
+                        Label(langMgr.t("取消", "Cancel"), systemImage: "xmark.circle")
+                    }
+                }
+                .padding(18)
+                .background(.regularMaterial)
+                .cornerRadius(10)
             }
         }
         .fileImporter(
@@ -54,7 +86,12 @@ struct MeetingListView: View {
     private var sidebarContent: some View {
         VStack(spacing: 0) {
             sidebarActionRow
-                .padding(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                .padding(EdgeInsets(
+                    top: 8,
+                    leading: SidebarLayout.horizontalPadding,
+                    bottom: 8,
+                    trailing: SidebarLayout.horizontalPadding
+                ))
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
@@ -88,6 +125,11 @@ struct MeetingListView: View {
             }
         }
         .navigationTitle(langMgr.t("会议", "Meetings"))
+        .navigationSplitViewColumnWidth(
+            min: SidebarLayout.sidebarMinimumWidth,
+            ideal: SidebarLayout.sidebarPreferredWidth,
+            max: 360
+        )
         .alert(langMgr.t("重命名会议", "Rename Meeting"), isPresented: Binding(
             get: { renamingMeeting != nil },
             set: { if !$0 { renamingMeeting = nil } }
@@ -111,10 +153,13 @@ struct MeetingListView: View {
                 createAndSelectMeeting()
             } label: {
                 Label(langMgr.t("创建会议", "Create Meeting"), systemImage: "plus")
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(SidebarPrimaryActionButtonStyle())
             .controlSize(.large)
+            .frame(minWidth: SidebarLayout.primaryButtonMinWidth)
+            .layoutPriority(1)
             .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
             .help(recordingSessionManager.isRecording
                 ? langMgr.t("录制中无法创建新会议", "Cannot create new meeting while recording is active")
@@ -124,16 +169,24 @@ struct MeetingListView: View {
                 isImportingAudioFile = true
             } label: {
                 Label(langMgr.t("导入", "Import"), systemImage: "arrow.down.to.line")
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity)
             }
+            .frame(
+                minWidth: SidebarLayout.secondaryButtonMinWidth,
+                idealWidth: SidebarLayout.secondaryButtonPreferredWidth,
+                maxWidth: SidebarLayout.secondaryButtonPreferredWidth
+            )
             .buttonStyle(SidebarSecondaryActionButtonStyle())
             .controlSize(.large)
-            .frame(width: 96)
+            .layoutPriority(0)
             .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
             .help(recordingSessionManager.isRecording
                 ? langMgr.t("录制中无法导入音频", "Cannot import audio while recording is active")
                 : langMgr.t("导入音频并转录", "Import audio and transcribe it"))
         }
-        .padding(4)
+        .padding(SidebarLayout.actionCapsuleInset)
+        .frame(maxWidth: .infinity)
         .background {
             Capsule(style: .continuous)
                 .fill(Color.secondary.opacity(0.08))
@@ -542,6 +595,7 @@ struct MeetingDetailContentView: View {
             Text(langMgr.t("确定要删除这个会议吗？此操作不可撤销。", "Are you sure you want to delete this meeting? This action cannot be undone."))
         }
         .onDisappear {
+            viewModel.cancelGeneratingNotes()
             viewModel.deleteIfEmpty()
         }
         .fileImporter(

@@ -11,6 +11,7 @@ class LocalStorageManager {
     private let meetingsDirectory: URL
     private let meetingSummariesDirectory: URL
     private let templatesDirectory: URL
+    private let storageLock = NSRecursiveLock()
     
     private init() {
         // The Documents directory should always exist for the app container, but keep
@@ -47,8 +48,14 @@ class LocalStorageManager {
     /// - Parameter meeting: The meeting to save
     /// - Returns: True if successful, false otherwise
     func saveMeeting(_ meeting: Meeting) -> Bool {
+        withStorageLock {
+            saveMeetingLocked(meeting)
+        }
+    }
+
+    private func saveMeetingLocked(_ meeting: Meeting) -> Bool {
         let fileURL = meetingsDirectory.appendingPathComponent("\(meeting.id.uuidString).json")
-        var meetingToSave = meeting
+        var meetingToSave = mergedMeetingForSave(meeting, fileURL: fileURL)
         meetingToSave.syncLegacyUserNotesFromContext()
         meetingToSave.dataVersion = Meeting.currentDataVersion
 
@@ -59,23 +66,7 @@ class LocalStorageManager {
 
             let data = try encoder.encode(meetingToSave)
 
-            // Write atomically using a temp file then replace
-            let tmpURL = fileURL.appendingPathExtension("tmp")
-            try data.write(to: tmpURL, options: .atomic)
-
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                do {
-                    _ = try FileManager.default.replaceItem(at: fileURL, withItemAt: tmpURL, backupItemName: nil, options: [], resultingItemURL: nil)
-                } catch {
-                    // Fallback for the first save path if replacement fails because the file does not yet exist.
-                    if FileManager.default.fileExists(atPath: fileURL.path) {
-                        try FileManager.default.removeItem(at: fileURL)
-                    }
-                    try FileManager.default.moveItem(at: tmpURL, to: fileURL)
-                }
-            } else {
-                try FileManager.default.moveItem(at: tmpURL, to: fileURL)
-            }
+            try replaceFileAtomically(at: fileURL, with: data)
 
             print("✅ Saved meeting: \(meeting.id)")
             saveMeetingSummary(MeetingSummary(meeting: meetingToSave))
@@ -85,10 +76,32 @@ class LocalStorageManager {
             return false
         }
     }
+
+    private func mergedMeetingForSave(_ incoming: Meeting, fileURL: URL) -> Meeting {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return incoming
+        }
+
+        guard let existing = loadMeetingFromFileLocked(fileURL) else {
+            return incoming
+        }
+
+        var merged = incoming
+        if existing.transcriptChunks.count > incoming.transcriptChunks.count {
+            merged.transcriptChunks = existing.transcriptChunks
+        }
+        return merged
+    }
     
     /// Loads all meetings from local storage
     /// - Returns: Array of meetings, sorted by date (newest first)
     func loadMeetings() -> [Meeting] {
+        withStorageLock {
+            loadMeetingsLocked()
+        }
+    }
+
+    private func loadMeetingsLocked() -> [Meeting] {
         do {
             let fileURLs = try FileManager.default.contentsOfDirectory(at: meetingsDirectory,
                                                                       includingPropertiesForKeys: nil)
@@ -147,6 +160,12 @@ class LocalStorageManager {
     /// Falls back to full meeting files for older data and writes summary files
     /// so the expensive path is paid only once.
     func loadMeetingSummaries() -> [MeetingSummary] {
+        withStorageLock {
+            loadMeetingSummariesLocked()
+        }
+    }
+
+    private func loadMeetingSummariesLocked() -> [MeetingSummary] {
         do {
             let summaryURLs = try FileManager.default.contentsOfDirectory(
                 at: meetingSummariesDirectory,
@@ -212,28 +231,41 @@ class LocalStorageManager {
     /// - Parameter id: The meeting ID to load.
     /// - Returns: The decoded meeting, or nil if it cannot be loaded.
     func loadMeeting(id: UUID) -> Meeting? {
+        withStorageLock {
+            loadMeetingLocked(id: id)
+        }
+    }
+
+    private func loadMeetingLocked(id: UUID) -> Meeting? {
         let fileURL = meetingsDirectory.appendingPathComponent("\(id.uuidString).json")
 
+        guard let meeting = loadMeetingFromFileLocked(fileURL) else {
+            return nil
+        }
+
+        guard meeting.dataVersion <= Meeting.currentDataVersion else {
+            print("🚫 Meeting \(meeting.id) written by newer app version (\(meeting.dataVersion)). Skipping load.")
+            return nil
+        }
+
+        if meeting.dataVersion < Meeting.currentDataVersion,
+           let migratedMeeting = DataMigrationManager.shared.migrateMeeting(meeting) {
+            _ = saveMeetingLocked(migratedMeeting)
+            return migratedMeeting
+        }
+
+        return meeting
+    }
+
+    private func loadMeetingFromFileLocked(_ fileURL: URL) -> Meeting? {
         do {
             let data = try Data(contentsOf: fileURL)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
 
-            let meeting = try decoder.decode(Meeting.self, from: data)
-            guard meeting.dataVersion <= Meeting.currentDataVersion else {
-                print("🚫 Meeting \(meeting.id) written by newer app version (\(meeting.dataVersion)). Skipping load.")
-                return nil
-            }
-
-            if meeting.dataVersion < Meeting.currentDataVersion,
-               let migratedMeeting = DataMigrationManager.shared.migrateMeeting(meeting) {
-                _ = saveMeeting(migratedMeeting)
-                return migratedMeeting
-            }
-
-            return meeting
+            return try decoder.decode(Meeting.self, from: data)
         } catch {
-            print("⚠️ Failed to load meeting \(id): \(error)")
+            print("⚠️ Failed to load meeting at \(fileURL.lastPathComponent): \(error)")
             return nil
         }
     }
@@ -242,13 +274,19 @@ class LocalStorageManager {
     /// - Parameter meeting: The meeting to delete
     /// - Returns: True if successful, false otherwise
     func deleteMeeting(_ meeting: Meeting) -> Bool {
-        let fileURL = meetingsDirectory.appendingPathComponent("\(meeting.id.uuidString).json")
-        let summaryURL = meetingSummaryFileURL(for: meeting.id)
+        withStorageLock {
+            deleteMeetingLocked(meeting.id)
+        }
+    }
+
+    private func deleteMeetingLocked(_ meetingId: UUID) -> Bool {
+        let fileURL = meetingsDirectory.appendingPathComponent("\(meetingId.uuidString).json")
+        let summaryURL = meetingSummaryFileURL(for: meetingId)
 
         do {
             try removeFileIfPresent(at: fileURL)
             try removeFileIfPresent(at: summaryURL)
-            print("✅ Deleted meeting: \(meeting.id)")
+            print("✅ Deleted meeting: \(meetingId)")
             return true
         } catch {
             print("❌ Failed to delete meeting: \(error)")
@@ -257,17 +295,8 @@ class LocalStorageManager {
     }
 
     func deleteMeetingSummary(_ summary: MeetingSummary) -> Bool {
-        let fileURL = meetingsDirectory.appendingPathComponent("\(summary.id.uuidString).json")
-        let summaryURL = meetingSummaryFileURL(for: summary.id)
-
-        do {
-            try removeFileIfPresent(at: fileURL)
-            try removeFileIfPresent(at: summaryURL)
-            print("✅ Deleted meeting: \(summary.id)")
-            return true
-        } catch {
-            print("❌ Failed to delete meeting: \(error)")
-            return false
+        withStorageLock {
+            deleteMeetingLocked(summary.id)
         }
     }
 
@@ -285,14 +314,7 @@ class LocalStorageManager {
             encoder.dateEncodingStrategy = .iso8601
 
             let data = try encoder.encode(summary)
-            let tmpURL = fileURL.appendingPathExtension("tmp")
-            try data.write(to: tmpURL, options: .atomic)
-
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                _ = try FileManager.default.replaceItem(at: fileURL, withItemAt: tmpURL, backupItemName: nil, options: [], resultingItemURL: nil)
-            } else {
-                try FileManager.default.moveItem(at: tmpURL, to: fileURL)
-            }
+            try replaceFileAtomically(at: fileURL, with: data)
         } catch {
             print("⚠️ Failed to save meeting summary \(summary.id): \(error)")
         }
@@ -308,6 +330,12 @@ class LocalStorageManager {
     /// - Parameter template: The template to save
     /// - Returns: True if successful, false otherwise
     func saveTemplate(_ template: NoteTemplate) -> Bool {
+        withStorageLock {
+            saveTemplateLocked(template)
+        }
+    }
+
+    private func saveTemplateLocked(_ template: NoteTemplate) -> Bool {
         let fileURL = templatesDirectory.appendingPathComponent("\(template.id.uuidString).json")
         
         do {
@@ -315,16 +343,7 @@ class LocalStorageManager {
             encoder.outputFormatting = [.prettyPrinted]
             
             let data = try encoder.encode(template)
-
-            // Write atomically using a temp file then replace
-            let tmpURL = fileURL.appendingPathExtension("tmp")
-            try data.write(to: tmpURL, options: .atomic)
-
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                _ = try FileManager.default.replaceItem(at: fileURL, withItemAt: tmpURL, backupItemName: nil, options: [], resultingItemURL: nil)
-            } else {
-                try FileManager.default.moveItem(at: tmpURL, to: fileURL)
-            }
+            try replaceFileAtomically(at: fileURL, with: data)
 
             print("✅ Saved template: \(template.id)")
             return true
@@ -337,6 +356,12 @@ class LocalStorageManager {
     /// Loads all templates from local storage
     /// - Returns: Array of templates, empty if none found
     func loadTemplates() -> [NoteTemplate] {
+        withStorageLock {
+            loadTemplatesLocked()
+        }
+    }
+
+    private func loadTemplatesLocked() -> [NoteTemplate] {
         var templates: [NoteTemplate] = []
         
         do {
@@ -354,7 +379,7 @@ class LocalStorageManager {
                     let template = try decoder.decode(NoteTemplate.self, from: data)
                     let migratedTemplate = template.migratedToPromptOnly()
                     if migratedTemplate != template {
-                        _ = saveTemplate(migratedTemplate)
+                        _ = saveTemplateLocked(migratedTemplate)
                     }
                     templates.append(migratedTemplate)
                     print("✅ Loaded template: \(migratedTemplate.id)")
@@ -375,7 +400,7 @@ class LocalStorageManager {
         // Add any missing default templates
         for defaultTemplate in defaultTemplates {
             if !existingTitles.contains(defaultTemplate.title) {
-                _ = saveTemplate(defaultTemplate)
+                _ = saveTemplateLocked(defaultTemplate)
                 templates.append(defaultTemplate)
                 print("✅ Added missing default template: \(defaultTemplate.title)")
             }
@@ -416,7 +441,7 @@ class LocalStorageManager {
                     sections: bundledDefault.sections,
                     isDefault: true
                 )
-                _ = saveTemplate(templateToKeep)
+                _ = saveTemplateLocked(templateToKeep)
                 defaultsByTitleToKeep[template.title] = templateToKeep
             } else {
                 duplicateDefaultTemplates.append(template)
@@ -432,7 +457,7 @@ class LocalStorageManager {
                 return existing
             }
 
-            _ = saveTemplate(defaultTemplate)
+            _ = saveTemplateLocked(defaultTemplate)
             return defaultTemplate
         }
 
@@ -451,6 +476,12 @@ class LocalStorageManager {
     /// - Parameter template: The template to delete
     /// - Returns: True if successful, false otherwise
     func deleteTemplate(_ template: NoteTemplate) -> Bool {
+        withStorageLock {
+            deleteTemplateLocked(template)
+        }
+    }
+
+    private func deleteTemplateLocked(_ template: NoteTemplate) -> Bool {
         // Don't allow deletion of default templates
         if template.isDefault {
             print("⚠️ Cannot delete default template")
@@ -487,5 +518,36 @@ class LocalStorageManager {
     /// Gets the meetings directory URL
     var meetingsDirectoryURL: URL {
         meetingsDirectory
+    }
+
+    private func replaceFileAtomically(at fileURL: URL, with data: Data) throws {
+        let tmpURL = fileURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("\(fileURL.lastPathComponent).\(UUID().uuidString).tmp")
+
+        try data.write(to: tmpURL, options: .atomic)
+
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                _ = try FileManager.default.replaceItem(
+                    at: fileURL,
+                    withItemAt: tmpURL,
+                    backupItemName: nil,
+                    options: [],
+                    resultingItemURL: nil
+                )
+            } else {
+                try FileManager.default.moveItem(at: tmpURL, to: fileURL)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: tmpURL)
+            throw error
+        }
+    }
+
+    private func withStorageLock<T>(_ operation: () -> T) -> T {
+        storageLock.lock()
+        defer { storageLock.unlock() }
+        return operation()
     }
 } 

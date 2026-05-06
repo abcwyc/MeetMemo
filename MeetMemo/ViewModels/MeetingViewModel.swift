@@ -66,6 +66,9 @@ class MeetingViewModel: ObservableObject {
     private var isNewMeeting = false
     private var hasCompletedInitialLoad = false
     private var isApplyingTemplateSelection = false
+    private var hasLocalUnsavedChanges = false
+    private var isApplyingLoadedMeeting = false
+    private var generationTask: Task<Void, Never>?
     
     // Computed property to check if meeting is empty
     var isEmpty: Bool {
@@ -128,13 +131,21 @@ class MeetingViewModel: ObservableObject {
         recordingSessionManager.$errorMessage
             .compactMap { $0 }
             .sink { [weak self] errorMessage in
+                guard let self else { return }
+
+                let isCurrentRecordingMeeting = self.recordingSessionManager.activeMeetingId == self.meeting.id
+                    || self.recordingSessionManager.isRecordingMeeting(self.meeting.id)
+                guard self.isStartingRecording || isCurrentRecordingMeeting else {
+                    return
+                }
+
                 // Suppress non-critical, self-healing errors that should not distract the user
                 let lowercased = errorMessage.lowercased()
                 if errorMessage == ErrorMessage.sessionExpired || lowercased.contains("socket is not connected") {
                     print("ℹ️ Suppressed non-critical error: \(errorMessage)")
                     return
                 }
-                self?.errorMessage = errorMessage
+                self.errorMessage = errorMessage
                 print("🚨 Recording Session Manager Error: \(errorMessage)")
             }
             .store(in: &cancellables)
@@ -162,11 +173,17 @@ class MeetingViewModel: ObservableObject {
         
         // Auto-save when meeting properties change
         $meeting
+            .dropFirst()
             .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
             .sink { [weak self] meeting in
-                guard self?.hasCompletedInitialLoad == true else { return }
+                guard let self else { return }
+                guard !self.isApplyingLoadedMeeting else { return }
+
+                self.hasLocalUnsavedChanges = true
+
+                guard self.hasCompletedInitialLoad else { return }
                 print("🔄 Auto-saving meeting: \(meeting.id) - title: '\(meeting.title)', context: '\(meeting.formattedMeetingContext.prefix(50))...'")
-                self?.saveMeeting()
+                self.saveMeeting()
             }
             .store(in: &cancellables)
 
@@ -252,15 +269,34 @@ class MeetingViewModel: ObservableObject {
             }
 
             print("🔄 Loaded full meeting: \(meetingId)")
-            self.meeting = savedMeeting
+            self.isApplyingLoadedMeeting = true
+            self.meeting = self.hasLocalUnsavedChanges
+                ? self.mergingLoadedMeeting(savedMeeting, withLocalEditsFrom: self.meeting)
+                : savedMeeting
+            self.isApplyingLoadedMeeting = false
             self.refreshTranscriptDisplayChunks()
             self.isNewMeeting = self.isEmpty
-            self.hasStartedRecordingSession = !savedMeeting.transcriptChunks.isEmpty
-            self.selectedTab = Self.preferredInitialTab(for: savedMeeting)
+            self.hasStartedRecordingSession = !self.meeting.transcriptChunks.isEmpty
+            self.selectedTab = Self.preferredInitialTab(for: self.meeting)
             self.loadTemplates()
             self.isLoadingMeeting = false
             self.hasCompletedInitialLoad = true
         }
+    }
+
+    private func mergingLoadedMeeting(_ loaded: Meeting, withLocalEditsFrom local: Meeting) -> Meeting {
+        var merged = loaded
+        merged.title = local.title
+        merged.userNotes = local.userNotes
+        merged.contextItems = local.contextItems
+        merged.generatedNotes = local.generatedNotes
+        merged.templateId = local.templateId ?? loaded.templateId
+
+        if local.transcriptChunks.count > loaded.transcriptChunks.count {
+            merged.transcriptChunks = local.transcriptChunks
+        }
+
+        return merged
     }
 
     private static func preferredInitialTab(for meeting: Meeting) -> MeetingViewTab {
@@ -324,6 +360,22 @@ class MeetingViewModel: ObservableObject {
     }
     
     func generateNotes() async {
+        guard generationTask == nil else { return }
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.runGenerateNotes()
+        }
+        generationTask = task
+        await task.value
+    }
+
+    func cancelGeneratingNotes() {
+        generationTask?.cancel()
+        generationTask = nil
+        isGeneratingNotes = false
+    }
+
+    private func runGenerateNotes() async {
         guard meeting.hasFinalTranscript else {
             errorMessage = ErrorMessage.noTranscript
             return
@@ -331,6 +383,11 @@ class MeetingViewModel: ObservableObject {
 
         isGeneratingNotes = true
         errorMessage = nil
+        defer {
+            isGeneratingNotes = false
+            generationTask = nil
+        }
+
         let previousGeneratedNotes = meeting.generatedNotes
         var receivedContent = false
         
@@ -348,6 +405,12 @@ class MeetingViewModel: ObservableObject {
         
         var hasError = false
         for await result in stream {
+            if Task.isCancelled {
+                meeting.generatedNotes = previousGeneratedNotes
+                hasError = true
+                break
+            }
+
             switch result {
             case .content(let chunk):
                 if !receivedContent {
@@ -373,8 +436,6 @@ class MeetingViewModel: ObservableObject {
             }
             saveMeeting()
         }
-        
-        isGeneratingNotes = false
     }
     
     func saveMeeting() {
@@ -383,6 +444,7 @@ class MeetingViewModel: ObservableObject {
         let success = LocalStorageManager.shared.saveMeeting(meeting)
         print("💾 Save result: \(success ? "SUCCESS" : "FAILED")")
         if success {
+            hasLocalUnsavedChanges = false
             NotificationCenter.default.post(name: .meetingSaved, object: meeting)
         }
     }
