@@ -321,7 +321,7 @@ class MeetingViewModel: ObservableObject {
             case .success():
                 // Transcription config is valid, proceed with recording
                 hasStartedRecordingSession = true
-                recordingSessionManager.startRecording(for: meeting.id)
+                recordingSessionManager.startRecording(for: meeting.id, existingChunks: meeting.transcriptChunks)
             case .failure(let error):
                 // Show error message
                 errorMessage = error.localizedDescription

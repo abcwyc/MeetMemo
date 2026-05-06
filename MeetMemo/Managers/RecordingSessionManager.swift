@@ -90,16 +90,12 @@ class RecordingSessionManager: ObservableObject {
             .store(in: &cancellables)
     }
     
-    func startRecording(for meetingId: UUID) {
+    func startRecording(for meetingId: UUID, existingChunks: [TranscriptChunk] = []) {
         print("🎙️ Starting recording for meeting: \(meetingId)")
-        
-        // Load the meeting to get existing transcript chunks
-        if let existingMeeting = LocalStorageManager.shared.loadMeeting(id: meetingId) {
-            activeRecordingTranscriptChunks = existingMeeting.transcriptChunks
-            // Seed the audio manager with existing chunks
-            audioManager.transcriptChunks = existingMeeting.transcriptChunks
-        }
-        
+
+        activeRecordingTranscriptChunks = existingChunks
+        audioManager.transcriptChunks = existingChunks
+
         activeMeetingId = meetingId
         activeRecordingStartedAt = Date()
         hasObservedAudioRecordingStart = false

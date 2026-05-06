@@ -81,20 +81,14 @@ class AudioManager: NSObject, ObservableObject {
         print("Starting recording...")
 
         sessionID = UUID()
-        DispatchQueue.main.async {
-            self.errorMessage = nil
-        }
-
+        errorMessage = nil
         stopRecordingInternal()
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        Task { [weak self] in
             guard let self else { return }
-            Task {
-                let micStarted = await self.startMicrophoneTap()
-                if micStarted {
-                    await self.startSystemAudioTap()
-                }
-            }
+            async let micTask: Bool = self.startMicrophoneTap()
+            async let sysTask: Void = self.startSystemAudioTap(isInitialStart: true)
+            _ = await (micTask, sysTask)
         }
     }
 
@@ -218,7 +212,7 @@ class AudioManager: NSObject, ObservableObject {
         print("✨ Fresh audio engine created")
     }
 
-    private func startSystemAudioTap(isRestart: Bool = false) async {
+    private func startSystemAudioTap(isRestart: Bool = false, isInitialStart: Bool = false) async {
         print(isRestart ? "🎧 Restarting system audio tap logic..." : "🎧 Starting system audio tap for the first time...")
 
         if !isRestart {
@@ -231,7 +225,7 @@ class AudioManager: NSObject, ObservableObject {
             }
         }
 
-        guard isRecording || isRestart else {
+        guard isRecording || isRestart || isInitialStart else {
             return
         }
 
