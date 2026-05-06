@@ -257,8 +257,14 @@ final class ProcessTap {
     }
 
     func run(on queue: DispatchQueue, ioBlock: @escaping AudioDeviceIOBlock, invalidationHandler: @escaping InvalidationHandler) throws {
-        assert(activated, "\(#function) called with inactive tap!")
-        assert(self.invalidationHandler == nil, "\(#function) called with tap already active!")
+        guard activated else {
+            throw NSError(domain: "ProcessTap", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "\(#function) called with inactive tap"])
+        }
+        guard self.invalidationHandler == nil else {
+            throw NSError(domain: "ProcessTap", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "\(#function) called with tap already running"])
+        }
 
         errorMessage = nil
         logger.debug("Run tap!")

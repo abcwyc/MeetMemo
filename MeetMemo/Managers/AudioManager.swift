@@ -164,7 +164,9 @@ class AudioManager: NSObject, ObservableObject {
 
                 guard buffer.frameLength > 0, buffer.floatChannelData != nil else {
                     print("❌ Invalid mic buffer detected - restarting")
-                    self.restartMicrophone()
+                    Task { @MainActor [weak self] in
+                        self?.restartMicrophone()
+                    }
                     return
                 }
 

@@ -514,7 +514,7 @@ struct Meeting: Codable, Identifiable, Hashable {
 
         repeat {
             let remainder = value % 26
-            let character = Character(UnicodeScalar(65 + remainder)!)
+            let character = UnicodeScalar(65 + remainder).map(Character.init) ?? "A"
             result.insert(character, at: result.startIndex)
             value = value / 26 - 1
         } while value >= 0

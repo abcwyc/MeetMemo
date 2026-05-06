@@ -74,20 +74,22 @@ class KeychainHelper {
     /// - Returns: True if the save was successful, false otherwise
     func save(_ value: String, forKey key: String) -> Bool {
         guard let data = value.data(using: .utf8) else { return false }
-        
-        let query: [String: Any] = [
+
+        let lookupQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
-            kSecValueData as String: data,
             kSecAttrService as String: serviceName
         ]
-        
-        // Delete any existing item
-        SecItemDelete(query as CFDictionary)
-        
-        // Add the new item
-        let status = SecItemAdd(query as CFDictionary, nil)
-        return status == errSecSuccess
+
+        let exists = SecItemCopyMatching(lookupQuery as CFDictionary, nil) == errSecSuccess
+        if exists {
+            let updates: [String: Any] = [kSecValueData as String: data]
+            return SecItemUpdate(lookupQuery as CFDictionary, updates as CFDictionary) == errSecSuccess
+        } else {
+            var addQuery = lookupQuery
+            addQuery[kSecValueData as String] = data
+            return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
+        }
     }
     
     /// Retrieves a string value from the keychain

@@ -69,6 +69,7 @@ class MeetingViewModel: ObservableObject {
     private var hasLocalUnsavedChanges = false
     private var isApplyingLoadedMeeting = false
     private var generationTask: Task<Void, Never>?
+    private var generationCounter: Int = 0
     
     // Computed property to check if meeting is empty
     var isEmpty: Bool {
@@ -370,6 +371,7 @@ class MeetingViewModel: ObservableObject {
     }
 
     func cancelGeneratingNotes() {
+        generationCounter += 1
         generationTask?.cancel()
         generationTask = nil
         isGeneratingNotes = false
@@ -383,9 +385,13 @@ class MeetingViewModel: ObservableObject {
 
         isGeneratingNotes = true
         errorMessage = nil
+        generationCounter += 1
+        let myGeneration = generationCounter
         defer {
-            isGeneratingNotes = false
-            generationTask = nil
+            if generationCounter == myGeneration {
+                isGeneratingNotes = false
+                generationTask = nil
+            }
         }
 
         let previousGeneratedNotes = meeting.generatedNotes

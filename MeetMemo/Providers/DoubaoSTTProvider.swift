@@ -60,7 +60,7 @@ final class DoubaoSTTProvider: STTProvider {
             }
         }
 
-        receiveNextMessage(on: task, connectID: connectID)
+        startReceiving(on: task, connectID: connectID)
     }
 
     func sendAudio(_ pcmData: Data) {
@@ -72,17 +72,16 @@ final class DoubaoSTTProvider: STTProvider {
     }
 
     func disconnect() {
-        let task: URLSessionWebSocketTask?
-
-        stateLock.lock()
-        isDisconnecting = true
-        didSendFinalAudio = true
-        isConnected = false
-        task = socketTask
-        socketTask = nil
-        session = nil
-        currentConnectID = nil
-        stateLock.unlock()
+        let task: URLSessionWebSocketTask? = stateLock.withLock {
+            isDisconnecting = true
+            didSendFinalAudio = true
+            isConnected = false
+            let t = socketTask
+            socketTask = nil
+            session = nil
+            currentConnectID = nil
+            return t
+        }
 
         utteranceTrackerLock.withLock {
             utteranceTracker.reset()
@@ -164,28 +163,17 @@ final class DoubaoSTTProvider: STTProvider {
     }
 
     private func sendAudioFrame(_ pcmData: Data, isLast: Bool) {
-        let task: URLSessionWebSocketTask?
-        let sequence: Int32
+        let captured: (task: URLSessionWebSocketTask, sequence: Int32)? = stateLock.withLock {
+            guard !isDisconnecting, !didSendFinalAudio, let socketTask else { return nil }
+            let seq = nextAudioSequence
+            nextAudioSequence &+= 1
+            if isLast { didSendFinalAudio = true }
+            return (socketTask, seq)
+        }
+
+        guard let (task, sequence) = captured else { return }
+
         let frame: Data
-
-        stateLock.lock()
-        guard !isDisconnecting,
-              !didSendFinalAudio,
-              let socketTask else {
-            stateLock.unlock()
-            return
-        }
-
-        sequence = nextAudioSequence
-        nextAudioSequence &+= 1
-
-        if isLast {
-            didSendFinalAudio = true
-        }
-
-        task = socketTask
-        stateLock.unlock()
-
         do {
             frame = try DoubaoFrame.encodeAudioData(pcmData: pcmData, sequence: sequence, isLast: isLast)
         } catch {
@@ -195,11 +183,9 @@ final class DoubaoSTTProvider: STTProvider {
             return
         }
 
-        task?.send(.data(frame)) { [weak self] error in
+        task.send(.data(frame)) { [weak self] error in
             guard let self else { return }
-
-            if let error = error,
-               (error as? URLError)?.code != .cancelled {
+            if let error, (error as? URLError)?.code != .cancelled {
                 DispatchQueue.main.async {
                     self.onError?(ErrorHandler.shared.handleError(error))
                 }
@@ -207,26 +193,24 @@ final class DoubaoSTTProvider: STTProvider {
         }
     }
 
-    private func receiveNextMessage(on task: URLSessionWebSocketTask, connectID: String) {
-        task.receive { [weak self] result in
+    private func startReceiving(on task: URLSessionWebSocketTask, connectID: String) {
+        Task { [weak self] in
             guard let self else { return }
-
-            if !self.isCurrentConnection(connectID) {
-                return
-            }
-
-            switch result {
-            case .success(let message):
-                self.handle(message)
-                self.receiveNextMessage(on: task, connectID: connectID)
-
-            case .failure(let error):
-                if (error as? URLError)?.code == .cancelled || self.isDisconnecting {
-                    return
-                }
-
-                DispatchQueue.main.async {
-                    self.onError?(ErrorHandler.shared.handleError(error))
+            while self.isCurrentConnection(connectID) {
+                do {
+                    let message = try await task.receive()
+                    guard self.isCurrentConnection(connectID) else { break }
+                    self.handle(message)
+                } catch {
+                    guard self.isCurrentConnection(connectID) else { break }
+                    let isExpectedClose = (error as? URLError)?.code == .cancelled
+                        || self.stateLock.withLock { self.isDisconnecting }
+                    if !isExpectedClose {
+                        DispatchQueue.main.async {
+                            self.onError?(ErrorHandler.shared.handleError(error))
+                        }
+                    }
+                    break
                 }
             }
         }
