@@ -12,7 +12,7 @@ extension Notification.Name {
 enum MeetingViewTab: String, CaseIterable {
     case context = "Prep"
     case transcript = "Transcript"
-    case enhancedNotes = "Smart Notes"
+    case enhancedNotes = "AI Notes"
 
     static let displayOrder: [MeetingViewTab] = [.context, .transcript, .enhancedNotes]
 
