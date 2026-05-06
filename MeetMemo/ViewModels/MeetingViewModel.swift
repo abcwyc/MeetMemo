@@ -18,9 +18,9 @@ enum MeetingViewTab: String, CaseIterable {
 
     var chineseLabel: String {
         switch self {
-        case .context: return "会前资料"
+        case .context: return "会议资料"
         case .transcript: return "转录原文"
-        case .enhancedNotes: return "智能纪要"
+        case .enhancedNotes: return "AI纪要"
         }
     }
 }
