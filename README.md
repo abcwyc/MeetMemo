@@ -6,7 +6,7 @@
   <p align="center">
     免费、开源、运行在本地的 macOS AI 会议纪要助手
     <br />
-    <a href="https://file.348580.xyz/drive/MeetMemo%202026-05-05%2023-02-46.zip">下载 macOS 15+ 版本</a>
+    <a href="https://github.com/abcwyc/MeetMemo/releases">下载 macOS 15+ 版本</a>
   </p>
 </div>
 
@@ -54,7 +54,7 @@ MeetMemo 基于开源项目 meetingnotes 二次开发，针对国内网络环境
 
 ### 1. 安装并打开
 
-下载最新的 [MeetMemo.dmg](https://file.348580.xyz/drive/MeetMemo%202026-05-05%2023-02-46.zip)，安装后打开应用。
+下载最新的 [MeetMemo.dmg](https://github.com/abcwyc/MeetMemo/releases)，安装后打开应用。
 
 首次启动会进入引导页，需要完成权限和服务配置。你也可以稍后在「设置」中重新配置。
 
