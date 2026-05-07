@@ -21,6 +21,10 @@ class AudioManager: NSObject, ObservableObject {
     private let sttProviderFactory: STTProviderFactory
     private var micSTT: STTProvider?
     private var systemSTT: STTProvider?
+    private var sttRotationTask: Task<Void, Never>?
+    private var rotatingSTTSources: Set<AudioSource> = []
+    private let sttRotationInterval: UInt64 = 25 * 60 * 1_000_000_000
+    private var recordingStartedAt: Date?
 
     // Unique identifier for the current recording session
     private var sessionID = UUID()
@@ -42,6 +46,16 @@ class AudioManager: NSObject, ObservableObject {
         var speakerId: Int?
         var startTime: Int?
         var endTime: Int?
+    }
+
+    private final class STTSessionTimeOffset {
+        var milliseconds: Int
+        var isActive: Bool
+
+        init(milliseconds: Int, isActive: Bool) {
+            self.milliseconds = milliseconds
+            self.isActive = isActive
+        }
     }
 
     private var currentInterim: [AudioSource: InterimTranscriptState] = [:]
@@ -80,22 +94,28 @@ class AudioManager: NSObject, ObservableObject {
     func startRecording() {
         print("Starting recording...")
 
+        stopRecordingInternal()
         sessionID = UUID()
         errorMessage = nil
-        stopRecordingInternal()
+        recordingStartedAt = Date()
 
         Task { [weak self] in
             guard let self else { return }
             async let micTask: Bool = self.startMicrophoneTap()
             async let sysTask: Void = self.startSystemAudioTap(isInitialStart: true)
             _ = await (micTask, sysTask)
+            if self.isRecording {
+                self.startSTTRotationTimer(for: self.sessionID)
+            }
         }
     }
 
     private func stopRecordingInternal() {
         print("Internal cleanup...")
 
+        stopSTTRotationTimer()
         isRecording = false
+        recordingStartedAt = nil
         AudioLevelManager.shared.updateRecordingState(false)
 
         if isTapActive {
@@ -397,7 +417,9 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     func stopRecording() {
+        stopSTTRotationTimer()
         isRecording = false
+        recordingStartedAt = nil
         AudioLevelManager.shared.updateRecordingState(false)
         print("Stopping recording...")
 
@@ -464,18 +486,41 @@ class AudioManager: NSObject, ObservableObject {
             return existing
         }
 
+        let provider = try await makeConnectedSTTProvider(
+            for: source,
+            sessionToken: sessionID,
+            timeOffset: STTSessionTimeOffset(milliseconds: 0, isActive: true)
+        )
+
+        switch source {
+        case .mic:
+            micSTT = provider
+        case .system:
+            systemSTT = provider
+        }
+
+        return provider
+    }
+
+    private func makeConnectedSTTProvider(
+        for source: AudioSource,
+        sessionToken: UUID,
+        timeOffset: STTSessionTimeOffset
+    ) async throws -> STTProvider {
         let config = APIKeyValidator.shared.currentSTTConfig()
         guard config.isConfigured else {
             throw ProviderValidationError.missingSTTConfig
         }
 
         let provider = sttProviderFactory.makeProvider()
-        let sessionToken = sessionID
 
         provider.onTranscriptUpdate = { [weak self] update in
             DispatchQueue.main.async {
-                guard let self, self.sessionID == sessionToken else { return }
-                self.handleTranscriptUpdate(update, source: source)
+                guard let self, self.sessionID == sessionToken, timeOffset.isActive else { return }
+                self.handleTranscriptUpdate(
+                    Self.offsetTranscriptUpdate(update, by: timeOffset.milliseconds),
+                    source: source
+                )
             }
         }
 
@@ -487,15 +532,120 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         try await provider.connect(config: config)
+        return provider
+    }
+
+    private func startSTTRotationTimer(for sessionToken: UUID) {
+        sttRotationTask?.cancel()
+        let interval = sttRotationInterval
+        sttRotationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: interval)
+                guard !Task.isCancelled else { break }
+                guard let self else { break }
+                await self.rotateSTTProvidersIfNeeded(sessionToken: sessionToken)
+            }
+        }
+    }
+
+    private func stopSTTRotationTimer() {
+        sttRotationTask?.cancel()
+        sttRotationTask = nil
+        rotatingSTTSources.removeAll()
+    }
+
+    private func rotateSTTProvidersIfNeeded(sessionToken: UUID) async {
+        guard isRecording, sessionID == sessionToken else { return }
+
+        if micSTT != nil {
+            await rotateSTTProvider(for: .mic, sessionToken: sessionToken)
+        }
+
+        if systemSTT != nil {
+            await rotateSTTProvider(for: .system, sessionToken: sessionToken)
+        }
+    }
+
+    private func rotateSTTProvider(for source: AudioSource, sessionToken: UUID) async {
+        guard isRecording,
+              sessionID == sessionToken,
+              !rotatingSTTSources.contains(source),
+              let oldProvider = provider(for: source) else {
+            return
+        }
+
+        rotatingSTTSources.insert(source)
+        defer { rotatingSTTSources.remove(source) }
+
+        print("🔁 Rotating STT provider for \(source)...")
 
         switch source {
         case .mic:
-            micSTT = provider
+            guard micSTT === oldProvider else { return }
         case .system:
-            systemSTT = provider
+            guard systemSTT === oldProvider else { return }
         }
 
-        return provider
+        do {
+            let timeOffset = STTSessionTimeOffset(milliseconds: 0, isActive: false)
+            let newProvider = try await makeConnectedSTTProvider(
+                for: source,
+                sessionToken: sessionToken,
+                timeOffset: timeOffset
+            )
+            guard isRecording, sessionID == sessionToken else {
+                newProvider.disconnect()
+                return
+            }
+
+            switch source {
+            case .mic:
+                guard micSTT === oldProvider else {
+                    newProvider.disconnect()
+                    return
+                }
+                micSTT = newProvider
+            case .system:
+                guard systemSTT === oldProvider else {
+                    newProvider.disconnect()
+                    return
+                }
+                systemSTT = newProvider
+            }
+
+            timeOffset.milliseconds = elapsedRecordingMilliseconds()
+            timeOffset.isActive = true
+
+            oldProvider.sendLastAudio()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                oldProvider.disconnect()
+            }
+            currentInterim.removeValue(forKey: source)
+            errorMessage = nil
+            print("✅ Rotated STT provider for \(source)")
+        } catch {
+            let errorMsg = ErrorHandler.shared.handleError(error)
+            print("❌ Failed to rotate STT provider for \(source): \(errorMsg)")
+        }
+    }
+
+    private func elapsedRecordingMilliseconds() -> Int {
+        guard let recordingStartedAt else { return 0 }
+        return max(0, Int(Date().timeIntervalSince(recordingStartedAt) * 1000))
+    }
+
+    nonisolated static func offsetTranscriptUpdate(_ update: STTTranscriptUpdate, by offsetMilliseconds: Int) -> STTTranscriptUpdate {
+        guard offsetMilliseconds > 0 else { return update }
+
+        return STTTranscriptUpdate(
+            text: update.text,
+            isFinal: update.isFinal,
+            speakerTag: update.speakerTag,
+            speakerId: update.speakerId,
+            startTime: update.startTime.map { $0 + offsetMilliseconds },
+            endTime: update.endTime.map { $0 + offsetMilliseconds },
+            isCorrection: update.isCorrection
+        )
     }
 
     private func provider(for source: AudioSource) -> STTProvider? {

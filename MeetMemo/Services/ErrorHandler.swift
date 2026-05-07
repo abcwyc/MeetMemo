@@ -25,6 +25,10 @@ class ErrorHandler {
         
         // Handle provider API errors by checking error description
         let errorDescription = error.localizedDescription.lowercased()
+        if errorDescription.contains("message too long") {
+            return "转写服务返回的消息过大。请升级到最新版本后重试，或将超长会议分段录制。"
+        }
+
         if let providerError = categorizeProviderError(errorDescription) {
             return providerError
         }

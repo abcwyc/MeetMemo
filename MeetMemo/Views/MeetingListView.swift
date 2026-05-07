@@ -11,6 +11,7 @@ private enum SidebarLayout {
     static let secondaryButtonPreferredWidth: CGFloat = 96
     static let sidebarMinimumWidth: CGFloat = 230
     static let sidebarPreferredWidth: CGFloat = 260
+    static let listTopPadding: CGFloat = 12
 
     static var actionRowPreferredWidth: CGFloat {
         primaryButtonMinWidth
@@ -103,13 +104,15 @@ struct MeetingListView: View {
 
             Divider()
 
+            Color.clear
+                .frame(height: SidebarLayout.listTopPadding)
+
             List(selection: $selectedMeeting) {
                 ForEach(sortedMeetings, id: \.id) { meeting in
                     meetingRow(meeting)
                 }
                 .onDelete(perform: deleteMeetings)
             }
-            .contentMargins(.top, 12, for: .scrollContent)
             .tint(.accentColor)
             .overlay {
                 if viewModel.filteredMeetings.isEmpty && !viewModel.isLoading {
@@ -250,8 +253,7 @@ struct MeetingListView: View {
     private func meetingRow(_ meeting: MeetingSummary) -> some View {
         MeetingRowView(
             meeting: meeting,
-            onRename: { beginRenaming(meeting) },
-            onDelete: { deleteMeeting(meeting) }
+            onRename: { beginRenaming(meeting) }
         )
         .tag(meeting)
     }
@@ -424,7 +426,6 @@ private struct DetailHeaderActionButtonStyle: ButtonStyle {
 struct MeetingRowView: View {
     let meeting: MeetingSummary
     var onRename: () -> Void = {}
-    var onDelete: () -> Void = {}
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
 
@@ -453,12 +454,6 @@ struct MeetingRowView: View {
                 onRename()
             } label: {
                 Label(langMgr.t("重命名", "Rename"), systemImage: "pencil")
-            }
-            Divider()
-            Button(role: .destructive) {
-                onDelete()
-            } label: {
-                Label(langMgr.t("删除", "Delete"), systemImage: "trash")
             }
         }
     }

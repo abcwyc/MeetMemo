@@ -6,6 +6,7 @@ final class DoubaoSTTProvider: STTProvider {
 
     private let endpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
     private let resourceId = "volc.seedasr.sauc.duration"
+    private let maximumWebSocketMessageSize = 64 * 1024 * 1024
     private let stateLock = NSLock()
     private let utteranceTrackerLock = NSLock()
 
@@ -33,6 +34,7 @@ final class DoubaoSTTProvider: STTProvider {
         let request = buildRequest(config: config, connectID: connectID)
         let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: request)
+        task.maximumMessageSize = maximumWebSocketMessageSize
 
         stateLock.withLock {
             self.session = session
