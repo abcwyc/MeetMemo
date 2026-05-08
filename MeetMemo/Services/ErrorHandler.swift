@@ -24,9 +24,13 @@ class ErrorHandler {
         }
         
         // Handle provider API errors by checking error description
-        let errorDescription = error.localizedDescription.lowercased()
+        let errorDescription = normalizedErrorDetail(error.localizedDescription).lowercased()
         if errorDescription.contains("message too long") {
             return "转写服务返回的消息过大。请升级到最新版本后重试，或将超长会议分段录制。"
+        }
+
+        if isConcurrencyQuotaDetail(errorDescription) {
+            return ErrorMessage.sttConcurrencyQuotaExceeded
         }
 
         if let providerError = categorizeProviderError(errorDescription) {
@@ -67,6 +71,10 @@ class ErrorHandler {
     /// - Returns: User-friendly error message
     func handleHTTPStatusCode(_ statusCode: Int, message: String? = nil) -> String {
         let detail = normalizedErrorDetail(message)
+
+        if isConcurrencyQuotaDetail(detail) {
+            return ErrorMessage.sttConcurrencyQuotaExceeded
+        }
 
         switch statusCode {
         case 200...299:
@@ -189,6 +197,10 @@ class ErrorHandler {
         return nil
     }
 
+    func isConcurrencyQuotaErrorMessage(_ message: String) -> Bool {
+        isConcurrencyQuotaDetail(normalizedErrorDetail(message))
+    }
+
     private func normalizedErrorDetail(_ message: String?) -> String {
         let trimmed = (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
@@ -203,9 +215,17 @@ class ErrorHandler {
                 return message.trimmingCharacters(in: .whitespacesAndNewlines)
             }
 
+            if let detail = error["detail"] as? String {
+                return detail.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
             if let type = error["type"] as? String, !type.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return type.trimmingCharacters(in: .whitespacesAndNewlines)
             }
+        }
+
+        if let error = json["error"] as? String {
+            return error.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         if let message = json["message"] as? String {
@@ -255,7 +275,19 @@ class ErrorHandler {
             || normalized.contains("key is missing or invalid")
     }
 
+    private func isConcurrencyQuotaDetail(_ detail: String) -> Bool {
+        let normalized = detail.lowercased()
+        return (normalized.contains("quota exceeded") && normalized.contains("concurrency"))
+            || normalized.contains("并发额度")
+    }
+
     func handleDoubaoError(code: Int, message: String? = nil) -> String {
+        let detail = normalizedErrorDetail(message)
+
+        if isConcurrencyQuotaDetail(detail) {
+            return ErrorMessage.sttConcurrencyQuotaExceeded
+        }
+
         switch code {
         case 45000001:
             return ErrorMessage.badRequest
@@ -268,7 +300,7 @@ class ErrorHandler {
         case 55000031:
             return ErrorMessage.apiServerError
         default:
-            let fallback = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let fallback = detail.trimmingCharacters(in: .whitespacesAndNewlines)
             if !fallback.isEmpty {
                 return fallback
             }
@@ -307,6 +339,7 @@ enum ErrorMessage {
     static let accessForbidden = "访问被拒绝。请检查凭证权限。"
     static let apiEndpointNotFound = "API 端点不存在。请检查服务地址。OpenAI 兼容服务需要填写基础地址，例如火山方舟 https://ark.cn-beijing.volces.com/api/v3，火山方舟 Coding Plan https://ark.cn-beijing.volces.com/api/coding/v3，Kimi 官方 https://api.moonshot.cn/v1。"
     static let rateLimited = "API 请求频率超限，请稍后再试。"
+    static let sttConcurrencyQuotaExceeded = "语音识别并发额度已达上限。请结束其他录音任务后稍后重试，或提升豆包语音识别服务的并发额度。"
     static let apiServerError = "服务端错误，请稍后再试。"
     static let requestTimeout = "Request timeout. Please try again."
     static let requestTooLarge = "Request too large. Please try again."

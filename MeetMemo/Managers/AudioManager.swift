@@ -107,9 +107,10 @@ class AudioManager: NSObject, ObservableObject {
 
         Task { [weak self] in
             guard let self else { return }
-            async let micTask: Bool = self.startMicrophoneTap(sessionToken: startedSessionID)
-            async let sysTask: Void = self.startSystemAudioTap(isInitialStart: true, sessionToken: startedSessionID)
-            _ = await (micTask, sysTask)
+            let micStarted = await self.startMicrophoneTap(sessionToken: startedSessionID)
+            if micStarted {
+                await self.startSystemAudioTap(isInitialStart: true, sessionToken: startedSessionID)
+            }
             if self.isRecording, self.sessionID == startedSessionID, !self.isStoppingRecording {
                 self.startSTTRotationTimer(for: startedSessionID)
             }
@@ -322,6 +323,10 @@ class AudioManager: NSObject, ObservableObject {
             guard isActiveSession(activeSessionToken) else { return }
             let errorMsg = ErrorHandler.shared.handleError(error)
             print("❌ Failed to connect system STT provider: \(errorMsg)")
+            if ErrorHandler.shared.isConcurrencyQuotaErrorMessage(errorMsg), isRecording {
+                disableSystemAudioAfterConcurrencyLimit(message: errorMsg)
+                return
+            }
             errorMessage = errorMsg
             if !isRestart {
                 stopRecordingInternal()
@@ -642,12 +647,17 @@ class AudioManager: NSObject, ObservableObject {
         switch source {
         case .mic:
             guard micSTT === oldProvider else { return }
+            micSTT = nil
         case .system:
             guard systemSTT === oldProvider else { return }
+            systemSTT = nil
         }
 
+        oldProvider.sendLastAudio()
+        oldProvider.disconnect()
+
         do {
-            let timeOffset = STTSessionTimeOffset(milliseconds: 0, isActive: false)
+            let timeOffset = STTSessionTimeOffset(milliseconds: elapsedRecordingMilliseconds(), isActive: true)
             let newProvider = try await makeConnectedSTTProvider(
                 for: source,
                 sessionToken: sessionToken,
@@ -660,32 +670,50 @@ class AudioManager: NSObject, ObservableObject {
 
             switch source {
             case .mic:
-                guard micSTT === oldProvider else {
+                guard micSTT == nil else {
                     newProvider.disconnect()
                     return
                 }
                 micSTT = newProvider
             case .system:
-                guard systemSTT === oldProvider else {
+                guard systemSTT == nil else {
                     newProvider.disconnect()
                     return
                 }
                 systemSTT = newProvider
             }
 
-            timeOffset.milliseconds = elapsedRecordingMilliseconds()
-            timeOffset.isActive = true
-
-            oldProvider.sendLastAudio()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                oldProvider.disconnect()
-            }
             currentInterim.removeValue(forKey: source)
             errorMessage = nil
             print("✅ Rotated STT provider for \(source)")
         } catch {
             let errorMsg = ErrorHandler.shared.handleError(error)
             print("❌ Failed to rotate STT provider for \(source): \(errorMsg)")
+            if source == .system, ErrorHandler.shared.isConcurrencyQuotaErrorMessage(errorMsg) {
+                disableSystemAudioAfterConcurrencyLimit(message: errorMsg)
+                return
+            }
+
+            do {
+                let restoredProvider = try await makeConnectedSTTProvider(
+                    for: source,
+                    sessionToken: sessionToken,
+                    timeOffset: STTSessionTimeOffset(milliseconds: elapsedRecordingMilliseconds(), isActive: true)
+                )
+                switch source {
+                case .mic:
+                    micSTT = restoredProvider
+                case .system:
+                    systemSTT = restoredProvider
+                }
+            } catch {
+                let restoreError = ErrorHandler.shared.handleError(error)
+                print("❌ Failed to restore \(source) STT provider after rotation failure: \(restoreError)")
+                errorMessage = restoreError
+                if source == .mic, isRecording {
+                    stopRecording()
+                }
+            }
         }
     }
 
@@ -816,6 +844,11 @@ class AudioManager: NSObject, ObservableObject {
             return
         }
 
+        if source == .system, ErrorHandler.shared.isConcurrencyQuotaErrorMessage(message), isRecording {
+            disableSystemAudioAfterConcurrencyLimit(message: message)
+            return
+        }
+
         if isRecoverableSTTError(message) {
             print("ℹ️ Recoverable STT error detected, restarting \(source) provider.")
             Task { [weak self] in
@@ -830,6 +863,22 @@ class AudioManager: NSObject, ObservableObject {
         if isRecording {
             stopRecording()
         }
+    }
+
+    private func disableSystemAudioAfterConcurrencyLimit(message: String) {
+        print("ℹ️ Disabling system audio because STT concurrency quota was exceeded.")
+        systemSTT?.disconnect()
+        systemSTT = nil
+
+        if isTapActive {
+            processTap?.invalidate()
+            processTap = nil
+            isTapActive = false
+        }
+
+        systemAudioLevel = 0
+        AudioLevelManager.shared.updateSystemLevel(0)
+        errorMessage = "\(message) 已自动切换为仅录制麦克风。"
     }
 
     private func isRecoverableSTTError(_ message: String) -> Bool {
