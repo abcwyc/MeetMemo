@@ -29,6 +29,7 @@ struct MeetingListView: View {
     @State private var selectedMeeting: MeetingSummary?
     @State private var navigationPath = NavigationPath()
     @State private var renamingMeeting: MeetingSummary?
+    @State private var deletingMeeting: MeetingSummary?
     @State private var renameText = ""
     @State private var isImportingAudioFile = false
 
@@ -148,6 +149,22 @@ struct MeetingListView: View {
                 renamingMeeting = nil
             }
         }
+        .alert(langMgr.t("删除会议", "Delete Meeting"), isPresented: Binding(
+            get: { deletingMeeting != nil },
+            set: { if !$0 { deletingMeeting = nil } }
+        )) {
+            Button(langMgr.t("删除", "Delete"), role: .destructive) {
+                if let meeting = deletingMeeting {
+                    deleteMeeting(meeting)
+                }
+                deletingMeeting = nil
+            }
+            Button(langMgr.t("取消", "Cancel"), role: .cancel) {
+                deletingMeeting = nil
+            }
+        } message: {
+            Text(langMgr.t("确定要删除这个会议吗？此操作不可撤销。", "Are you sure you want to delete this meeting? This action cannot be undone."))
+        }
     }
 
     private var sidebarActionRow: some View {
@@ -253,7 +270,8 @@ struct MeetingListView: View {
     private func meetingRow(_ meeting: MeetingSummary) -> some View {
         MeetingRowView(
             meeting: meeting,
-            onRename: { beginRenaming(meeting) }
+            onRename: { beginRenaming(meeting) },
+            onDelete: { deletingMeeting = meeting }
         )
         .tag(meeting)
     }
@@ -264,10 +282,10 @@ struct MeetingListView: View {
     }
 
     private func deleteMeeting(_ meeting: MeetingSummary) {
-        viewModel.deleteMeeting(meeting)
         if selectedMeeting?.id == meeting.id {
             selectedMeeting = nil
         }
+        viewModel.deleteMeeting(meeting)
     }
 
     private func deleteMeetings(at indexSet: IndexSet) {
@@ -426,6 +444,7 @@ private struct DetailHeaderActionButtonStyle: ButtonStyle {
 struct MeetingRowView: View {
     let meeting: MeetingSummary
     var onRename: () -> Void = {}
+    var onDelete: () -> Void = {}
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
 
@@ -454,6 +473,12 @@ struct MeetingRowView: View {
                 onRename()
             } label: {
                 Label(langMgr.t("重命名", "Rename"), systemImage: "pencil")
+            }
+
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label(langMgr.t("删除会议", "Delete Meeting"), systemImage: "trash")
             }
         }
     }

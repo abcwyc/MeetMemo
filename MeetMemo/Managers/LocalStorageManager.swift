@@ -12,6 +12,7 @@ class LocalStorageManager {
     private let meetingSummariesDirectory: URL
     private let templatesDirectory: URL
     private let storageLock = NSRecursiveLock()
+    private var deletedMeetingIDs = Set<UUID>()
     
     private init() {
         // The Documents directory should always exist for the app container, but keep
@@ -54,6 +55,11 @@ class LocalStorageManager {
     }
 
     private func saveMeetingLocked(_ meeting: Meeting) -> Bool {
+        guard !deletedMeetingIDs.contains(meeting.id) else {
+            print("🚫 Skipping save for deleted meeting: \(meeting.id)")
+            return false
+        }
+
         let fileURL = meetingsDirectory.appendingPathComponent("\(meeting.id.uuidString).json")
         var meetingToSave = mergedMeetingForSave(meeting, fileURL: fileURL)
         meetingToSave.syncLegacyUserNotesFromContext()
@@ -284,6 +290,7 @@ class LocalStorageManager {
         let summaryURL = meetingSummaryFileURL(for: meetingId)
 
         do {
+            deletedMeetingIDs.insert(meetingId)
             try removeFileIfPresent(at: fileURL)
             try removeFileIfPresent(at: summaryURL)
             print("✅ Deleted meeting: \(meetingId)")
