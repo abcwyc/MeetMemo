@@ -7,17 +7,19 @@ final class APIKeyValidator {
     private init() {}
 
     func currentSTTConfig() -> STTProviderConfig {
-        STTProviderConfig(
-            appId: (KeychainHelper.shared.getSTTAppId() ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
-            accessToken: (KeychainHelper.shared.getSTTAccessToken() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
+        return STTProviderConfig(
+            appId: providerConfig.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines),
+            accessToken: providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
     func currentLLMConfig() -> LLMProviderConfig {
-        LLMProviderConfig(
-            apiKey: (KeychainHelper.shared.getLLMApiKey() ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
-            baseURL: (KeychainHelper.shared.getLLMBaseURL() ?? LLMProviderConfig.defaultBaseURL).trimmingCharacters(in: .whitespacesAndNewlines),
-            model: (KeychainHelper.shared.getLLMModel() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
+        return LLMProviderConfig(
+            apiKey: providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            baseURL: providerConfig.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            model: providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }
 
@@ -49,8 +51,16 @@ final class APIKeyValidator {
     }
 
     func validateCurrentConfig() async -> Result<Void, ProviderValidationError> {
-        let sttConfig = currentSTTConfig()
-        let llmConfig = currentLLMConfig()
+        let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
+        let sttConfig = STTProviderConfig(
+            appId: providerConfig.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines),
+            accessToken: providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+        let llmConfig = LLMProviderConfig(
+            apiKey: providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            baseURL: providerConfig.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            model: providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
 
         let sttValidation = await validateSTTConfig(sttConfig)
         guard case .success = sttValidation else {

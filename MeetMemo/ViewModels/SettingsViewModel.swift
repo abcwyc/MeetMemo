@@ -16,16 +16,17 @@ class SettingsViewModel: ObservableObject {
     
     /// Loads provider credentials from keychain.
     func loadProviderConfig() {
-        settings.sttAppId = (KeychainHelper.shared.getSTTAppId() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.sttAccessToken = (KeychainHelper.shared.getSTTAccessToken() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.llmApiKey = (KeychainHelper.shared.getLLMApiKey() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
+        settings.sttAppId = providerConfig.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.sttAccessToken = providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.llmApiKey = providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let storedBaseURL = KeychainHelper.shared.getLLMBaseURL() ?? LLMProviderConfig.defaultBaseURL
+        let storedBaseURL = providerConfig.llmBaseURL
         settings.llmBaseURL = storedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? LLMProviderConfig.defaultBaseURL
             : storedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        settings.llmModel = (KeychainHelper.shared.getLLMModel() ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.llmModel = providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     func loadTemplates() {
@@ -84,14 +85,7 @@ class SettingsViewModel: ObservableObject {
         settings.llmBaseURL = normalizedBaseURL
         settings.llmModel = settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let saves = [
-            KeychainHelper.shared.saveSTTAppId(settings.sttAppId),
-            KeychainHelper.shared.saveSTTAccessToken(settings.sttAccessToken),
-            KeychainHelper.shared.saveLLMApiKey(settings.llmApiKey),
-            KeychainHelper.shared.saveLLMBaseURL(settings.llmBaseURL),
-            KeychainHelper.shared.saveLLMModel(settings.llmModel)
-        ]
-        let allSaved = saves.allSatisfy { $0 }
+        let allSaved = KeychainHelper.shared.saveProviderConfig(settings)
 
         if showMessage {
             if allSaved {
@@ -211,13 +205,14 @@ class SettingsViewModel: ObservableObject {
             return
         }
 
-        let legacyKey = KeychainHelper.shared.getAPIKey()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let legacyKey = KeychainHelper.shared.getAPIKeyWithoutAuthentication()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
         let hasNewSTTConfig =
-            !(KeychainHelper.shared.getSTTAppId()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty &&
-            !(KeychainHelper.shared.getSTTAccessToken()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            !providerConfig.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasNewLLMConfig =
-            !(KeychainHelper.shared.getLLMApiKey()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty &&
-            !(KeychainHelper.shared.getLLMModel()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+            !providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+            !providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         if !legacyKey.isEmpty && (!hasNewSTTConfig || !hasNewLLMConfig) {
             settings.hasCompletedOnboarding = false
