@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var micPermissionGranted = false
     @State private var systemAudioPermissionGranted = false
     @State private var audioRecordingPermission = AudioRecordingPermission()
+    private let llmSetupGuideURL = URL(string: "https://file.348580.xyz/2026/05/8fdfba8153b5029297b42f4ac6c4d00d.html")!
 
     init(viewModel: SettingsViewModel, navigationPath: Binding<NavigationPath> = .constant(NavigationPath())) {
         self.viewModel = viewModel
@@ -202,12 +203,20 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Text(langMgr.t(
-                    "填写 Base URL、API Key 和 Model Name 即可。Anthropic 地址会使用 Messages API，其他地址会使用 OpenAI 兼容的 Chat Completions API。",
-                    "Fill in Base URL, API Key, and Model Name. Anthropic URLs use the Messages API; other URLs use the OpenAI-compatible Chat Completions API."
-                ))
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(langMgr.t(
+                        "填写 Base URL、API Key 和 Model Name 即可。Anthropic 地址会使用 Messages API，其他地址会使用 OpenAI 兼容的 Chat Completions API。",
+                        "Fill in Base URL, API Key, and Model Name. Anthropic URLs use the Messages API; other URLs use the OpenAI-compatible Chat Completions API."
+                    ))
+                    .foregroundColor(.secondary)
+
+                    Link(
+                        langMgr.t("LLM配置教程", "LLM Setup Guide"),
+                        destination: llmSetupGuideURL
+                    )
+                    .buttonStyle(.link)
+                }
                 .font(.caption)
-                .foregroundColor(.secondary)
 
                 SecureField("API Key", text: $viewModel.settings.llmApiKey)
                     .textFieldStyle(.roundedBorder)
