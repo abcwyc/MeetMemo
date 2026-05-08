@@ -271,6 +271,7 @@ struct MeetingListView: View {
         MeetingRowView(
             meeting: meeting,
             onRename: { beginRenaming(meeting) },
+            onRevealSourceFile: { revealSourceFile(for: meeting) },
             onDelete: { deletingMeeting = meeting }
         )
         .tag(meeting)
@@ -291,6 +292,17 @@ struct MeetingListView: View {
     private func deleteMeetings(at indexSet: IndexSet) {
         for index in indexSet {
             deleteMeeting(sortedMeetings[index])
+        }
+    }
+
+    private func revealSourceFile(for meeting: MeetingSummary) {
+        let fileURL = LocalStorageManager.shared.meetingsDirectoryURL
+            .appendingPathComponent("\(meeting.id.uuidString).json")
+
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([fileURL])
+        } else {
+            NSWorkspace.shared.open(LocalStorageManager.shared.meetingsDirectoryURL)
         }
     }
 
@@ -444,6 +456,7 @@ private struct DetailHeaderActionButtonStyle: ButtonStyle {
 struct MeetingRowView: View {
     let meeting: MeetingSummary
     var onRename: () -> Void = {}
+    var onRevealSourceFile: () -> Void = {}
     var onDelete: () -> Void = {}
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
@@ -473,6 +486,12 @@ struct MeetingRowView: View {
                 onRename()
             } label: {
                 Label(langMgr.t("重命名", "Rename"), systemImage: "pencil")
+            }
+
+            Button {
+                onRevealSourceFile()
+            } label: {
+                Label(langMgr.t("查看源文件", "Show Source File"), systemImage: "doc.text")
             }
 
             Button(role: .destructive) {
