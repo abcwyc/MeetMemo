@@ -40,4 +40,14 @@ final class STTRotationTests: XCTestCase {
         XCTAssertNil(shifted.startTime)
         XCTAssertNil(shifted.endTime)
     }
+
+    func testMaximumTranscriptEndTimeUsesExistingMeetingTimeline() {
+        let chunks = [
+            TranscriptChunk(source: .mic, text: "first", isFinal: true, startTime: 1_000, endTime: 2_000),
+            TranscriptChunk(source: .system, text: "second", isFinal: true, startTime: 4_000, endTime: nil),
+            TranscriptChunk(source: .mic, text: "third", isFinal: true, startTime: 5_000, endTime: 8_500)
+        ]
+
+        XCTAssertEqual(AudioManager.maximumTranscriptEndTime(in: chunks), 8_500)
+    }
 }

@@ -84,7 +84,7 @@ struct TemplateListView: View {
         }
         .sheet(isPresented: $isCreatingNew) {
             NavigationStack {
-                TemplateEditView(template: viewModel.createNewTemplate()) { updatedTemplate in
+                TemplateEditView(template: viewModel.createNewTemplate(), showsCancelButton: true) { updatedTemplate in
                     viewModel.saveTemplate(updatedTemplate)
                     isCreatingNew = false
                 }

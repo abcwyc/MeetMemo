@@ -4,10 +4,12 @@ struct TemplateEditView: View {
     @State private var template: NoteTemplate
     @EnvironmentObject var langMgr: LanguageManager
     let onSave: (NoteTemplate) -> Void
+    let showsCancelButton: Bool
     @Environment(\.dismiss) private var dismiss
 
-    init(template: NoteTemplate, onSave: @escaping (NoteTemplate) -> Void) {
+    init(template: NoteTemplate, showsCancelButton: Bool = false, onSave: @escaping (NoteTemplate) -> Void) {
         self._template = State(initialValue: template)
+        self.showsCancelButton = showsCancelButton
         self.onSave = onSave
     }
 
@@ -47,8 +49,23 @@ struct TemplateEditView: View {
                 }
 
                 // Save button
-                HStack {
+                HStack(spacing: 20) {
                     Spacer()
+
+                    if showsCancelButton {
+                        Button {
+                            dismiss()
+                        } label: {
+                            Text(langMgr.t("取消", "Cancel"))
+                                .font(.headline)
+                                .frame(width: 140)
+                                .padding(.vertical, 12)
+                                .background(Color.secondary.opacity(0.14))
+                                .foregroundColor(.primary)
+                                .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                    }
 
                     Button {
                         onSave(template)

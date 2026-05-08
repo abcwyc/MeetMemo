@@ -106,9 +106,11 @@ class RecordingSessionManager: ObservableObject {
         print("🛑 Stopping recording for meeting: \(activeMeetingId?.uuidString ?? "unknown")")
 
         isStoppingFromSessionManager = true
-        audioManager.stopRecording()
-        isStoppingFromSessionManager = false
-        finishActiveSession(saveFinalTranscript: true)
+        audioManager.stopRecording { [weak self] in
+            guard let self else { return }
+            self.finishActiveSession(saveFinalTranscript: true)
+            self.isStoppingFromSessionManager = false
+        }
     }
 
     private func finishActiveSession(saveFinalTranscript: Bool) {
