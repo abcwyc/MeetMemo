@@ -308,6 +308,40 @@ class MeetingViewModel: ObservableObject {
     private func refreshTranscriptDisplayChunks() {
         transcriptDisplayChunks = meeting.transcriptDisplayChunks
     }
+
+    var speakerNamingOptions: [TranscriptSpeakerNamingOption] {
+        meeting.speakerNamingOptions
+    }
+
+    var speakerParticipantNames: [String] {
+        normalizedSpeakerParticipantNames(
+            UserDefaultsManager.shared.speakerParticipantNames
+            + meeting.speakerParticipantNames
+            + Array(meeting.speakerNameMappings.values)
+        )
+    }
+
+    func applySpeakerNaming(participantNames: [String], mappings: [String: String]) {
+        let normalizedParticipants = normalizedSpeakerParticipantNames(participantNames)
+        UserDefaultsManager.shared.speakerParticipantNames = normalizedParticipants
+        meeting.applySpeakerNaming(participantNames: normalizedParticipants, mappings: mappings)
+        refreshTranscriptDisplayChunks()
+        saveMeeting()
+    }
+
+    private func normalizedSpeakerParticipantNames(_ names: [String]) -> [String] {
+        var seenNames = Set<String>()
+        var result: [String] = []
+
+        for rawName in names {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !seenNames.contains(name) else { continue }
+            seenNames.insert(name)
+            result.append(name)
+        }
+
+        return result
+    }
     
     func startRecording() {
         // Validate transcription provider configuration before starting recording

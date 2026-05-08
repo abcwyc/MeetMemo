@@ -88,6 +88,13 @@ struct TranscriptDisplayChunk: Identifiable, Hashable {
     let timeLabel: String
 }
 
+struct TranscriptSpeakerNamingOption: Identifiable, Hashable {
+    let id: String
+    let defaultLabel: String
+    let currentName: String?
+    let sampleTexts: [String]
+}
+
 struct CollapsedTranscriptChunk: Identifiable {
     let id: UUID
     let timestamp: Date
@@ -237,6 +244,8 @@ struct Meeting: Codable, Identifiable, Hashable {
     var contextItems: [MeetingContextItem]
     var generatedNotes: String
     var templateId: UUID?  // Add property to track per-meeting template
+    var speakerParticipantNames: [String]
+    var speakerNameMappings: [String: String]
     // MARK: - Data versioning
     /// Version of this Meeting record on disk. Useful for migration.
     var dataVersion: Int
@@ -251,6 +260,8 @@ struct Meeting: Codable, Identifiable, Hashable {
          contextItems: [MeetingContextItem] = [],
          generatedNotes: String = "",
          templateId: UUID? = nil,
+         speakerParticipantNames: [String] = [],
+         speakerNameMappings: [String: String] = [:],
          dataVersion: Int = Meeting.currentDataVersion) {
         self.id = id
         self.date = date
@@ -260,6 +271,8 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.contextItems = Self.normalizedContextItems(contextItems, legacyUserNotes: userNotes, date: date)
         self.generatedNotes = generatedNotes
         self.templateId = templateId
+        self.speakerParticipantNames = Self.normalizedParticipantNames(speakerParticipantNames)
+        self.speakerNameMappings = Self.normalizedSpeakerNameMappings(speakerNameMappings)
         self.dataVersion = dataVersion
     }
 
@@ -272,6 +285,8 @@ struct Meeting: Codable, Identifiable, Hashable {
         case contextItems
         case generatedNotes
         case templateId
+        case speakerParticipantNames
+        case speakerNameMappings
         case dataVersion
     }
 
@@ -286,6 +301,12 @@ struct Meeting: Codable, Identifiable, Hashable {
         contextItems = Self.normalizedContextItems(decodedContextItems, legacyUserNotes: userNotes, date: date)
         generatedNotes = try container.decodeIfPresent(String.self, forKey: .generatedNotes) ?? ""
         templateId = try container.decodeIfPresent(UUID.self, forKey: .templateId)
+        speakerParticipantNames = Self.normalizedParticipantNames(
+            try container.decodeIfPresent([String].self, forKey: .speakerParticipantNames) ?? []
+        )
+        speakerNameMappings = Self.normalizedSpeakerNameMappings(
+            try container.decodeIfPresent([String: String].self, forKey: .speakerNameMappings) ?? [:]
+        )
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
     }
 
@@ -497,11 +518,77 @@ struct Meeting: Codable, Identifiable, Hashable {
     }
 
     private func displaySpeakerLabel(for chunk: TranscriptChunk, labelMap: [String: String]) -> String? {
+        if let key = chunk.speakerIdentityKey,
+           let customName = speakerNameMappings[key],
+           !customName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return customName
+        }
+
         if let key = chunk.speakerIdentityKey, let label = labelMap[key] {
             return label
         }
 
         return nil
+    }
+
+    var speakerNamingOptions: [TranscriptSpeakerNamingOption] {
+        let labelMap = buildSpeakerLabelMap()
+        var sampleTextsByKey: [String: [String]] = [:]
+
+        for chunk in transcriptChunks {
+            guard let key = chunk.speakerIdentityKey else { continue }
+            let text = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+
+            var samples = sampleTextsByKey[key] ?? []
+            if samples.count < 2 {
+                samples.append(text)
+                sampleTextsByKey[key] = samples
+            }
+        }
+
+        return labelMap
+            .map { key, defaultLabel in
+                TranscriptSpeakerNamingOption(
+                    id: key,
+                    defaultLabel: defaultLabel,
+                    currentName: speakerNameMappings[key],
+                    sampleTexts: sampleTextsByKey[key] ?? []
+                )
+            }
+            .sorted { lhs, rhs in
+                lhs.defaultLabel.localizedStandardCompare(rhs.defaultLabel) == .orderedAscending
+            }
+    }
+
+    mutating func applySpeakerNaming(participantNames: [String], mappings: [String: String]) {
+        let knownSpeakerKeys = Set(speakerNamingOptions.map(\.id))
+        speakerParticipantNames = Self.normalizedParticipantNames(participantNames)
+        speakerNameMappings = Self.normalizedSpeakerNameMappings(mappings)
+            .filter { knownSpeakerKeys.contains($0.key) }
+    }
+
+    private static func normalizedParticipantNames(_ names: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+
+        for rawName in names {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !seen.contains(name) else { continue }
+            seen.insert(name)
+            result.append(name)
+        }
+
+        return result
+    }
+
+    private static func normalizedSpeakerNameMappings(_ mappings: [String: String]) -> [String: String] {
+        mappings.reduce(into: [String: String]()) { result, pair in
+            let key = pair.key.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = pair.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !name.isEmpty else { return }
+            result[key] = name
+        }
     }
 
     private static func speakerLabel(for index: Int) -> String {

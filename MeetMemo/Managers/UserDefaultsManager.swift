@@ -21,6 +21,7 @@ class UserDefaultsManager {
         static let hasMigratedToV2Providers = "hasMigratedToV2Providers"
         static let appLanguage = "appLanguage"
         static let appAppearance = "appAppearance"
+        static let speakerParticipantNames = "speakerParticipantNames"
     }
     
     // MARK: - User Blurb
@@ -107,5 +108,33 @@ class UserDefaultsManager {
             return AppAppearance(rawValue: raw) ?? .light
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.appAppearance) }
+    }
+
+    // MARK: - Speaker Participants
+    var speakerParticipantNames: [String] {
+        get {
+            normalizedNames(userDefaults.stringArray(forKey: Keys.speakerParticipantNames) ?? [])
+        }
+        set {
+            userDefaults.set(normalizedNames(newValue), forKey: Keys.speakerParticipantNames)
+        }
+    }
+
+    func mergeSpeakerParticipantNames(_ names: [String]) {
+        speakerParticipantNames = speakerParticipantNames + names
+    }
+
+    private func normalizedNames(_ names: [String]) -> [String] {
+        var seenNames = Set<String>()
+        var result: [String] = []
+
+        for rawName in names {
+            let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, !seenNames.contains(name) else { continue }
+            seenNames.insert(name)
+            result.append(name)
+        }
+
+        return result
     }
 }
