@@ -106,11 +106,11 @@ struct SettingsView: View {
 
                 Picker("", selection: $langMgr.language) {
                     ForEach(AppLanguage.allCases, id: \.self) { lang in
-                        Text(lang.displayName(using: langMgr)).tag(lang)
+                        Text(lang.displayName).tag(lang)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 300)
+                .frame(maxWidth: 200)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -124,7 +124,7 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 360)
+                .frame(maxWidth: 200)
             }
 
             AppInfoCard()

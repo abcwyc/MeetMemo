@@ -1328,7 +1328,7 @@ struct MeetingDetailContentView: View {
         )
         window.title = title
         window.isReleasedWhenClosed = false
-        window.appearance = AppearanceManager.shared.appearance.nsAppearance
+        window.appearance = NSAppearance(named: AppearanceManager.shared.appearance.nsAppearanceName)
         window.center()
         window.contentViewController = NSHostingController(
             rootView: MovablePanelRoot(content: content)
@@ -1343,19 +1343,8 @@ private struct MovablePanelRoot<Content: View>: View {
 
     var body: some View {
         content
-            .preferredColorScheme(colorScheme(for: appearanceMgr.appearance))
+            .preferredColorScheme(appearanceMgr.appearance == .light ? .light : .dark)
             .background(WindowAppearanceSync(appearance: appearanceMgr.appearance))
-    }
-
-    private func colorScheme(for appearance: AppAppearance) -> ColorScheme? {
-        switch appearance {
-        case .system:
-            return nil
-        case .light:
-            return .light
-        case .dark:
-            return .dark
-        }
     }
 }
 
@@ -1368,7 +1357,7 @@ private struct WindowAppearanceSync: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
-            nsView.window?.appearance = appearance.nsAppearance
+            nsView.window?.appearance = NSAppearance(named: appearance.nsAppearanceName)
         }
     }
 }
