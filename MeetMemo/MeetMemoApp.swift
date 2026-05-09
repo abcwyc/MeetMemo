@@ -15,10 +15,21 @@ struct MeetMemoApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(LanguageManager.shared)
-                .preferredColorScheme(appearanceMgr.appearance == .light ? .light : .dark)
+                .preferredColorScheme(colorScheme(for: appearanceMgr.appearance))
                 .frame(minWidth: 700, minHeight: 400)
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 1000, height: 600)
+    }
+
+    private func colorScheme(for appearance: AppAppearance) -> ColorScheme? {
+        switch appearance {
+        case .system:
+            return nil
+        case .light:
+            return .light
+        case .dark:
+            return .dark
+        }
     }
 }

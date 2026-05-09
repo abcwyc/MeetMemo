@@ -95,8 +95,8 @@ class UserDefaultsManager {
     // MARK: - App Language
     var appLanguage: AppLanguage {
         get {
-            let raw = userDefaults.string(forKey: Keys.appLanguage) ?? AppLanguage.chinese.rawValue
-            return AppLanguage(rawValue: raw) ?? .chinese
+            let raw = userDefaults.string(forKey: Keys.appLanguage) ?? AppLanguage.system.rawValue
+            return AppLanguage(rawValue: raw) ?? .system
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.appLanguage) }
     }
@@ -104,8 +104,8 @@ class UserDefaultsManager {
     // MARK: - App Appearance
     var appAppearance: AppAppearance {
         get {
-            let raw = userDefaults.string(forKey: Keys.appAppearance) ?? AppAppearance.light.rawValue
-            return AppAppearance(rawValue: raw) ?? .light
+            let raw = userDefaults.string(forKey: Keys.appAppearance) ?? AppAppearance.system.rawValue
+            return AppAppearance(rawValue: raw) ?? .system
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.appAppearance) }
     }

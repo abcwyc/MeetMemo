@@ -106,11 +106,11 @@ struct SettingsView: View {
 
                 Picker("", selection: $langMgr.language) {
                     ForEach(AppLanguage.allCases, id: \.self) { lang in
-                        Text(lang.displayName).tag(lang)
+                        Text(lang.displayName(using: langMgr)).tag(lang)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
+                .frame(maxWidth: 300)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -124,8 +124,10 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
+                .frame(maxWidth: 360)
             }
+
+            AppInfoCard()
         }
     }
 
@@ -368,6 +370,42 @@ struct SettingsView: View {
                 )
             }
         }
+    }
+}
+
+private struct AppInfoCard: View {
+    private var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+    }
+
+    private var versionText: String {
+        if appVersion.isEmpty {
+            return "Version Beta · Built by youcai"
+        }
+
+        return "Version \(appVersion) Beta · Built by youcai"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("MeetMemo")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                Text("让会议记录更聪明")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Text(versionText)
+                    .font(.caption)
+                    .foregroundColor(.secondary.opacity(0.82))
+            }
+            .padding(.horizontal)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

@@ -1,11 +1,13 @@
 import AppKit
 
 enum AppAppearance: String, CaseIterable, Codable {
+    case system = "system"
     case light = "light"
     case dark = "dark"
 
     var chineseLabel: String {
         switch self {
+        case .system: return "跟随系统"
         case .light: return "浅色模式"
         case .dark: return "深色模式"
         }
@@ -13,15 +15,17 @@ enum AppAppearance: String, CaseIterable, Codable {
 
     var englishLabel: String {
         switch self {
+        case .system: return "System"
         case .light: return "Light"
         case .dark: return "Dark"
         }
     }
 
-    var nsAppearanceName: NSAppearance.Name {
+    var nsAppearance: NSAppearance? {
         switch self {
-        case .light: return .aqua
-        case .dark: return .darkAqua
+        case .system: return nil
+        case .light: return NSAppearance(named: .aqua)
+        case .dark: return NSAppearance(named: .darkAqua)
         }
     }
 }
