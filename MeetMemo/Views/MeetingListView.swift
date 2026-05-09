@@ -326,6 +326,18 @@ struct MeetingListView: View {
     }
 }
 
+private final class MovablePanelCloseDelegate: NSObject, NSWindowDelegate {
+    private let onClose: () -> Void
+
+    init(onClose: @escaping () -> Void) {
+        self.onClose = onClose
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        onClose()
+    }
+}
+
 private struct SidebarPrimaryActionButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
 
@@ -567,7 +579,10 @@ struct MeetingDetailContentView: View {
     @State private var isEditing = false
     @State private var showCopyConfirmation = false
     @State private var isImportingContextFile = false
-    @State private var showSpeakerNamingSheet = false
+    @State private var speakerNamingWindow: NSWindow?
+    @State private var followUpTasksWindow: NSWindow?
+    @State private var speakerNamingWindowDelegate: MovablePanelCloseDelegate?
+    @State private var followUpTasksWindowDelegate: MovablePanelCloseDelegate?
     @State private var hoveredTab: MeetingViewTab?
     @State private var isSettingsButtonHovered = false
     @State private var isGenerateButtonHovered = false
@@ -634,23 +649,11 @@ struct MeetingDetailContentView: View {
         } message: {
             Text(langMgr.t("确定要删除这个会议吗？此操作不可撤销。", "Are you sure you want to delete this meeting? This action cannot be undone."))
         }
-        .sheet(isPresented: $showSpeakerNamingSheet) {
-            SpeakerNamingSheet(
-                options: viewModel.speakerNamingOptions,
-                participantNames: viewModel.speakerParticipantNames,
-                onCancel: {
-                    showSpeakerNamingSheet = false
-                },
-                onSave: { participantNames, mappings in
-                    viewModel.applySpeakerNaming(participantNames: participantNames, mappings: mappings)
-                    showSpeakerNamingSheet = false
-                }
-            )
-            .environmentObject(langMgr)
-        }
         .onDisappear {
             viewModel.cancelGeneratingNotes()
             viewModel.deleteIfEmpty()
+            speakerNamingWindow?.close()
+            followUpTasksWindow?.close()
         }
         .fileImporter(
             isPresented: $isImportingContextFile,
@@ -887,6 +890,15 @@ struct MeetingDetailContentView: View {
 
     private var titleActionButtons: some View {
         HStack(spacing: 8) {
+            if viewModel.selectedTab == .enhancedNotes {
+                Button {
+                    openFollowUpTasksWindow()
+                } label: {
+                    Label(langMgr.t("管理待办", "Tasks"), systemImage: "checklist")
+                }
+                .buttonStyle(DetailHeaderActionButtonStyle())
+            }
+
             if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
                 Button {
                     isEditing.toggle()
@@ -917,7 +929,7 @@ struct MeetingDetailContentView: View {
 
             if viewModel.selectedTab == .transcript {
                 Button {
-                    showSpeakerNamingSheet = true
+                    openSpeakerNamingWindow()
                 } label: {
                     Label(langMgr.t("标记发言人", "Label Speakers"), systemImage: "person.2")
                 }
@@ -1229,6 +1241,124 @@ struct MeetingDetailContentView: View {
                 viewModel.meeting.contextItems[index] = updatedItem
             }
         )
+    }
+
+    private func openSpeakerNamingWindow() {
+        if let window = speakerNamingWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        var panel: NSWindow!
+        let content = SpeakerNamingSheet(
+            options: viewModel.speakerNamingOptions,
+            participantNames: viewModel.speakerParticipantNames,
+            onCancel: {
+                panel.close()
+                speakerNamingWindow = nil
+            },
+            onSave: { participantNames, mappings in
+                viewModel.applySpeakerNaming(participantNames: participantNames, mappings: mappings)
+                panel.close()
+                speakerNamingWindow = nil
+            }
+        )
+        .environmentObject(langMgr)
+
+        panel = makeMovablePanel(
+            title: langMgr.t("标记发言人", "Label Speakers"),
+            size: NSSize(width: 820, height: 600),
+            content: content
+        )
+        speakerNamingWindow = panel
+        let closeDelegate = MovablePanelCloseDelegate {
+            speakerNamingWindow = nil
+            speakerNamingWindowDelegate = nil
+        }
+        speakerNamingWindowDelegate = closeDelegate
+        panel.delegate = closeDelegate
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openFollowUpTasksWindow() {
+        if let window = followUpTasksWindow {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
+
+        var panel: NSWindow!
+        let content = FollowUpTasksSheet(
+            viewModel: viewModel,
+            onClose: {
+                panel.close()
+                followUpTasksWindow = nil
+            }
+        )
+        .environmentObject(langMgr)
+
+        panel = makeMovablePanel(
+            title: langMgr.t("管理待办", "Manage Tasks"),
+            size: NSSize(width: 760, height: 640),
+            content: content
+        )
+        followUpTasksWindow = panel
+        let closeDelegate = MovablePanelCloseDelegate {
+            followUpTasksWindow = nil
+            followUpTasksWindowDelegate = nil
+        }
+        followUpTasksWindowDelegate = closeDelegate
+        panel.delegate = closeDelegate
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func makeMovablePanel<Content: View>(
+        title: String,
+        size: NSSize,
+        content: Content
+    ) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = title
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: AppearanceManager.shared.appearance.nsAppearanceName)
+        window.center()
+        window.contentViewController = NSHostingController(
+            rootView: MovablePanelRoot(content: content)
+        )
+        return window
+    }
+}
+
+private struct MovablePanelRoot<Content: View>: View {
+    @ObservedObject private var appearanceMgr = AppearanceManager.shared
+    let content: Content
+
+    var body: some View {
+        content
+            .preferredColorScheme(appearanceMgr.appearance == .light ? .light : .dark)
+            .background(WindowAppearanceSync(appearance: appearanceMgr.appearance))
+    }
+}
+
+private struct WindowAppearanceSync: NSViewRepresentable {
+    let appearance: AppAppearance
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            nsView.window?.appearance = NSAppearance(named: appearance.nsAppearanceName)
+        }
     }
 }
 
@@ -1794,6 +1924,314 @@ private struct SpeakerNamingSheet: View {
     private func removeParticipant(_ id: UUID) {
         participants.removeAll { $0.id == id }
         assignments = assignments.filter { $0.value != id }
+    }
+}
+
+private struct FollowUpTasksSheet: View {
+    @ObservedObject var viewModel: MeetingViewModel
+    @EnvironmentObject var langMgr: LanguageManager
+    let onClose: () -> Void
+    @State private var reminderLists: [ReminderListOption] = []
+    @State private var selectedReminderListId = ""
+    @State private var newTaskTitle = ""
+    @State private var isLoadingLists = false
+    @State private var localErrorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            header
+            listPicker
+            taskList
+            manualEntry
+            footer
+        }
+        .padding(20)
+        .frame(minWidth: 680, minHeight: 560)
+        .task {
+            await loadReminderLists()
+            await viewModel.refreshReminderLinks()
+            if viewModel.meeting.followUpTasks.isEmpty &&
+                !viewModel.meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                await viewModel.extractFollowUpTasks()
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(langMgr.t("管理待办", "Manage Tasks"))
+                    .font(.title2.weight(.semibold))
+                Text(langMgr.t("确认后将任务添加到系统提醒事项。", "Confirm tasks before adding them to Reminders."))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                Task { await viewModel.extractFollowUpTasks() }
+            } label: {
+                Label(
+                    viewModel.isExtractingFollowUpTasks ? langMgr.t("识别中", "Extracting") : langMgr.t("重新识别", "Extract"),
+                    systemImage: "sparkles"
+                )
+            }
+            .buttonStyle(DetailHeaderActionButtonStyle())
+            .disabled(viewModel.isExtractingFollowUpTasks || viewModel.meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private var listPicker: some View {
+        HStack(spacing: 10) {
+            Label(langMgr.t("提醒列表", "Reminder List"), systemImage: "list.bullet.rectangle")
+                .font(.subheadline.weight(.medium))
+
+            Picker("", selection: $selectedReminderListId) {
+                if reminderLists.isEmpty {
+                    Text(langMgr.t("默认列表", "Default List")).tag("")
+                }
+
+                ForEach(reminderLists) { list in
+                    Text(list.isDefault
+                         ? langMgr.t("\(list.title)（默认）", "\(list.title) (Default)")
+                         : list.title)
+                        .tag(list.id)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: 260)
+            .disabled(isLoadingLists)
+
+            if isLoadingLists {
+                ProgressView()
+                    .scaleEffect(0.55)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var taskList: some View {
+        Group {
+            if viewModel.isExtractingFollowUpTasks && viewModel.meeting.followUpTasks.isEmpty {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text(langMgr.t("正在从会议纪要中识别待办...", "Extracting tasks from the meeting notes..."))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.meeting.followUpTasks.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "checklist.unchecked")
+                        .font(.system(size: 28))
+                        .foregroundColor(.secondary)
+                    Text(langMgr.t("还没有待办，可重新识别或手动补录。", "No tasks yet. Extract again or add one manually."))
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(viewModel.meeting.followUpTasks) { task in
+                            FollowUpTaskRow(
+                                task: binding(for: task),
+                                selectedReminderListId: selectedReminderListId,
+                                isSyncing: viewModel.syncingFollowUpTaskIds.contains(task.id),
+                                onAdd: { currentTask in
+                                    Task { await viewModel.createReminder(for: currentTask, listIdentifier: selectedReminderListId.isEmpty ? nil : selectedReminderListId) }
+                                },
+                                onRemove: { currentTask in
+                                    Task { await viewModel.removeReminder(for: currentTask) }
+                                },
+                                onDeleteLocal: { currentTask in
+                                    viewModel.deleteFollowUpTask(currentTask)
+                                }
+                            )
+                            .environmentObject(langMgr)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var manualEntry: some View {
+        HStack(spacing: 8) {
+            TextField(langMgr.t("手动补录待办", "Add a task manually"), text: $newTaskTitle)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(addManualTask)
+
+            Button {
+                addManualTask()
+            } label: {
+                Label(langMgr.t("添加", "Add"), systemImage: "plus")
+            }
+            .disabled(newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let message = viewModel.errorMessage ?? localErrorMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            HStack {
+                Spacer()
+                Button(langMgr.t("完成", "Done")) {
+                    onClose()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    private func binding(for task: MeetingFollowUpTask) -> Binding<MeetingFollowUpTask> {
+        Binding(
+            get: {
+                viewModel.meeting.followUpTasks.first(where: { $0.id == task.id }) ?? task
+            },
+            set: { updatedTask in
+                guard let index = viewModel.meeting.followUpTasks.firstIndex(where: { $0.id == task.id }) else { return }
+                var taskToSave = updatedTask
+                taskToSave.updatedAt = Date()
+                viewModel.meeting.followUpTasks[index] = taskToSave
+            }
+        )
+    }
+
+    private func addManualTask() {
+        viewModel.addManualFollowUpTask(title: newTaskTitle)
+        newTaskTitle = ""
+    }
+
+    private func loadReminderLists() async {
+        isLoadingLists = true
+        defer { isLoadingLists = false }
+
+        do {
+            let lists = try await ReminderManager.shared.reminderLists()
+            reminderLists = lists
+            selectedReminderListId = lists.first(where: \.isDefault)?.id ?? lists.first?.id ?? ""
+            localErrorMessage = nil
+        } catch {
+            localErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+}
+
+private struct FollowUpTaskRow: View {
+    @Binding var task: MeetingFollowUpTask
+    @EnvironmentObject var langMgr: LanguageManager
+    let selectedReminderListId: String
+    let isSyncing: Bool
+    let onAdd: (MeetingFollowUpTask) -> Void
+    let onRemove: (MeetingFollowUpTask) -> Void
+    let onDeleteLocal: (MeetingFollowUpTask) -> Void
+
+    private var hasDueDate: Binding<Bool> {
+        Binding(
+            get: { task.dueDate != nil },
+            set: { enabled in
+                task.dueDate = enabled ? (task.dueDate ?? Date()) : nil
+            }
+        )
+    }
+
+    private var dueDate: Binding<Date> {
+        Binding(
+            get: { task.dueDate ?? Date() },
+            set: { task.dueDate = $0 }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 8) {
+                Label(
+                    langMgr.t(task.kind.displayName, task.kind.englishDisplayName),
+                    systemImage: task.kind.icon
+                )
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize()
+
+                TextField(langMgr.t("任务标题", "Task title"), text: $task.title)
+                    .textFieldStyle(.plain)
+                    .font(.headline)
+
+                Spacer()
+
+                Button {
+                    task.isSyncedToReminders ? onRemove(task) : onAdd(task)
+                } label: {
+                    if isSyncing {
+                        ProgressView()
+                            .scaleEffect(0.5)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        Label(
+                            task.isSyncedToReminders ? langMgr.t("移除", "Remove") : langMgr.t("添加", "Add"),
+                            systemImage: task.isSyncedToReminders ? "minus.circle" : "plus.circle"
+                        )
+                    }
+                }
+                .buttonStyle(DetailHeaderActionButtonStyle(isConfirmed: task.isSyncedToReminders))
+                .disabled(isSyncing || task.trimmedTitle.isEmpty)
+
+                Button {
+                    onDeleteLocal(task)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .foregroundColor(.secondary)
+                .disabled(task.isSyncedToReminders)
+                .help(task.isSyncedToReminders
+                      ? langMgr.t("请先从提醒事项中移除", "Remove it from Reminders first")
+                      : langMgr.t("删除待办", "Delete task"))
+            }
+
+            TextField(langMgr.t("补充说明", "Details"), text: $task.detail)
+                .textFieldStyle(.roundedBorder)
+
+            if !task.sourceExcerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text(task.sourceExcerpt)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+            }
+
+            HStack(spacing: 10) {
+                Toggle(langMgr.t("截止日期", "Due Date"), isOn: hasDueDate)
+                    .toggleStyle(.checkbox)
+
+                if task.dueDate != nil {
+                    DatePicker("", selection: dueDate, displayedComponents: [.date, .hourAndMinute])
+                        .labelsHidden()
+                        .datePickerStyle(.compact)
+                        .frame(maxWidth: 220)
+                }
+
+                Spacer()
+
+                if let listTitle = task.reminderCalendarTitle, task.isSyncedToReminders {
+                    Text(langMgr.t("已添加至 \(listTitle)", "Added to \(listTitle)"))
+                        .font(.caption)
+                        .foregroundColor(.green)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.gray.opacity(0.06))
+        .cornerRadius(8)
     }
 }
 

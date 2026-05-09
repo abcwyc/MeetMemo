@@ -95,6 +95,91 @@ struct TranscriptSpeakerNamingOption: Identifiable, Hashable {
     let sampleTexts: [String]
 }
 
+enum FollowUpTaskKind: String, Codable, CaseIterable, Hashable {
+    case actionItem
+    case confirmation
+    case followUp
+    case manual
+
+    var displayName: String {
+        switch self {
+        case .actionItem: return "行动项"
+        case .confirmation: return "待确认"
+        case .followUp: return "跟进"
+        case .manual: return "手动补录"
+        }
+    }
+
+    var englishDisplayName: String {
+        switch self {
+        case .actionItem: return "Action"
+        case .confirmation: return "Confirm"
+        case .followUp: return "Follow-up"
+        case .manual: return "Manual"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .actionItem: return "checklist"
+        case .confirmation: return "questionmark.circle"
+        case .followUp: return "arrow.triangle.2.circlepath"
+        case .manual: return "square.and.pencil"
+        }
+    }
+}
+
+struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
+    var id: UUID
+    var title: String
+    var detail: String
+    var sourceExcerpt: String
+    var kind: FollowUpTaskKind
+    var dueDate: Date?
+    var isManual: Bool
+    var reminderIdentifier: String?
+    var reminderCalendarIdentifier: String?
+    var reminderCalendarTitle: String?
+    var createdAt: Date
+    var updatedAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        detail: String = "",
+        sourceExcerpt: String = "",
+        kind: FollowUpTaskKind,
+        dueDate: Date? = nil,
+        isManual: Bool = false,
+        reminderIdentifier: String? = nil,
+        reminderCalendarIdentifier: String? = nil,
+        reminderCalendarTitle: String? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.sourceExcerpt = sourceExcerpt
+        self.kind = kind
+        self.dueDate = dueDate
+        self.isManual = isManual
+        self.reminderIdentifier = reminderIdentifier
+        self.reminderCalendarIdentifier = reminderCalendarIdentifier
+        self.reminderCalendarTitle = reminderCalendarTitle
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    var trimmedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isSyncedToReminders: Bool {
+        !(reminderIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+    }
+}
+
 struct CollapsedTranscriptChunk: Identifiable {
     let id: UUID
     let timestamp: Date
@@ -243,6 +328,7 @@ struct Meeting: Codable, Identifiable, Hashable {
     var userNotes: String
     var contextItems: [MeetingContextItem]
     var generatedNotes: String
+    var followUpTasks: [MeetingFollowUpTask]
     var templateId: UUID?  // Add property to track per-meeting template
     var speakerParticipantNames: [String]
     var speakerNameMappings: [String: String]
@@ -250,7 +336,7 @@ struct Meeting: Codable, Identifiable, Hashable {
     /// Version of this Meeting record on disk. Useful for migration.
     var dataVersion: Int
     /// Current app data version. Increment whenever you make a breaking change to `Meeting` that requires migration.
-    static let currentDataVersion = 2
+    static let currentDataVersion = 3
     
     init(id: UUID = UUID(),
          date: Date = Date(),
@@ -259,6 +345,7 @@ struct Meeting: Codable, Identifiable, Hashable {
          userNotes: String = "",
          contextItems: [MeetingContextItem] = [],
          generatedNotes: String = "",
+         followUpTasks: [MeetingFollowUpTask] = [],
          templateId: UUID? = nil,
          speakerParticipantNames: [String] = [],
          speakerNameMappings: [String: String] = [:],
@@ -270,6 +357,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.userNotes = userNotes
         self.contextItems = Self.normalizedContextItems(contextItems, legacyUserNotes: userNotes, date: date)
         self.generatedNotes = generatedNotes
+        self.followUpTasks = followUpTasks
         self.templateId = templateId
         self.speakerParticipantNames = Self.normalizedParticipantNames(speakerParticipantNames)
         self.speakerNameMappings = Self.normalizedSpeakerNameMappings(speakerNameMappings)
@@ -284,6 +372,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         case userNotes
         case contextItems
         case generatedNotes
+        case followUpTasks
         case templateId
         case speakerParticipantNames
         case speakerNameMappings
@@ -300,6 +389,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         let decodedContextItems = try container.decodeIfPresent([MeetingContextItem].self, forKey: .contextItems) ?? []
         contextItems = Self.normalizedContextItems(decodedContextItems, legacyUserNotes: userNotes, date: date)
         generatedNotes = try container.decodeIfPresent(String.self, forKey: .generatedNotes) ?? ""
+        followUpTasks = try container.decodeIfPresent([MeetingFollowUpTask].self, forKey: .followUpTasks) ?? []
         templateId = try container.decodeIfPresent(UUID.self, forKey: .templateId)
         speakerParticipantNames = Self.normalizedParticipantNames(
             try container.decodeIfPresent([String].self, forKey: .speakerParticipantNames) ?? []

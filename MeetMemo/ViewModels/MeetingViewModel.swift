@@ -36,6 +36,8 @@ class MeetingViewModel: ObservableObject {
     @Published var isValidatingKey = false // Indicates API key validation in progress
     @Published var isStartingRecording = false // Indicates recording start in progress
     @Published var isLoadingMeeting = false
+    @Published var isExtractingFollowUpTasks = false
+    @Published var syncingFollowUpTaskIds: Set<UUID> = []
     @Published var transcriptDisplayChunks: [TranscriptDisplayChunk] = []
     @Published private var hasStartedRecordingSession = false
     
@@ -543,6 +545,134 @@ class MeetingViewModel: ObservableObject {
 
     func deleteContextItem(_ item: MeetingContextItem) {
         meeting.contextItems.removeAll { $0.id == item.id }
+    }
+
+    func extractFollowUpTasks() async {
+        guard !isExtractingFollowUpTasks else { return }
+        isExtractingFollowUpTasks = true
+        errorMessage = nil
+        defer { isExtractingFollowUpTasks = false }
+
+        do {
+            let extractedTasks = try await FollowUpTaskExtractor.shared.extractTasks(from: meeting)
+            mergeExtractedFollowUpTasks(extractedTasks)
+            saveMeeting()
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func addManualFollowUpTask(title: String) {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return }
+
+        meeting.followUpTasks.append(
+            MeetingFollowUpTask(
+                title: trimmedTitle,
+                kind: .manual,
+                isManual: true
+            )
+        )
+        saveMeeting()
+    }
+
+    func deleteFollowUpTask(_ task: MeetingFollowUpTask) {
+        meeting.followUpTasks.removeAll { $0.id == task.id }
+        saveMeeting()
+    }
+
+    func createReminder(for task: MeetingFollowUpTask, listIdentifier: String?) async {
+        guard !syncingFollowUpTaskIds.contains(task.id) else { return }
+        syncingFollowUpTaskIds.insert(task.id)
+        errorMessage = nil
+        defer { syncingFollowUpTaskIds.remove(task.id) }
+
+        do {
+            let result = try await ReminderManager.shared.createReminder(
+                for: task,
+                meeting: meeting,
+                listIdentifier: listIdentifier
+            )
+            updateFollowUpTask(task.id) { updatedTask in
+                updatedTask.reminderIdentifier = result.identifier
+                updatedTask.reminderCalendarIdentifier = result.listIdentifier
+                updatedTask.reminderCalendarTitle = result.listTitle
+                updatedTask.updatedAt = Date()
+            }
+            saveMeeting()
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func removeReminder(for task: MeetingFollowUpTask) async {
+        guard !syncingFollowUpTaskIds.contains(task.id) else { return }
+        syncingFollowUpTaskIds.insert(task.id)
+        errorMessage = nil
+        defer { syncingFollowUpTaskIds.remove(task.id) }
+
+        do {
+            if let identifier = task.reminderIdentifier {
+                try await ReminderManager.shared.removeReminder(identifier: identifier)
+            }
+            clearReminderLink(for: task.id)
+            saveMeeting()
+        } catch ReminderManagerError.reminderNotFound {
+            clearReminderLink(for: task.id)
+            saveMeeting()
+        } catch {
+            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    func refreshReminderLinks() async {
+        for task in meeting.followUpTasks {
+            guard let identifier = task.reminderIdentifier,
+                  !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+
+            do {
+                let exists = try await ReminderManager.shared.reminderExists(identifier: identifier)
+                if !exists {
+                    clearReminderLink(for: task.id)
+                }
+            } catch {
+                // Keep local state if permission is unavailable; explicit add/remove will surface the error.
+            }
+        }
+    }
+
+    private func mergeExtractedFollowUpTasks(_ extractedTasks: [MeetingFollowUpTask]) {
+        var existingKeys = Set(meeting.followUpTasks.map { normalizedTaskKey($0.title) })
+        var newTasks: [MeetingFollowUpTask] = []
+
+        for task in extractedTasks {
+            let key = normalizedTaskKey(task.title)
+            guard !key.isEmpty, !existingKeys.contains(key) else { continue }
+            existingKeys.insert(key)
+            newTasks.append(task)
+        }
+
+        meeting.followUpTasks.append(contentsOf: newTasks)
+    }
+
+    private func normalizedTaskKey(_ title: String) -> String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func updateFollowUpTask(_ id: UUID, update: (inout MeetingFollowUpTask) -> Void) {
+        guard let index = meeting.followUpTasks.firstIndex(where: { $0.id == id }) else { return }
+        update(&meeting.followUpTasks[index])
+    }
+
+    private func clearReminderLink(for taskId: UUID) {
+        updateFollowUpTask(taskId) { task in
+            task.reminderIdentifier = nil
+            task.reminderCalendarIdentifier = nil
+            task.reminderCalendarTitle = nil
+            task.updatedAt = Date()
+        }
     }
     
     func deleteMeeting() {

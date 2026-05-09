@@ -35,6 +35,11 @@ class DataMigrationManager {
             migratedMeeting.dataVersion = 2
         }
 
+        if migratedMeeting.dataVersion < 3 {
+            migratedMeeting.followUpTasks = []
+            migratedMeeting.dataVersion = 3
+        }
+
         if migratedMeeting.dataVersion < Meeting.currentDataVersion {
             print("⚠️ No migration path for versions \(migratedMeeting.dataVersion + 1)...\(Meeting.currentDataVersion)")
             return nil

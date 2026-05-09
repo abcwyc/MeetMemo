@@ -4,5 +4,9 @@
 <dict>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>This app needs access to capture system audio for transcription.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>MeetMemo needs access to Reminders so you can add confirmed meeting tasks to the Reminders app.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>MeetMemo needs access to Reminders so you can add confirmed meeting tasks to the Reminders app.</string>
 </dict>
 </plist>
