@@ -20,7 +20,7 @@ struct MeetingSummaryView: View {
             if !hasAnyContent && !isExtracting {
                 emptyState
             } else {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     heroSection
 
                     if !meeting.decisions.isEmpty {
@@ -59,10 +59,25 @@ struct MeetingSummaryView: View {
                         .foregroundStyle(.secondary)
                 }
             } else if !meeting.oneLiner.isEmpty {
-                Text(meeting.oneLiner)
-                    .font(.title3.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.callout)
+                        .padding(.top, 1)
+                    Text(meeting.oneLiner)
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.orange.opacity(0.07))
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(Color.orange.opacity(0.5))
+                        .frame(width: 3)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
             HStack(spacing: 8) {
@@ -89,9 +104,6 @@ struct MeetingSummaryView: View {
                 Spacer()
             }
         }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
     }
 
     // MARK: - Decisions Section
@@ -103,8 +115,17 @@ struct MeetingSummaryView: View {
                 title: langMgr.t("关键决策", "Key Decisions"),
                 count: meeting.decisions.count
             )
-            ForEach(meeting.decisions) { decision in
-                DecisionCard(decision: decision, langMgr: langMgr)
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                spacing: 10
+            ) {
+                ForEach(meeting.decisions) { decision in
+                    DecisionGridCard(decision: decision, langMgr: langMgr)
+                }
             }
         }
     }
@@ -120,16 +141,10 @@ struct MeetingSummaryView: View {
             )
             let grouped = Dictionary(grouping: meeting.followUpTasks, by: \.kind)
             let kindOrder: [FollowUpTaskKind] = [.actionItem, .confirmation, .followUp, .manual]
-            ForEach(kindOrder, id: \.self) { kind in
-                if let tasks = grouped[kind], !tasks.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(langMgr.t(kind.displayName, kind.englishDisplayName))
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .textCase(.uppercase)
-                        ForEach(tasks) { task in
-                            TaskSummaryRow(task: task, langMgr: langMgr)
-                        }
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(kindOrder, id: \.self) { kind in
+                    if let tasks = grouped[kind], !tasks.isEmpty {
+                        TaskTableSection(kind: kind, tasks: tasks, langMgr: langMgr)
                     }
                 }
             }
@@ -160,9 +175,19 @@ struct MeetingSummaryView: View {
                 title: langMgr.t("待确认问题", "Open Questions"),
                 count: meeting.openQuestions.count
             )
-            ForEach(meeting.openQuestions) { question in
-                OpenQuestionCard(question: question, langMgr: langMgr)
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(meeting.openQuestions.enumerated()), id: \.element.id) { index, question in
+                    OpenQuestionRow(question: question, langMgr: langMgr)
+                    if index < meeting.openQuestions.count - 1 {
+                        Divider().padding(.leading, 36)
+                    }
+                }
             }
+            .background(Color.gray.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.gray.opacity(0.10), lineWidth: 1)
+            )
         }
     }
 
@@ -182,7 +207,7 @@ struct MeetingSummaryView: View {
     }
 }
 
-// MARK: - Shared Sub-views
+// MARK: - Metric Chip
 
 private struct MetricChip: View {
     let icon: String
@@ -206,6 +231,8 @@ private struct MetricChip: View {
     }
 }
 
+// MARK: - Section Header
+
 private struct SummarySectionHeader: View {
     let icon: String
     let title: String
@@ -224,119 +251,141 @@ private struct SummarySectionHeader: View {
     }
 }
 
-private struct DecisionCard: View {
+// MARK: - Decision Grid Card
+
+private struct DecisionGridCard: View {
     let decision: MeetingDecision
     let langMgr: LanguageManager
-    @State private var isExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top, spacing: 6) {
-                confidenceBadge
-                if !decision.owner.isEmpty {
-                    Spacer()
-                    Label(decision.owner, systemImage: "person")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            if !decision.owner.isEmpty {
+                Text(decision.owner)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
             }
 
             Text(decision.title)
-                .font(.callout.weight(.medium))
+                .font(.callout.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
 
-            if !decision.reason.isEmpty {
-                Text(decision.reason)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Spacer(minLength: 6)
 
-            if !decision.sourceExcerpt.isEmpty {
-                DisclosureGroup(
-                    isExpanded: $isExpanded,
-                    content: {
-                        Text("\u{201C}\(decision.sourceExcerpt)\u{201D}")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .italic()
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 2)
-                    },
-                    label: {
-                        Text(langMgr.t("查看原文", "View Source"))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                )
-            }
+            confidenceBadge
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
         .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.gray.opacity(0.12), lineWidth: 1)
+        )
     }
 
     private var confidenceBadge: some View {
         let (label, color): (String, Color) = {
             switch decision.confidence {
-            case "high":   return (langMgr.t("✓ 已确认", "✓ Confirmed"), .green)
-            case "low":    return (langMgr.t("待确认", "Unconfirmed"), .orange)
-            default:       return (langMgr.t("已确认", "Confirmed"), .blue)
+            case "high":   return (langMgr.t("✓ 全员通过", "✓ Approved"), .green)
+            case "low":    return (langMgr.t("待确认", "Pending"), .orange)
+            default:       return (langMgr.t("✓ 已确认", "✓ Confirmed"), .blue)
             }
         }()
         return Text(label)
             .font(.caption2.weight(.medium))
             .foregroundStyle(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 4))
     }
 }
 
-private struct TaskSummaryRow: View {
-    let task: MeetingFollowUpTask
+// MARK: - Task Table Section
+
+private struct TaskTableSection: View {
+    let kind: FollowUpTaskKind
+    let tasks: [MeetingFollowUpTask]
     let langMgr: LanguageManager
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: task.kind.icon)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 14)
-                .padding(.top, 3)
+        VStack(alignment: .leading, spacing: 0) {
+            // Kind label header
+            Text(langMgr.t(kind.displayName, kind.englishDisplayName))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.tertiary)
+                .textCase(.uppercase)
+                .padding(.horizontal, 10)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(task.title)
-                    .font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
+            // Column header row
+            HStack(spacing: 0) {
+                Text(langMgr.t("任务", "Task"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(langMgr.t("截止时间", "Due Date"))
+                    .frame(width: 110, alignment: .leading)
+            }
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Color.gray.opacity(0.06))
 
-                if let due = task.dueDate {
-                    Text(due, style: .date)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Divider()
+
+            // Task rows
+            ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
+                HStack(alignment: .top, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(task.title)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if !task.detail.isEmpty {
+                            Text(task.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    dueDateView(task.dueDate)
+                        .frame(width: 110, alignment: .leading)
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
 
-                if !task.detail.isEmpty {
-                    Text(task.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                if index < tasks.count - 1 {
+                    Divider().padding(.leading, 10)
                 }
             }
 
-            Spacer()
-
-            if task.isSyncedToReminders {
-                Image(systemName: "bell.fill")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-            }
+            Spacer(minLength: 6)
         }
-        .padding(8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+        .background(Color.gray.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.gray.opacity(0.10), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func dueDateView(_ date: Date?) -> some View {
+        if let date = date {
+            let now = Date()
+            let isOverdue = date < now
+            let isUrgent = date < now.addingTimeInterval(2 * 24 * 3600)
+            let color: Color = isOverdue ? .red : isUrgent ? .orange : .secondary
+            Text(date, style: .date)
+                .font(.caption)
+                .foregroundStyle(color)
+        } else {
+            Text("—")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
     }
 }
+
+// MARK: - Risk Card
 
 private struct RiskCard: View {
     let risk: MeetingRisk
@@ -402,32 +451,43 @@ private struct RiskCard: View {
     }
 }
 
-private struct OpenQuestionCard: View {
+// MARK: - Open Question Row
+
+private struct OpenQuestionRow: View {
     let question: MeetingOpenQuestion
     let langMgr: LanguageManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(question.question)
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "circle.dashed")
                 .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(.orange)
+                .frame(width: 16)
+                .padding(.top, 2)
 
-            HStack(spacing: 10) {
-                if !question.owner.isEmpty {
-                    Label(question.owner, systemImage: "person")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if !question.nextStep.isEmpty {
-                    Text("→ \(question.nextStep)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(question.question)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !question.owner.isEmpty || !question.nextStep.isEmpty {
+                    HStack(spacing: 8) {
+                        if !question.owner.isEmpty {
+                            Label(question.owner, systemImage: "person")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !question.nextStep.isEmpty {
+                            Text("→ \(question.nextStep)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
                 }
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }
