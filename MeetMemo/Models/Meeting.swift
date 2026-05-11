@@ -255,6 +255,31 @@ struct MeetingOpenQuestion: Codable, Identifiable, Hashable {
     }
 }
 
+struct MeetingDiscussion: Codable, Identifiable, Hashable {
+    var id: UUID
+    var title: String
+    var summary: String
+    var consensus: String
+    var hasConsensus: Bool
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        summary: String = "",
+        consensus: String = "",
+        hasConsensus: Bool = false,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.summary = summary
+        self.consensus = consensus
+        self.hasConsensus = hasConsensus
+        self.createdAt = createdAt
+    }
+}
+
 struct CollapsedTranscriptChunk: Identifiable {
     let id: UUID
     let timestamp: Date
@@ -411,12 +436,13 @@ struct Meeting: Codable, Identifiable, Hashable {
     var decisions: [MeetingDecision]
     var risks: [MeetingRisk]
     var openQuestions: [MeetingOpenQuestion]
+    var discussions: [MeetingDiscussion]
     // MARK: - Data versioning
     /// Version of this Meeting record on disk. Useful for migration.
     var dataVersion: Int
     /// Current app data version. Increment whenever you make a breaking change to `Meeting` that requires migration.
-    static let currentDataVersion = 4
-    
+    static let currentDataVersion = 5
+
     init(id: UUID = UUID(),
          date: Date = Date(),
          title: String = "",
@@ -432,6 +458,7 @@ struct Meeting: Codable, Identifiable, Hashable {
          decisions: [MeetingDecision] = [],
          risks: [MeetingRisk] = [],
          openQuestions: [MeetingOpenQuestion] = [],
+         discussions: [MeetingDiscussion] = [],
          dataVersion: Int = Meeting.currentDataVersion) {
         self.id = id
         self.date = date
@@ -448,6 +475,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.decisions = decisions
         self.risks = risks
         self.openQuestions = openQuestions
+        self.discussions = discussions
         self.dataVersion = dataVersion
     }
 
@@ -467,6 +495,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         case decisions
         case risks
         case openQuestions
+        case discussions
         case dataVersion
     }
 
@@ -492,6 +521,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         decisions = try container.decodeIfPresent([MeetingDecision].self, forKey: .decisions) ?? []
         risks = try container.decodeIfPresent([MeetingRisk].self, forKey: .risks) ?? []
         openQuestions = try container.decodeIfPresent([MeetingOpenQuestion].self, forKey: .openQuestions) ?? []
+        discussions = try container.decodeIfPresent([MeetingDiscussion].self, forKey: .discussions) ?? []
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
     }
 

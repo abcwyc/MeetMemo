@@ -23,6 +23,9 @@ struct MeetingHTMLExporter {
             meeting: meeting
         )
 
+        if !meeting.discussions.isEmpty {
+            bodySections += discussionsSection(meeting.discussions)
+        }
         if !meeting.decisions.isEmpty {
             bodySections += decisionsSection(meeting.decisions)
         }
@@ -87,6 +90,29 @@ struct MeetingHTMLExporter {
             html += "  </div>\n"
         }
         html += "</header>\n\n"
+        return html
+    }
+
+    private static func discussionsSection(_ discussions: [MeetingDiscussion]) -> String {
+        var html = "<section>\n"
+        html += "  <h2>议题讨论</h2>\n"
+        for (i, d) in discussions.enumerated() {
+            html += "  <div class=\"discussion-card\">\n"
+            html += "    <div class=\"discussion-index\">\(i + 1)</div>\n"
+            html += "    <div class=\"discussion-body\">\n"
+            html += "      <p class=\"discussion-title\">\(d.title.esc)</p>\n"
+            if !d.summary.isEmpty {
+                html += "      <p class=\"discussion-summary\">\(d.summary.esc)</p>\n"
+            }
+            if d.hasConsensus && !d.consensus.isEmpty {
+                html += "      <div class=\"consensus-block\">\n"
+                html += "        <span class=\"consensus-label\">达成共识：</span>\(d.consensus.esc)\n"
+                html += "      </div>\n"
+            }
+            html += "    </div>\n"
+            html += "  </div>\n"
+        }
+        html += "</section>\n\n"
         return html
     }
 
@@ -365,6 +391,30 @@ struct MeetingHTMLExporter {
       h3 { font-size: 0.9rem; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: .04em; margin: 14px 0 6px; }
       h4 { font-size: 0.95rem; font-weight: 600; margin: 10px 0 4px; }
 
+      /* Discussions */
+      .discussion-card {
+        display: flex; gap: 12px; align-items: flex-start;
+        background: #fafafa; border: 1px solid #e8e8e8;
+        border-radius: 8px; padding: 12px 14px; margin-bottom: 10px;
+      }
+      .discussion-index {
+        flex-shrink: 0; width: 24px; height: 24px;
+        background: rgba(59,130,246,0.12); border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.75rem; font-weight: 600; color: #2563eb;
+      }
+      .discussion-body { flex: 1; }
+      .discussion-title { font-size: 0.95rem; font-weight: 600; color: #1a1a1a; margin: 0 0 4px; }
+      .discussion-summary { font-size: 0.85rem; color: #666; margin: 0 0 8px; }
+      .consensus-block {
+        font-size: 0.85rem; color: #1a1a1a;
+        background: rgba(34,197,94,0.07);
+        border-left: 3px solid rgba(34,197,94,0.5);
+        border-radius: 0 6px 6px 0;
+        padding: 7px 10px; margin-top: 6px;
+      }
+      .consensus-label { font-weight: 600; color: #166534; }
+
       /* Cards */
       .card {
         background: #f8f8f8;
@@ -436,6 +486,11 @@ struct MeetingHTMLExporter {
         .notes-body th { background: #2c2c2e; }
         .notes-body th, .notes-body td { border-color: #3a3a3c; }
         .notes-body tr:nth-child(even) td { background: #232325; }
+        .discussion-card { background: #242426; border-color: #3a3a3c; }
+        .discussion-title { color: #e5e5e7; }
+        .discussion-summary { color: #8e8e93; }
+        .consensus-block { background: rgba(34,197,94,0.09); border-left-color: rgba(34,197,94,0.4); color: #e5e5e7; }
+        .consensus-label { color: #4ade80; }
       }
 
     """

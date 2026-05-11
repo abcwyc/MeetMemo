@@ -22,6 +22,7 @@ struct StructuredSummaryResult {
     let decisions: [MeetingDecision]
     let risks: [MeetingRisk]
     let openQuestions: [MeetingOpenQuestion]
+    let discussions: [MeetingDiscussion]
 }
 
 final class MeetingStructuredExtractor {
@@ -70,6 +71,14 @@ final class MeetingStructuredExtractor {
 JSON 必须是如下对象结构：
 {
   "one_liner": "一句话概括本次会议最重要的结论或成果，不超过50字",
+  "discussions": [
+    {
+      "title": "议题或讨论主题的简洁标题",
+      "summary": "该议题的讨论过程摘要，包括主要观点和分歧（如有），不超过120字",
+      "consensus": "该议题最终达成的共识或明确结论，没有则为空字符串",
+      "has_consensus": true
+    }
+  ],
   "decisions": [
     {
       "title": "决策内容，简洁明确",
@@ -97,6 +106,7 @@ JSON 必须是如下对象结构：
 }
 
 提取规则：
+- discussions：提取会议中实质讨论过的主要议题（3-6 条）。summary 侧重「讨论了什么、有何分歧或不同观点」，consensus 侧重「最终达成了什么共识或结论」。has_consensus 为 true 时 consensus 不能为空。纯粹的信息汇报或结论宣布不视为议题讨论。若无法区分具体议题，返回空数组 []。
 - decisions：只提取会议中明确达成、被多方认可的决策。不要把"建议"、"想法"、"讨论方向"误判为已确认决策。confidence 为 low 时表示你对该决策的判断不确定。
 - risks：提取会议中明确提及的风险、阻塞项、潜在问题。
 - open_questions：提取会议中尚未达成结论、需要后续确认或跟进的问题。
@@ -127,6 +137,17 @@ JSON 必须是如下对象结构：
         } catch {
             throw StructuredExtractionError.invalidResponse
         }
+
+        let discussions = raw.discussions?.compactMap { item -> MeetingDiscussion? in
+            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+            return MeetingDiscussion(
+                title: title,
+                summary: item.summary.trimmingCharacters(in: .whitespacesAndNewlines),
+                consensus: item.consensus.trimmingCharacters(in: .whitespacesAndNewlines),
+                hasConsensus: item.has_consensus
+            )
+        } ?? []
 
         let decisions = raw.decisions?.compactMap { item -> MeetingDecision? in
             let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -167,7 +188,8 @@ JSON 必须是如下对象结构：
             oneLiner: raw.one_liner.trimmingCharacters(in: .whitespacesAndNewlines),
             decisions: decisions,
             risks: risks,
-            openQuestions: openQuestions
+            openQuestions: openQuestions,
+            discussions: discussions
         )
     }
 
@@ -195,9 +217,17 @@ JSON 必须是如下对象结构：
 
 private struct RawStructuredSummary: Decodable {
     let one_liner: String
+    let discussions: [RawDiscussion]?
     let decisions: [RawDecision]?
     let risks: [RawRisk]?
     let open_questions: [RawOpenQuestion]?
+}
+
+private struct RawDiscussion: Decodable {
+    let title: String
+    let summary: String
+    let consensus: String
+    let has_consensus: Bool
 }
 
 private struct RawDecision: Decodable {

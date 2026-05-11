@@ -9,6 +9,7 @@ struct MeetingSummaryView: View {
 
     private var hasAnyContent: Bool {
         !meeting.oneLiner.isEmpty ||
+        !meeting.discussions.isEmpty ||
         !meeting.decisions.isEmpty ||
         !meeting.followUpTasks.isEmpty ||
         !meeting.risks.isEmpty ||
@@ -22,6 +23,10 @@ struct MeetingSummaryView: View {
             } else {
                 VStack(alignment: .leading, spacing: 24) {
                     heroSection
+
+                    if !meeting.discussions.isEmpty {
+                        discussionsSection
+                    }
 
                     if !meeting.decisions.isEmpty {
                         decisionsSection
@@ -102,6 +107,21 @@ struct MeetingSummaryView: View {
                     label: langMgr.t("问题", "Questions")
                 )
                 Spacer()
+            }
+        }
+    }
+
+    // MARK: - Discussions Section
+
+    private var discussionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SummarySectionHeader(
+                icon: "text.bubble",
+                title: langMgr.t("议题讨论", "Discussion Topics"),
+                count: meeting.discussions.count
+            )
+            ForEach(Array(meeting.discussions.enumerated()), id: \.element.id) { index, discussion in
+                DiscussionCard(index: index + 1, discussion: discussion, langMgr: langMgr)
             }
         }
     }
@@ -489,5 +509,73 @@ private struct OpenQuestionRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+}
+
+// MARK: - Discussion Card
+
+private struct DiscussionCard: View {
+    let index: Int
+    let discussion: MeetingDiscussion
+    let langMgr: LanguageManager
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            indexBadge
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(discussion.title)
+                    .font(.callout.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !discussion.summary.isEmpty {
+                    Text(discussion.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if discussion.hasConsensus && !discussion.consensus.isEmpty {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.green)
+                            .padding(.top, 1)
+                        Text(langMgr.t("达成共识：", "Consensus: ") + discussion.consensus)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.green.opacity(0.07))
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(Color.green.opacity(0.4))
+                            .frame(width: 3)
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.gray.opacity(0.10), lineWidth: 1)
+        )
+    }
+
+    private var indexBadge: some View {
+        ZStack {
+            Circle()
+                .fill(Color.blue.opacity(0.12))
+                .frame(width: 24, height: 24)
+            Text("\(index)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.blue)
+        }
+        .padding(.top, 1)
     }
 }
