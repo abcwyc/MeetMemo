@@ -180,6 +180,81 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
     }
 }
 
+struct MeetingDecision: Codable, Identifiable, Hashable {
+    var id: UUID
+    var title: String
+    var owner: String
+    var reason: String
+    var confidence: String  // "high" | "medium" | "low"
+    var sourceExcerpt: String
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        owner: String = "",
+        reason: String = "",
+        confidence: String = "medium",
+        sourceExcerpt: String = "",
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.owner = owner
+        self.reason = reason
+        self.confidence = confidence
+        self.sourceExcerpt = sourceExcerpt
+        self.createdAt = createdAt
+    }
+}
+
+struct MeetingRisk: Codable, Identifiable, Hashable {
+    var id: UUID
+    var title: String
+    var severity: String    // "high" | "medium" | "low"
+    var mitigation: String
+    var owner: String
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        severity: String = "medium",
+        mitigation: String = "",
+        owner: String = "",
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.severity = severity
+        self.mitigation = mitigation
+        self.owner = owner
+        self.createdAt = createdAt
+    }
+}
+
+struct MeetingOpenQuestion: Codable, Identifiable, Hashable {
+    var id: UUID
+    var question: String
+    var owner: String
+    var nextStep: String
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        question: String,
+        owner: String = "",
+        nextStep: String = "",
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.question = question
+        self.owner = owner
+        self.nextStep = nextStep
+        self.createdAt = createdAt
+    }
+}
+
 struct CollapsedTranscriptChunk: Identifiable {
     let id: UUID
     let timestamp: Date
@@ -332,11 +407,15 @@ struct Meeting: Codable, Identifiable, Hashable {
     var templateId: UUID?  // Add property to track per-meeting template
     var speakerParticipantNames: [String]
     var speakerNameMappings: [String: String]
+    var oneLiner: String
+    var decisions: [MeetingDecision]
+    var risks: [MeetingRisk]
+    var openQuestions: [MeetingOpenQuestion]
     // MARK: - Data versioning
     /// Version of this Meeting record on disk. Useful for migration.
     var dataVersion: Int
     /// Current app data version. Increment whenever you make a breaking change to `Meeting` that requires migration.
-    static let currentDataVersion = 3
+    static let currentDataVersion = 4
     
     init(id: UUID = UUID(),
          date: Date = Date(),
@@ -349,6 +428,10 @@ struct Meeting: Codable, Identifiable, Hashable {
          templateId: UUID? = nil,
          speakerParticipantNames: [String] = [],
          speakerNameMappings: [String: String] = [:],
+         oneLiner: String = "",
+         decisions: [MeetingDecision] = [],
+         risks: [MeetingRisk] = [],
+         openQuestions: [MeetingOpenQuestion] = [],
          dataVersion: Int = Meeting.currentDataVersion) {
         self.id = id
         self.date = date
@@ -361,6 +444,10 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.templateId = templateId
         self.speakerParticipantNames = Self.normalizedParticipantNames(speakerParticipantNames)
         self.speakerNameMappings = Self.normalizedSpeakerNameMappings(speakerNameMappings)
+        self.oneLiner = oneLiner
+        self.decisions = decisions
+        self.risks = risks
+        self.openQuestions = openQuestions
         self.dataVersion = dataVersion
     }
 
@@ -376,6 +463,10 @@ struct Meeting: Codable, Identifiable, Hashable {
         case templateId
         case speakerParticipantNames
         case speakerNameMappings
+        case oneLiner
+        case decisions
+        case risks
+        case openQuestions
         case dataVersion
     }
 
@@ -397,6 +488,10 @@ struct Meeting: Codable, Identifiable, Hashable {
         speakerNameMappings = Self.normalizedSpeakerNameMappings(
             try container.decodeIfPresent([String: String].self, forKey: .speakerNameMappings) ?? [:]
         )
+        oneLiner = try container.decodeIfPresent(String.self, forKey: .oneLiner) ?? ""
+        decisions = try container.decodeIfPresent([MeetingDecision].self, forKey: .decisions) ?? []
+        risks = try container.decodeIfPresent([MeetingRisk].self, forKey: .risks) ?? []
+        openQuestions = try container.decodeIfPresent([MeetingOpenQuestion].self, forKey: .openQuestions) ?? []
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
     }
 

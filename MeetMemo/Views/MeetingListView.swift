@@ -1210,6 +1210,9 @@ struct MeetingDetailContentView: View {
 
     private var enhancedNotesView: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !isEditing {
+                oneLinerCard
+            }
             if isEditing {
                 IMESafeTextEditor(text: Binding(
                     get: { viewModel.meeting.generatedNotes },
@@ -1226,6 +1229,39 @@ struct MeetingDetailContentView: View {
                     .cornerRadius(8)
                     .frame(maxHeight: .infinity)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var oneLinerCard: some View {
+        if viewModel.isExtractingStructuredSummary && viewModel.meeting.oneLiner.isEmpty {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .scaleEffect(0.65)
+                Text(langMgr.t("正在提取摘要...", "Extracting summary..."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.bottom, 8)
+        } else if !viewModel.meeting.oneLiner.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
+                Text(viewModel.meeting.oneLiner)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .italic()
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .padding(.bottom, 8)
         }
     }
 
@@ -2013,6 +2049,12 @@ private struct FollowUpTasksSheet: View {
         }
     }
 
+    private var hasStructuredContent: Bool {
+        !viewModel.meeting.decisions.isEmpty ||
+        !viewModel.meeting.risks.isEmpty ||
+        !viewModel.meeting.openQuestions.isEmpty
+    }
+
     private var taskList: some View {
         Group {
             if viewModel.isExtractingFollowUpTasks && viewModel.meeting.followUpTasks.isEmpty {
@@ -2022,7 +2064,7 @@ private struct FollowUpTasksSheet: View {
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.meeting.followUpTasks.isEmpty {
+            } else if viewModel.meeting.followUpTasks.isEmpty && !hasStructuredContent {
                 VStack(spacing: 8) {
                     Image(systemName: "checklist.unchecked")
                         .font(.system(size: 28))
@@ -2034,22 +2076,32 @@ private struct FollowUpTasksSheet: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        ForEach(viewModel.meeting.followUpTasks) { task in
-                            FollowUpTaskRow(
-                                task: binding(for: task),
-                                selectedReminderListId: selectedReminderListId,
-                                isSyncing: viewModel.syncingFollowUpTaskIds.contains(task.id),
-                                onAdd: { currentTask in
-                                    Task { await viewModel.createReminder(for: currentTask, listIdentifier: selectedReminderListId.isEmpty ? nil : selectedReminderListId) }
-                                },
-                                onRemove: { currentTask in
-                                    Task { await viewModel.removeReminder(for: currentTask) }
-                                },
-                                onDeleteLocal: { currentTask in
-                                    viewModel.deleteFollowUpTask(currentTask)
-                                }
-                            )
-                            .environmentObject(langMgr)
+                        structuredSummarySections
+                        if !viewModel.meeting.followUpTasks.isEmpty {
+                            if hasStructuredContent {
+                                Divider()
+                                    .padding(.vertical, 4)
+                                Text(langMgr.t("待办事项", "Action Items"))
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(viewModel.meeting.followUpTasks) { task in
+                                FollowUpTaskRow(
+                                    task: binding(for: task),
+                                    selectedReminderListId: selectedReminderListId,
+                                    isSyncing: viewModel.syncingFollowUpTaskIds.contains(task.id),
+                                    onAdd: { currentTask in
+                                        Task { await viewModel.createReminder(for: currentTask, listIdentifier: selectedReminderListId.isEmpty ? nil : selectedReminderListId) }
+                                    },
+                                    onRemove: { currentTask in
+                                        Task { await viewModel.removeReminder(for: currentTask) }
+                                    },
+                                    onDeleteLocal: { currentTask in
+                                        viewModel.deleteFollowUpTask(currentTask)
+                                    }
+                                )
+                                .environmentObject(langMgr)
+                            }
                         }
                     }
                     .padding(.vertical, 2)
@@ -2057,6 +2109,60 @@ private struct FollowUpTasksSheet: View {
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var structuredSummarySections: some View {
+        if !viewModel.meeting.decisions.isEmpty {
+            DisclosureGroup(
+                content: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.meeting.decisions) { decision in
+                            DecisionRow(decision: decision, langMgr: langMgr)
+                        }
+                    }
+                    .padding(.top, 4)
+                },
+                label: {
+                    Label(langMgr.t("关键决策", "Key Decisions"), systemImage: "checkmark.seal")
+                        .font(.subheadline.weight(.semibold))
+                }
+            )
+        }
+
+        if !viewModel.meeting.risks.isEmpty {
+            DisclosureGroup(
+                content: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.meeting.risks) { risk in
+                            RiskRow(risk: risk, langMgr: langMgr)
+                        }
+                    }
+                    .padding(.top, 4)
+                },
+                label: {
+                    Label(langMgr.t("风险事项", "Risks"), systemImage: "exclamationmark.triangle")
+                        .font(.subheadline.weight(.semibold))
+                }
+            )
+        }
+
+        if !viewModel.meeting.openQuestions.isEmpty {
+            DisclosureGroup(
+                content: {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(viewModel.meeting.openQuestions) { question in
+                            OpenQuestionRow(question: question, langMgr: langMgr)
+                        }
+                    }
+                    .padding(.top, 4)
+                },
+                label: {
+                    Label(langMgr.t("待确认问题", "Open Questions"), systemImage: "questionmark.circle")
+                        .font(.subheadline.weight(.semibold))
+                }
+            )
+        }
     }
 
     private var manualEntry: some View {
@@ -2327,6 +2433,123 @@ struct ShimmerOverlay: View {
                 )
         }
         .allowsHitTesting(false)
+    }
+}
+
+private struct DecisionRow: View {
+    let decision: MeetingDecision
+    let langMgr: LanguageManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
+                confidenceBadge
+                Text(decision.title)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !decision.owner.isEmpty {
+                Text(langMgr.t("负责人：\(decision.owner)", "Owner: \(decision.owner)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !decision.sourceExcerpt.isEmpty {
+                Text("\u{201C}\(decision.sourceExcerpt)\u{201D}")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .italic()
+                    .lineLimit(2)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var confidenceBadge: some View {
+        let isLow = decision.confidence == "low"
+        return Text(isLow ? langMgr.t("待确认", "Unconfirmed") : langMgr.t("已确认", "Confirmed"))
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(isLow ? Color.orange : Color.green)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                (isLow ? Color.orange : Color.green).opacity(0.12),
+                in: RoundedRectangle(cornerRadius: 4)
+            )
+    }
+}
+
+private struct RiskRow: View {
+    let risk: MeetingRisk
+    let langMgr: LanguageManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
+                Circle()
+                    .fill(severityColor)
+                    .frame(width: 8, height: 8)
+                    .padding(.top, 4)
+                Text(risk.title)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !risk.mitigation.isEmpty {
+                Text(langMgr.t("应对：\(risk.mitigation)", "Mitigation: \(risk.mitigation)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            if !risk.owner.isEmpty {
+                Text(langMgr.t("负责人：\(risk.owner)", "Owner: \(risk.owner)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var severityColor: Color {
+        switch risk.severity {
+        case "high": return .red
+        case "low": return .green
+        default: return .orange
+        }
+    }
+}
+
+private struct OpenQuestionRow: View {
+    let question: MeetingOpenQuestion
+    let langMgr: LanguageManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                Text(question.question)
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !question.owner.isEmpty {
+                Text(langMgr.t("负责确认：\(question.owner)", "Owner: \(question.owner)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !question.nextStep.isEmpty {
+                Text(langMgr.t("下一步：\(question.nextStep)", "Next: \(question.nextStep)"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 

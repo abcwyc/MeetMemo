@@ -37,6 +37,7 @@ class MeetingViewModel: ObservableObject {
     @Published var isStartingRecording = false // Indicates recording start in progress
     @Published var isLoadingMeeting = false
     @Published var isExtractingFollowUpTasks = false
+    @Published var isExtractingStructuredSummary = false
     @Published var syncingFollowUpTaskIds: Set<UUID> = []
     @Published var transcriptDisplayChunks: [TranscriptDisplayChunk] = []
     @Published private var hasStartedRecordingSession = false
@@ -477,6 +478,9 @@ class MeetingViewModel: ObservableObject {
                 }
             }
             saveMeeting()
+            if meeting.oneLiner.isEmpty {
+                Task { await self.extractStructuredSummary() }
+            }
         }
     }
     
@@ -545,6 +549,22 @@ class MeetingViewModel: ObservableObject {
 
     func deleteContextItem(_ item: MeetingContextItem) {
         meeting.contextItems.removeAll { $0.id == item.id }
+    }
+
+    func extractStructuredSummary() async {
+        guard !isExtractingStructuredSummary else { return }
+        isExtractingStructuredSummary = true
+        defer { isExtractingStructuredSummary = false }
+
+        do {
+            let result = try await MeetingStructuredExtractor.shared.extract(from: meeting)
+            meeting.oneLiner = result.oneLiner
+            meeting.decisions = result.decisions
+            meeting.risks = result.risks
+            meeting.openQuestions = result.openQuestions
+        } catch {
+            print("⚠️ Structured extraction failed: \(error)")
+        }
     }
 
     func extractFollowUpTasks() async {
