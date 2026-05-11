@@ -38,6 +38,9 @@ struct MeetingHTMLExporter {
         if !meeting.openQuestions.isEmpty {
             bodySections += questionsSection(meeting.openQuestions)
         }
+        if !meeting.milestones.isEmpty {
+            bodySections += milestonesSection(meeting.milestones)
+        }
         let notes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !notes.isEmpty {
             bodySections += notesSection(notes)
@@ -119,25 +122,20 @@ struct MeetingHTMLExporter {
     private static func decisionsSection(_ decisions: [MeetingDecision]) -> String {
         var html = "<section>\n"
         html += "  <h2>关键决策</h2>\n"
+        html += "  <div class=\"decisions-grid\">\n"
         for d in decisions {
-            let (badgeClass, badgeText) = confidenceStyle(d.confidence)
-            html += "  <div class=\"card\">\n"
-            html += "    <div class=\"badge \(badgeClass)\">\(badgeText)</div>\n"
-            html += "    <p class=\"card-title\">\(d.title.esc)</p>\n"
+            let (_, badgeText) = confidenceStyle(d.confidence)
+            let isApproved = d.confidence == "high" || d.confidence == "medium"
+            let badgeColor = d.confidence == "low" ? "#d97706" : (d.confidence == "high" ? "#16a34a" : "#2563eb")
+            html += "    <div class=\"decision-grid-card\">\n"
             if !d.owner.isEmpty {
-                html += "    <p class=\"card-meta\">负责：\(d.owner.esc)</p>\n"
+                html += "      <p class=\"dg-category\">\(d.owner.esc)</p>\n"
             }
-            if !d.reason.isEmpty {
-                html += "    <p class=\"card-detail\">\(d.reason.esc)</p>\n"
-            }
-            if !d.sourceExcerpt.isEmpty {
-                html += "    <details>\n"
-                html += "      <summary>查看原文</summary>\n"
-                html += "      <blockquote>\(d.sourceExcerpt.esc)</blockquote>\n"
-                html += "    </details>\n"
-            }
-            html += "  </div>\n"
+            html += "      <p class=\"dg-title\">\(d.title.esc)</p>\n"
+            html += "      <p class=\"dg-badge\" style=\"color:\(badgeColor)\">\(isApproved ? "✓ " : "")\(badgeText)</p>\n"
+            html += "    </div>\n"
         }
+        html += "  </div>\n"
         html += "</section>\n\n"
         return html
     }
@@ -145,29 +143,37 @@ struct MeetingHTMLExporter {
     private static func tasksSection(_ tasks: [MeetingFollowUpTask]) -> String {
         let kindOrder: [FollowUpTaskKind] = [.actionItem, .confirmation, .followUp, .manual]
         let grouped = Dictionary(grouping: tasks, by: \.kind)
+        let df = DateFormatter()
+        df.dateStyle = .medium
+        df.timeStyle = .none
 
         var html = "<section>\n"
         html += "  <h2>待办事项</h2>\n"
         for kind in kindOrder {
             guard let items = grouped[kind], !items.isEmpty else { continue }
             html += "  <h3>\(kind.displayName.esc)</h3>\n"
+            html += "  <table class=\"task-table\">\n"
+            html += "    <thead><tr><th>任务</th><th>负责人</th><th>截止时间</th></tr></thead>\n"
+            html += "    <tbody>\n"
             for task in items {
-                html += "  <div class=\"card task-card\">\n"
-                html += "    <p class=\"card-title\">\(task.title.esc)</p>\n"
-                if let due = task.dueDate {
-                    let df = DateFormatter()
-                    df.dateStyle = .medium
-                    df.timeStyle = .none
-                    html += "    <p class=\"card-meta\">截止：\(df.string(from: due).esc)</p>\n"
-                }
+                let ownerText = task.owner.isEmpty ? "—" : task.owner.esc
+                let dueText = task.dueDate.map { df.string(from: $0).esc } ?? "—"
+                html += "      <tr>\n"
+                html += "        <td>\(task.title.esc)"
                 if !task.detail.isEmpty {
-                    html += "    <p class=\"card-detail\">\(task.detail.esc)</p>\n"
+                    html += "<br><span class=\"task-detail\">\(task.detail.esc)</span>"
                 }
-                if task.isSyncedToReminders {
-                    html += "    <p class=\"card-meta synced\">已同步到提醒事项</p>\n"
+                html += "</td>\n"
+                if task.owner.isEmpty {
+                    html += "        <td class=\"task-owner-empty\">—</td>\n"
+                } else {
+                    html += "        <td><span class=\"task-owner\">\(ownerText)</span></td>\n"
                 }
-                html += "  </div>\n"
+                html += "        <td class=\"task-due\">\(dueText)</td>\n"
+                html += "      </tr>\n"
             }
+            html += "    </tbody>\n"
+            html += "  </table>\n"
         }
         html += "</section>\n\n"
         return html
@@ -198,17 +204,48 @@ struct MeetingHTMLExporter {
     private static func questionsSection(_ questions: [MeetingOpenQuestion]) -> String {
         var html = "<section>\n"
         html += "  <h2>待确认问题</h2>\n"
+        html += "  <div class=\"question-list\">\n"
         for q in questions {
-            html += "  <div class=\"card\">\n"
-            html += "    <p class=\"card-title\">\(q.question.esc)</p>\n"
-            if !q.owner.isEmpty {
-                html += "    <p class=\"card-meta\">负责确认：\(q.owner.esc)</p>\n"
+            html += "    <div class=\"question-row\">\n"
+            html += "      <span class=\"question-icon\">○</span>\n"
+            html += "      <div class=\"question-body\">\n"
+            html += "        <p class=\"question-text\">\(q.question.esc)</p>\n"
+            if !q.owner.isEmpty || !q.nextStep.isEmpty {
+                html += "        <p class=\"question-meta\">"
+                if !q.owner.isEmpty { html += "负责：\(q.owner.esc)" }
+                if !q.owner.isEmpty && !q.nextStep.isEmpty { html += " &nbsp;·&nbsp; " }
+                if !q.nextStep.isEmpty { html += "→ \(q.nextStep.esc)" }
+                html += "</p>\n"
             }
-            if !q.nextStep.isEmpty {
-                html += "    <p class=\"card-meta\">下一步：\(q.nextStep.esc)</p>\n"
-            }
-            html += "  </div>\n"
+            html += "      </div>\n"
+            html += "    </div>\n"
         }
+        html += "  </div>\n"
+        html += "</section>\n\n"
+        return html
+    }
+
+    private static func milestonesSection(_ milestones: [MeetingMilestone]) -> String {
+        var html = "<section>\n"
+        html += "  <h2>里程碑</h2>\n"
+        html += "  <div class=\"milestone-list\">\n"
+        for m in milestones {
+            html += "    <div class=\"milestone-row\">\n"
+            html += "      <span class=\"milestone-dot\"></span>\n"
+            html += "      <div class=\"milestone-body\">\n"
+            html += "        <div class=\"milestone-header\">\n"
+            html += "          <span class=\"milestone-title\">\(m.title.esc)</span>\n"
+            if !m.targetDate.isEmpty {
+                html += "          <span class=\"milestone-date\">\(m.targetDate.esc)</span>\n"
+            }
+            html += "        </div>\n"
+            if !m.milestoneDescription.isEmpty {
+                html += "        <p class=\"milestone-desc\">\(m.milestoneDescription.esc)</p>\n"
+            }
+            html += "      </div>\n"
+            html += "    </div>\n"
+        }
+        html += "  </div>\n"
         html += "</section>\n\n"
         return html
     }
@@ -415,6 +452,49 @@ struct MeetingHTMLExporter {
       }
       .consensus-label { font-weight: 600; color: #166534; }
 
+      /* Decisions Grid */
+      .decisions-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+      .decision-grid-card {
+        background: #f8f8f8; border: 1px solid #e5e5e5; border-radius: 8px;
+        padding: 12px; display: flex; flex-direction: column; gap: 6px; min-height: 80px;
+      }
+      .dg-category { font-size: 0.72rem; color: #aaa; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .dg-title { font-size: 0.92rem; font-weight: 600; color: #1a1a1a; margin: 0; flex: 1; }
+      .dg-badge { font-size: 0.72rem; font-weight: 600; margin: 0; }
+      @media (max-width: 600px) { .decisions-grid { grid-template-columns: repeat(2, 1fr); } }
+
+      /* Task Table */
+      .task-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-bottom: 4px; }
+      .task-table th { text-align: left; font-size: 0.75rem; color: #888; font-weight: 600; padding: 6px 10px; background: #f4f4f4; }
+      .task-table td { padding: 8px 10px; border-top: 1px solid #ebebeb; vertical-align: top; color: #1a1a1a; }
+      .task-detail { font-size: 0.78rem; color: #aaa; }
+      .task-owner { font-size: 0.78rem; font-weight: 500; color: #2563eb; background: rgba(37,99,235,0.1); border-radius: 100px; padding: 2px 7px; }
+      .task-owner-empty { color: #ccc; }
+      .task-due { font-size: 0.82rem; color: #666; white-space: nowrap; }
+
+      /* Questions */
+      .question-list { background: #fafafa; border: 1px solid #e8e8e8; border-radius: 8px; overflow: hidden; }
+      .question-row { display: flex; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #ebebeb; }
+      .question-row:last-child { border-bottom: none; }
+      .question-icon { color: #d97706; font-size: 1rem; line-height: 1.6; flex-shrink: 0; }
+      .question-body { flex: 1; }
+      .question-text { font-size: 0.92rem; color: #1a1a1a; margin: 0 0 3px; }
+      .question-meta { font-size: 0.8rem; color: #888; margin: 0; }
+
+      /* Milestones */
+      .milestone-list { border-left: 2px solid #e5e5e5; margin-left: 8px; padding-left: 16px; }
+      .milestone-row { display: flex; gap: 0; align-items: flex-start; position: relative; margin-bottom: 14px; }
+      .milestone-dot {
+        position: absolute; left: -22px; top: 4px;
+        width: 10px; height: 10px; border-radius: 50%;
+        background: #007aff; border: 2px solid #fff; box-shadow: 0 0 0 1px #e5e5e5;
+      }
+      .milestone-body { flex: 1; }
+      .milestone-header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+      .milestone-title { font-size: 0.95rem; font-weight: 600; color: #1a1a1a; }
+      .milestone-date { font-size: 0.82rem; font-weight: 500; color: #888; white-space: nowrap; }
+      .milestone-desc { font-size: 0.85rem; color: #666; margin: 3px 0 0; }
+
       /* Cards */
       .card {
         background: #f8f8f8;
@@ -486,6 +566,22 @@ struct MeetingHTMLExporter {
         .notes-body th { background: #2c2c2e; }
         .notes-body th, .notes-body td { border-color: #3a3a3c; }
         .notes-body tr:nth-child(even) td { background: #232325; }
+        .decision-grid-card { background: #2c2c2e; border-color: #3a3a3c; }
+        .dg-title { color: #e5e5e7; }
+        .dg-category { color: #636366; }
+        .task-table th { background: #2c2c2e; color: #636366; }
+        .task-table td { color: #e5e5e7; border-top-color: #3a3a3c; }
+        .task-detail { color: #636366; }
+        .task-due { color: #8e8e93; }
+        .question-list { background: #242426; border-color: #3a3a3c; }
+        .question-row { border-bottom-color: #3a3a3c; }
+        .question-text { color: #e5e5e7; }
+        .question-meta { color: #8e8e93; }
+        .milestone-list { border-left-color: #3a3a3c; }
+        .milestone-dot { background: #0a84ff; border-color: #1c1c1e; box-shadow: 0 0 0 1px #3a3a3c; }
+        .milestone-title { color: #e5e5e7; }
+        .milestone-date { color: #8e8e93; }
+        .milestone-desc { color: #8e8e93; }
         .discussion-card { background: #242426; border-color: #3a3a3c; }
         .discussion-title { color: #e5e5e7; }
         .discussion-summary { color: #8e8e93; }

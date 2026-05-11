@@ -136,6 +136,7 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
     var sourceExcerpt: String
     var kind: FollowUpTaskKind
     var dueDate: Date?
+    var owner: String
     var isManual: Bool
     var reminderIdentifier: String?
     var reminderCalendarIdentifier: String?
@@ -150,6 +151,7 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
         sourceExcerpt: String = "",
         kind: FollowUpTaskKind,
         dueDate: Date? = nil,
+        owner: String = "",
         isManual: Bool = false,
         reminderIdentifier: String? = nil,
         reminderCalendarIdentifier: String? = nil,
@@ -163,12 +165,36 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
         self.sourceExcerpt = sourceExcerpt
         self.kind = kind
         self.dueDate = dueDate
+        self.owner = owner
         self.isManual = isManual
         self.reminderIdentifier = reminderIdentifier
         self.reminderCalendarIdentifier = reminderCalendarIdentifier
         self.reminderCalendarTitle = reminderCalendarTitle
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, detail, sourceExcerpt, kind, dueDate, owner, isManual
+        case reminderIdentifier, reminderCalendarIdentifier, reminderCalendarTitle
+        case createdAt, updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        sourceExcerpt = try c.decodeIfPresent(String.self, forKey: .sourceExcerpt) ?? ""
+        kind = try c.decodeIfPresent(FollowUpTaskKind.self, forKey: .kind) ?? .followUp
+        dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
+        owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        isManual = try c.decodeIfPresent(Bool.self, forKey: .isManual) ?? false
+        reminderIdentifier = try c.decodeIfPresent(String.self, forKey: .reminderIdentifier)
+        reminderCalendarIdentifier = try c.decodeIfPresent(String.self, forKey: .reminderCalendarIdentifier)
+        reminderCalendarTitle = try c.decodeIfPresent(String.self, forKey: .reminderCalendarTitle)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
     var trimmedTitle: String {
@@ -251,6 +277,28 @@ struct MeetingOpenQuestion: Codable, Identifiable, Hashable {
         self.question = question
         self.owner = owner
         self.nextStep = nextStep
+        self.createdAt = createdAt
+    }
+}
+
+struct MeetingMilestone: Codable, Identifiable, Hashable {
+    var id: UUID
+    var title: String
+    var milestoneDescription: String
+    var targetDate: String
+    var createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        milestoneDescription: String = "",
+        targetDate: String = "",
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.milestoneDescription = milestoneDescription
+        self.targetDate = targetDate
         self.createdAt = createdAt
     }
 }
@@ -437,11 +485,12 @@ struct Meeting: Codable, Identifiable, Hashable {
     var risks: [MeetingRisk]
     var openQuestions: [MeetingOpenQuestion]
     var discussions: [MeetingDiscussion]
+    var milestones: [MeetingMilestone]
     // MARK: - Data versioning
     /// Version of this Meeting record on disk. Useful for migration.
     var dataVersion: Int
     /// Current app data version. Increment whenever you make a breaking change to `Meeting` that requires migration.
-    static let currentDataVersion = 5
+    static let currentDataVersion = 6
 
     init(id: UUID = UUID(),
          date: Date = Date(),
@@ -459,6 +508,7 @@ struct Meeting: Codable, Identifiable, Hashable {
          risks: [MeetingRisk] = [],
          openQuestions: [MeetingOpenQuestion] = [],
          discussions: [MeetingDiscussion] = [],
+         milestones: [MeetingMilestone] = [],
          dataVersion: Int = Meeting.currentDataVersion) {
         self.id = id
         self.date = date
@@ -476,6 +526,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.risks = risks
         self.openQuestions = openQuestions
         self.discussions = discussions
+        self.milestones = milestones
         self.dataVersion = dataVersion
     }
 
@@ -496,6 +547,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         case risks
         case openQuestions
         case discussions
+        case milestones
         case dataVersion
     }
 
@@ -522,6 +574,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         risks = try container.decodeIfPresent([MeetingRisk].self, forKey: .risks) ?? []
         openQuestions = try container.decodeIfPresent([MeetingOpenQuestion].self, forKey: .openQuestions) ?? []
         discussions = try container.decodeIfPresent([MeetingDiscussion].self, forKey: .discussions) ?? []
+        milestones = try container.decodeIfPresent([MeetingMilestone].self, forKey: .milestones) ?? []
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
     }
 

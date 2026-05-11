@@ -53,6 +53,11 @@ class DataMigrationManager {
             migratedMeeting.dataVersion = 5
         }
 
+        if migratedMeeting.dataVersion < 6 {
+            migratedMeeting.milestones = []
+            migratedMeeting.dataVersion = 6
+        }
+
         if migratedMeeting.dataVersion < Meeting.currentDataVersion {
             print("⚠️ No migration path for versions \(migratedMeeting.dataVersion + 1)...\(Meeting.currentDataVersion)")
             return nil

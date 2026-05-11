@@ -23,6 +23,7 @@ struct StructuredSummaryResult {
     let risks: [MeetingRisk]
     let openQuestions: [MeetingOpenQuestion]
     let discussions: [MeetingDiscussion]
+    let milestones: [MeetingMilestone]
 }
 
 final class MeetingStructuredExtractor {
@@ -102,11 +103,19 @@ JSON 必须是如下对象结构：
       "owner": "负责确认的人，没有则为空字符串",
       "next_step": "下一步行动，没有则为空字符串"
     }
+  ],
+  "milestones": [
+    {
+      "title": "里程碑名称，简洁",
+      "description": "主要交付内容或目标，没有则为空字符串",
+      "target_date": "目标时间，直接使用原文表述如'5月底'、'下周五'，没有则为空字符串"
+    }
   ]
 }
 
 提取规则：
 - discussions：提取会议中实质讨论过的主要议题（3-6 条）。summary 侧重「讨论了什么、有何分歧或不同观点」，consensus 侧重「最终达成了什么共识或结论」。has_consensus 为 true 时 consensus 不能为空。纯粹的信息汇报或结论宣布不视为议题讨论。若无法区分具体议题，返回空数组 []。
+- milestones：提取会议中提及的具体交付节点或上线计划（通常有时间节点）。与 decisions 的区别在于 milestones 侧重「交付时间线」，decisions 侧重「方向选择」。没有明确时间节点的目标不算里程碑。若无里程碑信息，返回空数组 []。
 - decisions：只提取会议中明确达成、被多方认可的决策。不要把"建议"、"想法"、"讨论方向"误判为已确认决策。confidence 为 low 时表示你对该决策的判断不确定。
 - risks：提取会议中明确提及的风险、阻塞项、潜在问题。
 - open_questions：提取会议中尚未达成结论、需要后续确认或跟进的问题。
@@ -184,12 +193,23 @@ JSON 必须是如下对象结构：
             )
         } ?? []
 
+        let milestones = raw.milestones?.compactMap { item -> MeetingMilestone? in
+            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+            return MeetingMilestone(
+                title: title,
+                milestoneDescription: item.description.trimmingCharacters(in: .whitespacesAndNewlines),
+                targetDate: item.target_date.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        } ?? []
+
         return StructuredSummaryResult(
             oneLiner: raw.one_liner.trimmingCharacters(in: .whitespacesAndNewlines),
             decisions: decisions,
             risks: risks,
             openQuestions: openQuestions,
-            discussions: discussions
+            discussions: discussions,
+            milestones: milestones
         )
     }
 
@@ -221,6 +241,7 @@ private struct RawStructuredSummary: Decodable {
     let decisions: [RawDecision]?
     let risks: [RawRisk]?
     let open_questions: [RawOpenQuestion]?
+    let milestones: [RawMilestone]?
 }
 
 private struct RawDiscussion: Decodable {
@@ -249,4 +270,10 @@ private struct RawOpenQuestion: Decodable {
     let question: String
     let owner: String
     let next_step: String
+}
+
+private struct RawMilestone: Decodable {
+    let title: String
+    let description: String
+    let target_date: String
 }

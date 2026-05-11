@@ -62,6 +62,7 @@ final class FollowUpTaskExtractor {
 JSON 必须是数组，每个元素包含：
 - title: 简短可执行任务标题
 - detail: 任务补充说明，没有则为空字符串
+- owner: 负责人姓名，没有则为空字符串
 - kind: 只能是 actionItem、confirmation、followUp
 - sourceExcerpt: 会议纪要中的相关原文短句，尽量不超过 80 个中文字符
 - dueDateText: 如果原文明确给出截止时间则填写原文，否则为空字符串
@@ -101,6 +102,7 @@ JSON 必须是数组，每个元素包含：
                 detail: item.detail.trimmingCharacters(in: .whitespacesAndNewlines),
                 sourceExcerpt: item.sourceExcerpt.trimmingCharacters(in: .whitespacesAndNewlines),
                 kind: FollowUpTaskKind(rawValue: item.kind) ?? .followUp,
+                owner: (item.owner ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                 isManual: false
             )
         }
@@ -129,6 +131,7 @@ JSON 必须是数组，每个元素包含：
 private struct ExtractedFollowUpTask: Decodable {
     let title: String
     let detail: String
+    let owner: String?
     let kind: String
     let sourceExcerpt: String
     let dueDateText: String?

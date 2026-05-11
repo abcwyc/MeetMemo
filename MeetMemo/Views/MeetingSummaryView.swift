@@ -13,7 +13,8 @@ struct MeetingSummaryView: View {
         !meeting.decisions.isEmpty ||
         !meeting.followUpTasks.isEmpty ||
         !meeting.risks.isEmpty ||
-        !meeting.openQuestions.isEmpty
+        !meeting.openQuestions.isEmpty ||
+        !meeting.milestones.isEmpty
     }
 
     var body: some View {
@@ -42,6 +43,10 @@ struct MeetingSummaryView: View {
 
                     if !meeting.openQuestions.isEmpty {
                         openQuestionsSection
+                    }
+
+                    if !meeting.milestones.isEmpty {
+                        milestonesSection
                     }
                 }
                 .padding()
@@ -211,6 +216,31 @@ struct MeetingSummaryView: View {
         }
     }
 
+    // MARK: - Milestones Section
+
+    private var milestonesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SummarySectionHeader(
+                icon: "flag.checkered",
+                title: langMgr.t("里程碑", "Milestones"),
+                count: meeting.milestones.count
+            )
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(meeting.milestones.enumerated()), id: \.element.id) { index, milestone in
+                    MilestoneRow(milestone: milestone)
+                    if index < meeting.milestones.count - 1 {
+                        Divider().padding(.leading, 36)
+                    }
+                }
+            }
+            .background(Color.gray.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.gray.opacity(0.10), lineWidth: 1)
+            )
+        }
+    }
+
     // MARK: - Empty State
 
     private var emptyState: some View {
@@ -340,8 +370,10 @@ private struct TaskTableSection: View {
             HStack(spacing: 0) {
                 Text(langMgr.t("任务", "Task"))
                     .frame(maxWidth: .infinity, alignment: .leading)
+                Text(langMgr.t("负责人", "Owner"))
+                    .frame(width: 80, alignment: .leading)
                 Text(langMgr.t("截止时间", "Due Date"))
-                    .frame(width: 110, alignment: .leading)
+                    .frame(width: 100, alignment: .leading)
             }
             .font(.caption2.weight(.medium))
             .foregroundStyle(.tertiary)
@@ -353,7 +385,7 @@ private struct TaskTableSection: View {
 
             // Task rows
             ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
-                HStack(alignment: .top, spacing: 0) {
+                HStack(alignment: .center, spacing: 0) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(task.title)
                             .font(.callout)
@@ -367,8 +399,11 @@ private struct TaskTableSection: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
 
+                    ownerChipView(task.owner)
+                        .frame(width: 80, alignment: .leading)
+
                     dueDateView(task.dueDate)
-                        .frame(width: 110, alignment: .leading)
+                        .frame(width: 100, alignment: .leading)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -385,6 +420,28 @@ private struct TaskTableSection: View {
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Color.gray.opacity(0.10), lineWidth: 1)
         )
+    }
+
+    @ViewBuilder
+    private func ownerChipView(_ owner: String) -> some View {
+        if owner.isEmpty {
+            Text("—").font(.caption2).foregroundStyle(.quaternary)
+        } else {
+            let color = ownerColor(for: owner)
+            Text(owner)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.12), in: Capsule())
+        }
+    }
+
+    private func ownerColor(for owner: String) -> Color {
+        let palette: [Color] = [.blue, .green, .orange, .purple, .teal, .indigo, .pink]
+        let idx = abs(owner.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }) % palette.count
+        return palette[idx]
     }
 
     @ViewBuilder
@@ -577,5 +634,41 @@ private struct DiscussionCard: View {
                 .foregroundStyle(.blue)
         }
         .padding(.top, 1)
+    }
+}
+
+// MARK: - Milestone Row
+
+private struct MilestoneRow: View {
+    let milestone: MeetingMilestone
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 8, height: 8)
+                .padding(.top, 6)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack {
+                    Text(milestone.title)
+                        .font(.callout.weight(.semibold))
+                    Spacer()
+                    if !milestone.targetDate.isEmpty {
+                        Text(milestone.targetDate)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if !milestone.milestoneDescription.isEmpty {
+                    Text(milestone.milestoneDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }

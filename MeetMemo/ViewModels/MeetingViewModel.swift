@@ -562,6 +562,7 @@ class MeetingViewModel: ObservableObject {
             meeting.risks = result.risks
             meeting.openQuestions = result.openQuestions
             meeting.discussions = result.discussions
+            meeting.milestones = result.milestones
         } catch {
             print("⚠️ Structured extraction failed: \(error)")
         }
