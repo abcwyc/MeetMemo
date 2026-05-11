@@ -566,6 +566,22 @@ class MeetingViewModel: ObservableObject {
         }
     }
 
+    func exportHTML() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.html]
+        panel.canCreateDirectories = true
+        let safeName = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        panel.nameFieldStringValue = safeName.isEmpty ? "会议纪要.html" : "\(safeName).html"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let html = MeetingHTMLExporter.generateHTML(for: meeting)
+        do {
+            try html.write(to: url, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.open(url)
+        } catch {
+            errorMessage = "HTML 导出失败：\(error.localizedDescription)"
+        }
+    }
+
     func extractFollowUpTasks() async {
         guard !isExtractingFollowUpTasks else { return }
         isExtractingFollowUpTasks = true

@@ -896,6 +896,18 @@ struct MeetingDetailContentView: View {
 
     private var moreMenu: some View {
         Menu {
+            Button {
+                viewModel.exportHTML()
+            } label: {
+                Label(langMgr.t("导出 HTML", "Export as HTML"), systemImage: "square.and.arrow.up")
+            }
+            .disabled(
+                viewModel.meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                viewModel.meeting.oneLiner.isEmpty
+            )
+
+            Divider()
+
             Button(langMgr.t("删除会议", "Delete Meeting"), role: .destructive) {
                 showDeleteAlert = true
             }
