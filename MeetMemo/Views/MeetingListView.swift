@@ -618,6 +618,9 @@ struct MeetingDetailContentView: View {
                         transcriptView
                     case .enhancedNotes:
                         enhancedNotesView
+                    case .summary:
+                        MeetingSummaryView(viewModel: viewModel)
+                            .environmentObject(langMgr)
                     }
                 }
                 .frame(maxHeight: .infinity)
@@ -700,6 +703,9 @@ struct MeetingDetailContentView: View {
         HStack(spacing: 4) {
             recordingButton
             generateNotesButton
+            if viewModel.selectedTab == .summary {
+                reExtractButton
+            }
         }
         .padding(4)
         .background {
@@ -711,6 +717,24 @@ struct MeetingDetailContentView: View {
                 }
         }
         .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var reExtractButton: some View {
+        Button {
+            Task { await viewModel.extractStructuredSummary() }
+        } label: {
+            Label(
+                viewModel.isExtractingStructuredSummary
+                    ? langMgr.t("提取中", "Extracting")
+                    : langMgr.t("重新提取", "Re-extract"),
+                systemImage: "sparkles"
+            )
+        }
+        .buttonStyle(DetailHeaderActionButtonStyle())
+        .disabled(
+            viewModel.isExtractingStructuredSummary ||
+            viewModel.meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        )
     }
 
     private var detailTabBar: some View {

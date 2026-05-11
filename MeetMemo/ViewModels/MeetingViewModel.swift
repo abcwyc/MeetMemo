@@ -13,14 +13,16 @@ enum MeetingViewTab: String, CaseIterable {
     case context = "Prep"
     case transcript = "Transcript"
     case enhancedNotes = "AI Notes"
+    case summary = "Summary"
 
-    static let displayOrder: [MeetingViewTab] = [.context, .transcript, .enhancedNotes]
+    static let displayOrder: [MeetingViewTab] = [.context, .transcript, .enhancedNotes, .summary]
 
     var chineseLabel: String {
         switch self {
         case .context: return "会议资料"
         case .transcript: return "转录原文"
         case .enhancedNotes: return "AI纪要"
+        case .summary: return "摘要"
         }
     }
 }
@@ -506,16 +508,13 @@ class MeetingViewModel: ObservableObject {
             content = meeting.formattedTranscript
         case .enhancedNotes:
             var enhancedContent = ""
-            
-            // Add title as h1 header if title is set
             if !meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 enhancedContent += "# \(meeting.title)\n\n"
             }
-            
-            // Add the generated notes
             enhancedContent += meeting.generatedNotes
-            
             content = enhancedContent
+        case .summary:
+            content = meeting.generatedNotes
         }
         
         NSPasteboard.general.setString(content, forType: .string)
