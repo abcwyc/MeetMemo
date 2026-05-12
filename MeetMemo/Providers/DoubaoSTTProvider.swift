@@ -1,14 +1,23 @@
 import Foundation
 
-final class DoubaoSTTProvider: STTProvider {
-    var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)?
-    var onError: ((String) -> Void)?
+final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
+    var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)? {
+        get { callbackLock.withLock { onTranscriptUpdateHandler } }
+        set { callbackLock.withLock { onTranscriptUpdateHandler = newValue } }
+    }
+
+    var onError: ((String) -> Void)? {
+        get { callbackLock.withLock { onErrorHandler } }
+        set { callbackLock.withLock { onErrorHandler = newValue } }
+    }
 
     private let endpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
     private let resourceId = "volc.seedasr.sauc.duration"
     private let maximumWebSocketMessageSize = 64 * 1024 * 1024
+    private let maximumPendingAudioBytes = 256 * 1024
     private let stateLock = NSLock()
     private let utteranceTrackerLock = NSLock()
+    private let callbackLock = NSLock()
 
     private var session: URLSession?
     private var socketTask: URLSessionWebSocketTask?
@@ -17,6 +26,10 @@ final class DoubaoSTTProvider: STTProvider {
     private var didSendFinalAudio = false
     private var isConnected = false
     private var nextAudioSequence: Int32 = 2
+    private var pendingAudioBytes = 0
+    private var droppedAudioFrameCount = 0
+    private var onTranscriptUpdateHandler: ((STTTranscriptUpdate) -> Void)?
+    private var onErrorHandler: ((String) -> Void)?
 
     /// Tracks seen utterances by (startTime, endTime) to detect changes in full-result mode.
     /// When result_type is "full", the server sends ALL utterances each time. We diff against
@@ -44,6 +57,8 @@ final class DoubaoSTTProvider: STTProvider {
             self.didSendFinalAudio = false
             self.isConnected = false
             self.nextAudioSequence = 2
+            self.pendingAudioBytes = 0
+            self.droppedAudioFrameCount = 0
         }
 
         task.resume()
@@ -78,6 +93,8 @@ final class DoubaoSTTProvider: STTProvider {
             isDisconnecting = true
             didSendFinalAudio = true
             isConnected = false
+            pendingAudioBytes = 0
+            droppedAudioFrameCount = 0
             let t = socketTask
             socketTask = nil
             session = nil
@@ -165,20 +182,33 @@ final class DoubaoSTTProvider: STTProvider {
     }
 
     private func sendAudioFrame(_ pcmData: Data, isLast: Bool) {
-        let captured: (task: URLSessionWebSocketTask, sequence: Int32)? = stateLock.withLock {
+        let pendingBytes = pcmData.count
+        let captured: (task: URLSessionWebSocketTask, sequence: Int32, pendingBytes: Int)? = stateLock.withLock {
             guard !isDisconnecting, !didSendFinalAudio, let socketTask else { return nil }
+            if !isLast, pendingAudioBytes + pendingBytes > maximumPendingAudioBytes {
+                droppedAudioFrameCount += 1
+                if droppedAudioFrameCount == 1 || droppedAudioFrameCount % 50 == 0 {
+                    print("⚠️ Dropped \(droppedAudioFrameCount) STT audio frames because WebSocket send backlog is high.")
+                }
+                return nil
+            }
+
             let seq = nextAudioSequence
             nextAudioSequence &+= 1
+            pendingAudioBytes += pendingBytes
             if isLast { didSendFinalAudio = true }
-            return (socketTask, seq)
+            return (socketTask, seq, pendingBytes)
         }
 
-        guard let (task, sequence) = captured else { return }
+        guard let (task, sequence, capturedPendingBytes) = captured else { return }
 
         let frame: Data
         do {
             frame = try DoubaoFrame.encodeAudioData(pcmData: pcmData, sequence: sequence, isLast: isLast)
         } catch {
+            stateLock.withLock {
+                pendingAudioBytes = max(0, pendingAudioBytes - capturedPendingBytes)
+            }
             DispatchQueue.main.async { [weak self] in
                 self?.onError?(ErrorHandler.shared.handleError(error))
             }
@@ -187,6 +217,9 @@ final class DoubaoSTTProvider: STTProvider {
 
         task.send(.data(frame)) { [weak self] error in
             guard let self else { return }
+            self.stateLock.withLock {
+                self.pendingAudioBytes = max(0, self.pendingAudioBytes - capturedPendingBytes)
+            }
             if let error, (error as? URLError)?.code != .cancelled {
                 DispatchQueue.main.async {
                     self.onError?(ErrorHandler.shared.handleError(error))

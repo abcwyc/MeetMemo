@@ -570,7 +570,8 @@ struct MeetingDetailContentView: View {
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
     @State private var showDeleteAlert = false
-    @State private var isEditing = false
+    @State private var isContextEditing = false
+    @State private var isEnhancedNotesEditing = false
     @State private var showCopyConfirmation = false
     @State private var isImportingContextFile = false
     @State private var speakerNamingWindow: NSWindow?
@@ -885,11 +886,11 @@ struct MeetingDetailContentView: View {
         Menu {
             if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
                 Button {
-                    isEditing.toggle()
+                    toggleCurrentEditingMode()
                 } label: {
                     Label(
-                        isEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"),
-                        systemImage: isEditing ? "eye" : "pencil"
+                        isCurrentTabEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"),
+                        systemImage: isCurrentTabEditing ? "eye" : "pencil"
                     )
                 }
             }
@@ -960,8 +961,9 @@ struct MeetingDetailContentView: View {
                 .buttonStyle(DetailHeaderActionButtonStyle())
             }
 
-            if viewModel.selectedTab == .context && isEditing {
+            if viewModel.selectedTab == .context {
                 Button {
+                    isContextEditing = true
                     viewModel.addTextContextItem()
                 } label: {
                     Label(langMgr.t("添加文本", "Add Text"), systemImage: "text.alignleft")
@@ -1161,9 +1163,31 @@ struct MeetingDetailContentView: View {
         return Color.accentColor.opacity(isRecordingButtonHovered ? 0.38 : 0.26)
     }
 
+    private var isCurrentTabEditing: Bool {
+        switch viewModel.selectedTab {
+        case .context:
+            return isContextEditing
+        case .enhancedNotes:
+            return isEnhancedNotesEditing
+        case .transcript, .summary:
+            return false
+        }
+    }
+
+    private func toggleCurrentEditingMode() {
+        switch viewModel.selectedTab {
+        case .context:
+            isContextEditing.toggle()
+        case .enhancedNotes:
+            isEnhancedNotesEditing.toggle()
+        case .transcript, .summary:
+            break
+        }
+    }
+
     private func generateNotesWithTemplate(_ templateId: UUID?) async {
         viewModel.selectedTab = .enhancedNotes
-        isEditing = false
+        isEnhancedNotesEditing = false
 
         if viewModel.selectedTemplateId == templateId {
             await viewModel.generateNotes()
@@ -1184,7 +1208,7 @@ struct MeetingDetailContentView: View {
 
     private var contextView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if isEditing {
+            if isContextEditing {
                 VStack(alignment: .leading, spacing: 12) {
                     if viewModel.meeting.contextItems.isEmpty {
                         Text(langMgr.t("添加会议议程、背景材料、客户信息或你的补充判断。", "Add an agenda, background material, customer details, or your own notes."))
@@ -1263,10 +1287,10 @@ struct MeetingDetailContentView: View {
 
     private var enhancedNotesView: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if !isEditing {
+            if !isEnhancedNotesEditing {
                 oneLinerCard
             }
-            if isEditing {
+            if isEnhancedNotesEditing {
                 IMESafeTextEditor(text: Binding(
                     get: { viewModel.meeting.generatedNotes },
                     set: { viewModel.meeting.generatedNotes = $0 }

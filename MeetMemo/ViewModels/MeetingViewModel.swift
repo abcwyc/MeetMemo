@@ -317,9 +317,8 @@ class MeetingViewModel: ObservableObject {
         merged.generatedNotes = local.generatedNotes
         merged.templateId = local.templateId ?? loaded.templateId
 
-        if local.transcriptChunks.count > loaded.transcriptChunks.count {
-            merged.transcriptChunks = local.transcriptChunks
-        }
+        merged.transcriptChunks = local.transcriptChunks
+            .mergingTranscriptCorrections(preservingMissingFinalChunksFrom: loaded.transcriptChunks)
 
         return merged
     }

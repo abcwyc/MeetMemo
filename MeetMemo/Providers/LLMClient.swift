@@ -11,7 +11,7 @@ final class LLMClient: LLMProvider {
         messages: [ChatMessage]
     ) -> AsyncStream<String> {
         AsyncStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     for try await chunk in chatCompletionsStreamThrowing(config: config, messages: messages) {
                         continuation.yield(chunk)
@@ -21,6 +21,10 @@ final class LLMClient: LLMProvider {
                 }
 
                 continuation.finish()
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
     }
@@ -53,7 +57,7 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
         messages: [ChatMessage]
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let url = try buildRequestURL(config: config)
                     var request = URLRequest(url: url)
@@ -110,6 +114,10 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
     }
@@ -244,7 +252,7 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
         messages: [ChatMessage]
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
-            Task {
+            let task = Task {
                 do {
                     let url = try buildRequestURL(config: config)
                     var request = URLRequest(url: url)
@@ -300,6 +308,10 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
                 } catch {
                     continuation.finish(throwing: error)
                 }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
             }
         }
     }

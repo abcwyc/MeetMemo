@@ -55,6 +55,7 @@ struct MeetingHTMLExporter {
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
           <title>\(displayTitle.esc)</title>
           <style>\(embeddedCSS)</style>
         </head>
@@ -129,7 +130,7 @@ struct MeetingHTMLExporter {
             if !diagram.title.isEmpty {
                 html += "    <p class=\"diagram-title\">\(diagram.title.esc)</p>\n"
             }
-            html += "    <div class=\"diagram-content\">\(diagram.htmlContent)</div>\n"
+            html += "    <div class=\"diagram-content\">\(HTMLSanitizer.sanitizeDiagramHTML(diagram.htmlContent))</div>\n"
             html += "  </div>\n"
         }
         html += "</section>\n\n"

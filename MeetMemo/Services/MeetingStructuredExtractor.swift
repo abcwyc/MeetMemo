@@ -261,7 +261,7 @@ E. 分类/对比矩阵 — 用于需要将内容归类或对比的会议：
 
         let diagrams = raw.diagrams?.compactMap { item -> MeetingDiagram? in
             let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            let html = item.html.trimmingCharacters(in: .whitespacesAndNewlines)
+            let html = HTMLSanitizer.sanitizeDiagramHTML(item.html)
             guard !title.isEmpty, !html.isEmpty else { return nil }
             return MeetingDiagram(title: title, htmlContent: html)
         } ?? []

@@ -77,6 +77,32 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
     }
 }
 
+extension Array where Element == TranscriptChunk {
+    func mergingTranscriptCorrections(
+        preservingMissingFinalChunksFrom fallback: [TranscriptChunk]
+    ) -> [TranscriptChunk] {
+        let preferredIDs = Set(map(\.id))
+        let missingFinalChunks = fallback.filter { chunk in
+            chunk.isFinal && !preferredIDs.contains(chunk.id)
+        }
+
+        guard !missingFinalChunks.isEmpty else { return self }
+
+        return (self + missingFinalChunks).sorted { lhs, rhs in
+            switch (lhs.startTime, rhs.startTime) {
+            case let (lhsStart?, rhsStart?) where lhsStart != rhsStart:
+                return lhsStart < rhsStart
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            default:
+                return lhs.timestamp < rhs.timestamp
+            }
+        }
+    }
+}
+
 struct TranscriptDisplayChunk: Identifiable, Hashable {
     let id: UUID
     let timestamp: Date

@@ -37,6 +37,15 @@ struct DiagramWebView: NSViewRepresentable {
                 }
             }
         }
+
+        func webView(_ webView: WKWebView,
+                     decidePolicyFor navigationAction: WKNavigationAction,
+                     preferences: WKWebpagePreferences,
+                     decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+            preferences.allowsContentJavaScript = false
+            let policy: WKNavigationActionPolicy = navigationAction.navigationType == .other ? .allow : .cancel
+            decisionHandler(policy, preferences)
+        }
     }
 
     private var wrappedHTML: String {
@@ -172,7 +181,7 @@ struct DiagramWebView: NSViewRepresentable {
         tr:last-child td { border-bottom: none; }
         </style>
         </head>
-        <body>\(htmlContent)</body>
+        <body>\(HTMLSanitizer.sanitizeDiagramHTML(htmlContent))</body>
         </html>
         """
     }

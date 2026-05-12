@@ -93,9 +93,8 @@ class LocalStorageManager {
         }
 
         var merged = incoming
-        if existing.transcriptChunks.count > incoming.transcriptChunks.count {
-            merged.transcriptChunks = existing.transcriptChunks
-        }
+        merged.transcriptChunks = incoming.transcriptChunks
+            .mergingTranscriptCorrections(preservingMissingFinalChunksFrom: existing.transcriptChunks)
         return merged
     }
     
