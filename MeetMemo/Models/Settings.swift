@@ -42,7 +42,12 @@ struct Settings: Codable {
         get { UserDefaultsManager.shared.appAppearance }
         set { UserDefaultsManager.shared.appAppearance = newValue }
     }
-    
+
+    var notesOutputFormat: NotesOutputFormat {
+        get { UserDefaultsManager.shared.notesOutputFormat }
+        set { UserDefaultsManager.shared.notesOutputFormat = newValue }
+    }
+
     // System prompt default loading
     static func defaultSystemPrompt() -> String {
         guard let path = Bundle.main.path(forResource: "DefaultSystemPrompt", ofType: "txt"),

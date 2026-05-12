@@ -328,6 +328,20 @@ struct MeetingDiscussion: Codable, Identifiable, Hashable {
     }
 }
 
+struct MeetingDiagram: Codable, Identifiable, Hashable {
+    var id: UUID
+    var title: String
+    var htmlContent: String
+    var createdAt: Date
+
+    init(id: UUID = UUID(), title: String, htmlContent: String, createdAt: Date = Date()) {
+        self.id = id
+        self.title = title
+        self.htmlContent = htmlContent
+        self.createdAt = createdAt
+    }
+}
+
 struct CollapsedTranscriptChunk: Identifiable {
     let id: UUID
     let timestamp: Date
@@ -486,11 +500,14 @@ struct Meeting: Codable, Identifiable, Hashable {
     var openQuestions: [MeetingOpenQuestion]
     var discussions: [MeetingDiscussion]
     var milestones: [MeetingMilestone]
+    var host: String
+    var location: String
+    var diagrams: [MeetingDiagram]
     // MARK: - Data versioning
     /// Version of this Meeting record on disk. Useful for migration.
     var dataVersion: Int
     /// Current app data version. Increment whenever you make a breaking change to `Meeting` that requires migration.
-    static let currentDataVersion = 6
+    static let currentDataVersion = 7
 
     init(id: UUID = UUID(),
          date: Date = Date(),
@@ -509,6 +526,9 @@ struct Meeting: Codable, Identifiable, Hashable {
          openQuestions: [MeetingOpenQuestion] = [],
          discussions: [MeetingDiscussion] = [],
          milestones: [MeetingMilestone] = [],
+         host: String = "",
+         location: String = "",
+         diagrams: [MeetingDiagram] = [],
          dataVersion: Int = Meeting.currentDataVersion) {
         self.id = id
         self.date = date
@@ -527,6 +547,9 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.openQuestions = openQuestions
         self.discussions = discussions
         self.milestones = milestones
+        self.host = host
+        self.location = location
+        self.diagrams = diagrams
         self.dataVersion = dataVersion
     }
 
@@ -548,6 +571,9 @@ struct Meeting: Codable, Identifiable, Hashable {
         case openQuestions
         case discussions
         case milestones
+        case host
+        case location
+        case diagrams
         case dataVersion
     }
 
@@ -575,6 +601,9 @@ struct Meeting: Codable, Identifiable, Hashable {
         openQuestions = try container.decodeIfPresent([MeetingOpenQuestion].self, forKey: .openQuestions) ?? []
         discussions = try container.decodeIfPresent([MeetingDiscussion].self, forKey: .discussions) ?? []
         milestones = try container.decodeIfPresent([MeetingMilestone].self, forKey: .milestones) ?? []
+        host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
+        location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
+        diagrams = try container.decodeIfPresent([MeetingDiagram].self, forKey: .diagrams) ?? []
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
     }
 

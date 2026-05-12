@@ -9,13 +9,18 @@ extension Notification.Name {
     static let meetingRenamed = Notification.Name("MeetingRenamed")
 }
 
+enum AINotesSubTab {
+    case notes   // 总结：markdown 格式纪要
+    case digest  // 摘要：结构化纪要
+}
+
 enum MeetingViewTab: String, CaseIterable {
     case context = "Prep"
     case transcript = "Transcript"
     case enhancedNotes = "AI Notes"
     case summary = "Summary"
 
-    static let displayOrder: [MeetingViewTab] = [.context, .transcript, .enhancedNotes, .summary]
+    static let displayOrder: [MeetingViewTab] = [.context, .transcript, .enhancedNotes]
 
     var chineseLabel: String {
         switch self {
@@ -23,6 +28,15 @@ enum MeetingViewTab: String, CaseIterable {
         case .transcript: return "转录原文"
         case .enhancedNotes: return "AI纪要"
         case .summary: return "摘要"
+        }
+    }
+
+    func label(using langMgr: LanguageManager) -> String {
+        switch self {
+        case .context: return langMgr.t("会议资料", "Prep")
+        case .transcript: return langMgr.t("转录原文", "Transcript")
+        case .enhancedNotes: return langMgr.t("AI纪要", "AI Notes")
+        case .summary: return langMgr.t("摘要", "Digest")
         }
     }
 }
@@ -61,6 +75,11 @@ class MeetingViewModel: ObservableObject {
         return recordingSessionManager.isRecordingMeeting(meeting.id)
     }
     @Published var selectedTab: MeetingViewTab
+    @Published var aiNotesSubTab: AINotesSubTab = .notes
+
+    var notesOutputFormat: NotesOutputFormat {
+        UserDefaultsManager.shared.notesOutputFormat
+    }
 
     @Published var isDeleted = false
     @Published var templates: [NoteTemplate] = []
@@ -480,9 +499,9 @@ class MeetingViewModel: ObservableObject {
                 }
             }
             saveMeeting()
-            if meeting.oneLiner.isEmpty {
-                Task { await self.extractStructuredSummary() }
-            }
+            selectedTab = .enhancedNotes
+            aiNotesSubTab = .notes
+            Task { await self.extractStructuredSummary() }
         }
     }
     
@@ -558,11 +577,14 @@ class MeetingViewModel: ObservableObject {
         do {
             let result = try await MeetingStructuredExtractor.shared.extract(from: meeting)
             meeting.oneLiner = result.oneLiner
+            meeting.host = result.host
+            meeting.location = result.location
             meeting.decisions = result.decisions
             meeting.risks = result.risks
             meeting.openQuestions = result.openQuestions
             meeting.discussions = result.discussions
             meeting.milestones = result.milestones
+            meeting.diagrams = result.diagrams
         } catch {
             print("⚠️ Structured extraction failed: \(error)")
         }

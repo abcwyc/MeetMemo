@@ -14,7 +14,8 @@ struct MeetingSummaryView: View {
         !meeting.followUpTasks.isEmpty ||
         !meeting.risks.isEmpty ||
         !meeting.openQuestions.isEmpty ||
-        !meeting.milestones.isEmpty
+        !meeting.milestones.isEmpty ||
+        !meeting.diagrams.isEmpty
     }
 
     var body: some View {
@@ -23,7 +24,11 @@ struct MeetingSummaryView: View {
                 emptyState
             } else {
                 VStack(alignment: .leading, spacing: 24) {
-                    heroSection
+                    headerSection
+
+                    if isExtracting && meeting.oneLiner.isEmpty {
+                        extractingIndicator
+                    }
 
                     if !meeting.discussions.isEmpty {
                         discussionsSection
@@ -48,6 +53,10 @@ struct MeetingSummaryView: View {
                     if !meeting.milestones.isEmpty {
                         milestonesSection
                     }
+
+                    if !meeting.diagrams.isEmpty {
+                        diagramsSection
+                    }
                 }
                 .padding()
             }
@@ -57,62 +66,78 @@ struct MeetingSummaryView: View {
         .cornerRadius(8)
     }
 
-    // MARK: - Hero Section
+    // MARK: - Header Section (Meeting Metadata)
 
-    private var heroSection: some View {
+    private var headerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if isExtracting && meeting.oneLiner.isEmpty {
-                HStack(spacing: 8) {
-                    ProgressView().scaleEffect(0.7)
-                    Text(langMgr.t("正在分析会议纪要...", "Analyzing meeting notes..."))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                metaRow(
+                    icon: "calendar",
+                    text: meeting.date.formatted(date: .long, time: .shortened)
+                )
+
+                if !meeting.location.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    metaRow(icon: "mappin", text: meeting.location)
                 }
-            } else if !meeting.oneLiner.isEmpty {
-                HStack(alignment: .top, spacing: 10) {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.callout)
-                        .padding(.top, 1)
-                    Text(meeting.oneLiner)
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(.primary)
-                        .fixedSize(horizontal: false, vertical: true)
+
+                if !meeting.host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    metaRow(
+                        icon: "person.circle",
+                        text: langMgr.t("主持：\(meeting.host)", "Host: \(meeting.host)")
+                    )
                 }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.07))
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color.orange.opacity(0.5))
-                        .frame(width: 3)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
 
-            HStack(spacing: 8) {
-                MetricChip(
-                    icon: "checkmark.seal",
-                    count: meeting.decisions.count,
-                    label: langMgr.t("决策", "Decisions")
-                )
-                MetricChip(
-                    icon: "checklist",
-                    count: meeting.followUpTasks.count,
-                    label: langMgr.t("待办", "Tasks")
-                )
-                MetricChip(
-                    icon: "exclamationmark.triangle",
-                    count: meeting.risks.count,
-                    label: langMgr.t("风险", "Risks")
-                )
-                MetricChip(
-                    icon: "questionmark.circle",
-                    count: meeting.openQuestions.count,
-                    label: langMgr.t("问题", "Questions")
-                )
-                Spacer()
+            if !meeting.speakerParticipantNames.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Divider()
+                    Text(langMgr.t("参会人", "Attendees"))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .textCase(.uppercase)
+                    AttendeesFlow(names: meeting.speakerParticipantNames)
+                }
             }
+
+            if !meeting.oneLiner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Divider()
+                Text(meeting.oneLiner)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 2)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.gray.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func metaRow(icon: String, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 14)
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Extracting Indicator
+
+    private var extractingIndicator: some View {
+        HStack(spacing: 8) {
+            ProgressView().scaleEffect(0.7)
+            Text(langMgr.t("正在分析会议纪要...", "Analyzing meeting notes..."))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -241,43 +266,102 @@ struct MeetingSummaryView: View {
         }
     }
 
+    // MARK: - Diagrams Section
+
+    private var diagramsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            SummarySectionHeader(
+                icon: "chart.xyaxis.line",
+                title: langMgr.t("图示", "Diagrams"),
+                count: meeting.diagrams.count
+            )
+            ForEach(meeting.diagrams) { diagram in
+                DiagramCard(diagram: diagram)
+            }
+        }
+    }
+
     // MARK: - Empty State
 
     private var emptyState: some View {
         ContentUnavailableView(
-            langMgr.t("暂无摘要", "No Summary Yet"),
+            langMgr.t("暂无结构化纪要", "No Structured Notes Yet"),
             systemImage: "sparkles",
             description: Text(
                 meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? langMgr.t("生成 AI 纪要后自动提取结构化摘要", "Generate meeting notes to extract a structured summary")
-                : langMgr.t("点击「重新提取」生成摘要", "Tap Re-extract to generate summary")
+                ? langMgr.t("生成 AI 纪要后自动提取结构化内容", "Generate meeting notes to extract structured content")
+                : langMgr.t("点击「重新提取」生成结构化纪要", "Tap Re-extract to generate structured notes")
             )
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Metric Chip
+// MARK: - Attendees Flow Layout
 
-private struct MetricChip: View {
-    let icon: String
-    let count: Int
-    let label: String
+private struct AttendeesFlow: View {
+    let names: [String]
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.caption2)
-            Text("\(count)")
-                .font(.caption.weight(.semibold))
-                .monospacedDigit()
-            Text(label)
-                .font(.caption)
+        FlowLayout(spacing: 6) {
+            ForEach(names, id: \.self) { name in
+                let color = ownerColor(for: name)
+                Text(name)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(color.opacity(0.10), in: Capsule())
+            }
         }
-        .foregroundStyle(count == 0 ? .tertiary : .secondary)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color.gray.opacity(0.08), in: Capsule())
+    }
+
+    private func ownerColor(for name: String) -> Color {
+        let palette: [Color] = [.blue, .green, .orange, .purple, .teal, .indigo, .pink]
+        let idx = abs(name.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }) % palette.count
+        return palette[idx]
+    }
+}
+
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var height: CGFloat = 0
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth + size.width > maxWidth, rowWidth > 0 {
+                height += rowHeight + spacing
+                rowWidth = 0
+                rowHeight = 0
+            }
+            rowWidth += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        height += rowHeight
+        return CGSize(width: maxWidth, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                y += rowHeight + spacing
+                x = bounds.minX
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
 
@@ -357,7 +441,6 @@ private struct TaskTableSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Kind label header
             Text(langMgr.t(kind.displayName, kind.englishDisplayName))
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.tertiary)
@@ -366,7 +449,6 @@ private struct TaskTableSection: View {
                 .padding(.top, 10)
                 .padding(.bottom, 6)
 
-            // Column header row
             HStack(spacing: 0) {
                 Text(langMgr.t("任务", "Task"))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -383,7 +465,6 @@ private struct TaskTableSection: View {
 
             Divider()
 
-            // Task rows
             ForEach(Array(tasks.enumerated()), id: \.element.id) { index, task in
                 HStack(alignment: .center, spacing: 0) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -670,5 +751,31 @@ private struct MilestoneRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+}
+
+// MARK: - Diagram Card
+
+private struct DiagramCard: View {
+    let diagram: MeetingDiagram
+    @State private var contentHeight: CGFloat = 160
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(diagram.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            DiagramWebView(htmlContent: diagram.htmlContent, contentHeight: $contentHeight)
+                .frame(height: contentHeight)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.gray.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.gray.opacity(0.12), lineWidth: 1)
+        )
     }
 }

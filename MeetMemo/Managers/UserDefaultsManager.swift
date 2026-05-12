@@ -3,6 +3,11 @@
 
 import Foundation
 
+enum NotesOutputFormat: String, CaseIterable {
+    case markdown = "markdown"
+    case structured = "structured"
+}
+
 /// Manages non-sensitive app settings using UserDefaults
 class UserDefaultsManager {
     static let shared = UserDefaultsManager()
@@ -22,6 +27,7 @@ class UserDefaultsManager {
         static let appLanguage = "appLanguage"
         static let appAppearance = "appAppearance"
         static let speakerParticipantNames = "speakerParticipantNames"
+        static let notesOutputFormat = "notesOutputFormat"
     }
     
     // MARK: - User Blurb
@@ -122,6 +128,15 @@ class UserDefaultsManager {
 
     func mergeSpeakerParticipantNames(_ names: [String]) {
         speakerParticipantNames = speakerParticipantNames + names
+    }
+
+    // MARK: - Notes Output Format
+    var notesOutputFormat: NotesOutputFormat {
+        get {
+            let raw = userDefaults.string(forKey: Keys.notesOutputFormat) ?? NotesOutputFormat.markdown.rawValue
+            return NotesOutputFormat(rawValue: raw) ?? .markdown
+        }
+        set { userDefaults.set(newValue.rawValue, forKey: Keys.notesOutputFormat) }
     }
 
     private func normalizedNames(_ names: [String]) -> [String] {

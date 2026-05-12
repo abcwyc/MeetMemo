@@ -429,10 +429,11 @@ private struct SidebarSecondaryActionButtonBody: View {
 private struct DetailHeaderActionButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
     var isConfirmed = false
+    var isSelected = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .medium))
+            .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
             .foregroundColor(foregroundColor)
             .labelStyle(.titleAndIcon)
             .padding(.horizontal, 10)
@@ -445,22 +446,15 @@ private struct DetailHeaderActionButtonStyle: ButtonStyle {
     }
 
     private var foregroundColor: Color {
-        if !isEnabled {
-            return .secondary
-        }
-
-        return isConfirmed ? .green : .primary
+        if !isEnabled { return .secondary }
+        if isConfirmed { return .green }
+        return .primary
     }
 
     private func backgroundColor(isPressed: Bool) -> Color {
-        if !isEnabled {
-            return Color.secondary.opacity(0.06)
-        }
-
-        if isConfirmed {
-            return Color.green.opacity(isPressed ? 0.16 : 0.1)
-        }
-
+        if !isEnabled { return Color.secondary.opacity(0.06) }
+        if isConfirmed { return Color.green.opacity(isPressed ? 0.16 : 0.1) }
+        if isSelected { return Color.secondary.opacity(isPressed ? 0.22 : 0.16) }
         return Color.secondary.opacity(isPressed ? 0.14 : 0.08)
     }
 }
@@ -617,7 +611,13 @@ struct MeetingDetailContentView: View {
                     case .transcript:
                         transcriptView
                     case .enhancedNotes:
-                        enhancedNotesView
+                        switch viewModel.aiNotesSubTab {
+                        case .notes:
+                            enhancedNotesView
+                        case .digest:
+                            MeetingSummaryView(viewModel: viewModel)
+                                .environmentObject(langMgr)
+                        }
                     case .summary:
                         MeetingSummaryView(viewModel: viewModel)
                             .environmentObject(langMgr)
@@ -671,7 +671,7 @@ struct MeetingDetailContentView: View {
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
-                HStack(spacing: 10) {
+                HStack(spacing: 15) {
                     detailTabBar
 
                     Button {
@@ -703,9 +703,6 @@ struct MeetingDetailContentView: View {
         HStack(spacing: 4) {
             recordingButton
             generateNotesButton
-            if viewModel.selectedTab == .summary {
-                reExtractButton
-            }
         }
         .padding(4)
         .background {
@@ -719,35 +716,17 @@ struct MeetingDetailContentView: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
-    private var reExtractButton: some View {
-        Button {
-            Task { await viewModel.extractStructuredSummary() }
-        } label: {
-            Label(
-                viewModel.isExtractingStructuredSummary
-                    ? langMgr.t("提取中", "Extracting")
-                    : langMgr.t("重新提取", "Re-extract"),
-                systemImage: "sparkles"
-            )
-        }
-        .buttonStyle(DetailHeaderActionButtonStyle())
-        .disabled(
-            viewModel.isExtractingStructuredSummary ||
-            viewModel.meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        )
-    }
-
     private var detailTabBar: some View {
         HStack(spacing: 3) {
             ForEach(MeetingViewTab.displayOrder, id: \.self) { tab in
                 Button {
                     viewModel.selectedTab = tab
                 } label: {
-                    Text(langMgr.t(tab.chineseLabel, tab.rawValue))
+                    Text(tab.label(using: langMgr))
                         .font(.system(size: 13, weight: viewModel.selectedTab == tab ? .semibold : .medium))
                         .foregroundColor(viewModel.selectedTab == tab ? .primary : .secondary)
                         .lineLimit(1)
-                        .frame(width: 86, height: 30)
+                        .frame(width: 76, height: 30)
                         .background {
                             if viewModel.selectedTab == tab || hoveredTab == tab {
                                 Capsule(style: .continuous)
@@ -790,7 +769,7 @@ struct MeetingDetailContentView: View {
     }
 
     private var detailHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 12) {
                 TextField(langMgr.t("会议标题", "Meeting Title"), text: $viewModel.meeting.title)
                     .font(.title2)
@@ -802,6 +781,14 @@ struct MeetingDetailContentView: View {
 
                 titleActionButtons
                 moreMenu
+            }
+
+            if viewModel.hasGeneratedNotes,
+               let templateId = viewModel.selectedTemplateId,
+               let template = viewModel.templates.first(where: { $0.id == templateId }) {
+                Text(langMgr.t("使用「\(template.title)」模板生成", "Generated with '\(template.title)'"))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
         }
     }
@@ -896,6 +883,28 @@ struct MeetingDetailContentView: View {
 
     private var moreMenu: some View {
         Menu {
+            if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
+                Button {
+                    isEditing.toggle()
+                } label: {
+                    Label(
+                        isEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"),
+                        systemImage: isEditing ? "eye" : "pencil"
+                    )
+                }
+            }
+
+            Button {
+                copyCurrentTabContent()
+            } label: {
+                Label(
+                    showCopyConfirmation ? langMgr.t("已复制", "Copied") : langMgr.t("复制", "Copy"),
+                    systemImage: showCopyConfirmation ? "checkmark.circle.fill" : "doc.on.doc"
+                )
+            }
+
+            Divider()
+
             Button {
                 viewModel.exportHTML()
             } label: {
@@ -926,23 +935,27 @@ struct MeetingDetailContentView: View {
 
     private var titleActionButtons: some View {
         HStack(spacing: 8) {
+            if viewModel.selectedTab == .enhancedNotes && viewModel.hasGeneratedNotes {
+                Button {
+                    viewModel.aiNotesSubTab = .notes
+                } label: {
+                    Label(langMgr.t("总结", "Summary"), systemImage: "doc.text")
+                }
+                .buttonStyle(DetailHeaderActionButtonStyle(isSelected: viewModel.aiNotesSubTab == .notes))
+
+                Button {
+                    viewModel.aiNotesSubTab = .digest
+                } label: {
+                    Label(langMgr.t("摘要", "Digest"), systemImage: "list.bullet.rectangle")
+                }
+                .buttonStyle(DetailHeaderActionButtonStyle(isSelected: viewModel.aiNotesSubTab == .digest))
+            }
+
             if viewModel.selectedTab == .enhancedNotes {
                 Button {
                     openFollowUpTasksWindow()
                 } label: {
                     Label(langMgr.t("管理待办", "Tasks"), systemImage: "checklist")
-                }
-                .buttonStyle(DetailHeaderActionButtonStyle())
-            }
-
-            if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
-                Button {
-                    isEditing.toggle()
-                } label: {
-                    Label(
-                        isEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"),
-                        systemImage: isEditing ? "eye" : "pencil"
-                    )
                 }
                 .buttonStyle(DetailHeaderActionButtonStyle())
             }
@@ -972,16 +985,6 @@ struct MeetingDetailContentView: View {
                 .buttonStyle(DetailHeaderActionButtonStyle())
                 .disabled(viewModel.speakerNamingOptions.isEmpty)
             }
-
-            Button {
-                copyCurrentTabContent()
-            } label: {
-                Label(
-                    showCopyConfirmation ? langMgr.t("已复制", "Copied") : langMgr.t("复制", "Copy"),
-                    systemImage: showCopyConfirmation ? "checkmark.circle.fill" : "doc.on.doc"
-                )
-            }
-            .buttonStyle(DetailHeaderActionButtonStyle(isConfirmed: showCopyConfirmation))
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -997,6 +1000,20 @@ struct MeetingDetailContentView: View {
                     viewModel.hasGeneratedNotes ? langMgr.t("重新生成纪要", "Regenerate Notes") : langMgr.t("按当前模板生成", "Generate with Current Template"),
                     systemImage: "sparkles"
                 )
+            }
+
+            if viewModel.hasGeneratedNotes {
+                Button {
+                    Task { await viewModel.extractStructuredSummary() }
+                } label: {
+                    Label(
+                        viewModel.isExtractingStructuredSummary
+                            ? langMgr.t("提取中...", "Extracting...")
+                            : langMgr.t("仅重新提取结构", "Re-extract Structure Only"),
+                        systemImage: "arrow.triangle.2.circlepath"
+                    )
+                }
+                .disabled(viewModel.isExtractingStructuredSummary)
             }
 
             Divider()
