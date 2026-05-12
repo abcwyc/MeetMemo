@@ -57,17 +57,20 @@ class MeetingViewModel: ObservableObject {
     @Published var syncingFollowUpTaskIds: Set<UUID> = []
     @Published var transcriptDisplayChunks: [TranscriptDisplayChunk] = []
     @Published private var hasStartedRecordingSession = false
+    @Published var toolbarHasFinalTranscript = false
+    @Published var toolbarHasGeneratedNotes = false
+    @Published var toolbarHasStartedRecordingSession = false
     
     // Computed property to determine if Generate button should animate
     var shouldAnimateGenerateButton: Bool {
-        let generateButtonEnabled = meeting.hasFinalTranscript && !isGeneratingNotes && !isRecording && !isStartingRecording
-        let noEnhancedNotesYet = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let generateButtonEnabled = toolbarHasFinalTranscript && !isGeneratingNotes && !isRecording && !isStartingRecording
+        let noEnhancedNotesYet = !toolbarHasGeneratedNotes
         return generateButtonEnabled && noEnhancedNotesYet
     }
     
     // Computed property to determine if Transcribe button should animate
     var shouldAnimateTranscribeButton: Bool {
-        return !isRecording && meeting.transcriptChunks.isEmpty && !isStartingRecording
+        return !isRecording && !toolbarHasStartedRecordingSession && !isStartingRecording
     }
     
     // Computed property that always uses the direct RecordingSessionManager check
@@ -103,12 +106,20 @@ class MeetingViewModel: ObservableObject {
                meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
-    init(meeting: Meeting = Meeting(), initialSelectedTab: MeetingViewTab? = nil) {
+    init(
+        meeting: Meeting = Meeting(),
+        initialSelectedTab: MeetingViewTab? = nil,
+        initialHasTranscript: Bool? = nil,
+        initialHasGeneratedNotes: Bool? = nil
+    ) {
         print("🆕 Using provided meeting placeholder: \(meeting.id)")
         self.meeting = meeting
         self.transcriptDisplayChunks = meeting.transcriptDisplayChunks
         self.selectedTab = initialSelectedTab ?? Self.preferredInitialTab(for: meeting)
         self.hasStartedRecordingSession = !meeting.transcriptChunks.isEmpty
+        self.toolbarHasFinalTranscript = initialHasTranscript ?? meeting.hasFinalTranscript
+        self.toolbarHasGeneratedNotes = initialHasGeneratedNotes ?? !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        self.toolbarHasStartedRecordingSession = initialHasTranscript ?? !meeting.transcriptChunks.isEmpty
 
         // Detect if this is a new meeting based on content, not storage existence
         isNewMeeting = isEmpty
@@ -179,6 +190,7 @@ class MeetingViewModel: ObservableObject {
         if recordingSessionManager.isRecordingMeeting(meeting.id) {
             self.meeting.transcriptChunks = recordingSessionManager.getTranscriptChunks(for: meeting.id)
             refreshTranscriptDisplayChunks()
+            refreshToolbarSnapshot()
         }
 
         // Listen to real-time transcript updates for this meeting if it's being recorded
@@ -190,6 +202,7 @@ class MeetingViewModel: ObservableObject {
                 if recordingSessionManager.isRecordingMeeting(self.meeting.id) {
                     self.meeting.transcriptChunks = updatedChunks
                     self.refreshTranscriptDisplayChunks()
+                    self.refreshToolbarSnapshot()
                 }
             }
             .store(in: &cancellables)
@@ -235,20 +248,65 @@ class MeetingViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
+    func switchToMeeting(
+        _ meeting: Meeting,
+        initialSelectedTab: MeetingViewTab? = nil,
+        initialHasTranscript: Bool? = nil,
+        initialHasGeneratedNotes: Bool? = nil
+    ) {
+        guard meeting.id != self.meeting.id else { return }
+
+        cancelGeneratingNotes()
+        deleteIfEmpty()
+
+        print("🔁 Switching detail meeting: \(meeting.id)")
+        isApplyingLoadedMeeting = true
+        self.meeting = meeting
+        self.transcriptDisplayChunks = meeting.transcriptDisplayChunks
+        isApplyingLoadedMeeting = false
+
+        errorMessage = nil
+        isValidatingKey = false
+        isStartingRecording = false
+        isLoadingMeeting = false
+        isExtractingFollowUpTasks = false
+        isExtractingStructuredSummary = false
+        syncingFollowUpTaskIds = []
+        hasLocalUnsavedChanges = false
+        hasCompletedInitialLoad = false
+        isDeleted = false
+        isNewMeeting = isEmpty
+        hasStartedRecordingSession = !meeting.transcriptChunks.isEmpty
+        toolbarHasFinalTranscript = initialHasTranscript ?? meeting.hasFinalTranscript
+        toolbarHasGeneratedNotes = initialHasGeneratedNotes ?? !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        toolbarHasStartedRecordingSession = initialHasTranscript ?? !meeting.transcriptChunks.isEmpty
+        selectedTab = initialSelectedTab ?? Self.preferredInitialTab(for: meeting)
+        aiNotesSubTab = .notes
+
+        if recordingSessionManager.isRecordingMeeting(meeting.id) {
+            self.meeting.transcriptChunks = recordingSessionManager.getTranscriptChunks(for: meeting.id)
+            refreshTranscriptDisplayChunks()
+            refreshToolbarSnapshot()
+        }
+
+        loadFullMeetingIfNeeded()
+        loadTemplates()
+    }
+
     
     var recordingButtonText: String {
         let lang = LanguageManager.shared
         if isRecording {
             return lang.t("结束录制", "End Recording")
         }
-        return hasStartedRecordingSession ? lang.t("继续录制", "Resume Recording") : lang.t("开始录制", "Start Recording")
+        return toolbarHasStartedRecordingSession ? lang.t("继续录制", "Resume Recording") : lang.t("开始录制", "Start Recording")
     }
 
     var recordingButtonIconName: String {
         if isRecording {
             return "stop.circle.fill"
         }
-        return hasStartedRecordingSession ? "record.circle" : "record.circle.fill"
+        return toolbarHasStartedRecordingSession ? "record.circle" : "record.circle.fill"
     }
 
     var recordingStartedAt: Date? {
@@ -292,6 +350,7 @@ class MeetingViewModel: ObservableObject {
                 self.hasCompletedInitialLoad = true
                 return
             }
+            guard self.meeting.id == meetingId else { return }
 
             print("🔄 Loaded full meeting: \(meetingId)")
             self.isApplyingLoadedMeeting = true
@@ -302,6 +361,7 @@ class MeetingViewModel: ObservableObject {
             self.refreshTranscriptDisplayChunks()
             self.isNewMeeting = self.isEmpty
             self.hasStartedRecordingSession = !self.meeting.transcriptChunks.isEmpty
+            self.refreshToolbarSnapshot()
             self.selectedTab = Self.preferredInitialTab(for: self.meeting)
             self.loadTemplates()
             self.isLoadingMeeting = false
@@ -330,6 +390,12 @@ class MeetingViewModel: ObservableObject {
 
     private func refreshTranscriptDisplayChunks() {
         transcriptDisplayChunks = meeting.transcriptDisplayChunks
+    }
+
+    private func refreshToolbarSnapshot() {
+        toolbarHasFinalTranscript = meeting.hasFinalTranscript
+        toolbarHasGeneratedNotes = !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        toolbarHasStartedRecordingSession = !meeting.transcriptChunks.isEmpty
     }
 
     var speakerNamingOptions: [TranscriptSpeakerNamingOption] {
@@ -378,6 +444,7 @@ class MeetingViewModel: ObservableObject {
             case .success():
                 // Transcription config is valid, proceed with recording
                 hasStartedRecordingSession = true
+                toolbarHasStartedRecordingSession = true
                 recordingSessionManager.startRecording(for: meeting.id, existingChunks: meeting.transcriptChunks)
             case .failure(let error):
                 // Show error message
@@ -470,6 +537,7 @@ class MeetingViewModel: ObservableObject {
         for await result in stream {
             if Task.isCancelled {
                 meeting.generatedNotes = previousGeneratedNotes
+                toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 hasError = true
                 break
             }
@@ -481,8 +549,10 @@ class MeetingViewModel: ObservableObject {
                     receivedContent = true
                 }
                 meeting.generatedNotes += chunk
+                toolbarHasGeneratedNotes = true
             case .error(let error):
                 meeting.generatedNotes = previousGeneratedNotes
+                toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 errorMessage = error
                 hasError = true
                 print("🚨 Note Generation Error: \(error)")

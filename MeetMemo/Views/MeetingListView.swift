@@ -224,6 +224,8 @@ struct MeetingListView: View {
                     MeetingDetailContentView(
                         meeting: selectedMeeting.placeholderMeeting,
                         initialSelectedTab: selectedMeeting.hasGeneratedNotes ? .enhancedNotes : .transcript,
+                        initialHasTranscript: selectedMeeting.hasTranscript,
+                        initialHasGeneratedNotes: selectedMeeting.hasGeneratedNotes,
                         onOpenSettings: {
                             navigationPath.append("settings")
                         },
@@ -231,7 +233,6 @@ struct MeetingListView: View {
                             self.selectedMeeting = nil
                         }
                     )
-                    .id(selectedMeeting.id)
                 } else {
                     ContentUnavailableView(
                         langMgr.t("请选择一个会议", "Select a Meeting"),
@@ -566,6 +567,10 @@ struct TranscriptChunkRowView: View {
 // MARK: - Meeting Detail Content View
 
 struct MeetingDetailContentView: View {
+    let meeting: Meeting
+    let initialSelectedTab: MeetingViewTab?
+    let initialHasTranscript: Bool
+    let initialHasGeneratedNotes: Bool
     @StateObject private var viewModel: MeetingViewModel
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
@@ -579,7 +584,6 @@ struct MeetingDetailContentView: View {
     @State private var speakerNamingWindowDelegate: MovablePanelCloseDelegate?
     @State private var followUpTasksWindowDelegate: MovablePanelCloseDelegate?
     @State private var hoveredTab: MeetingViewTab?
-    @State private var isSettingsButtonHovered = false
     @State private var isGenerateButtonHovered = false
     @State private var isRecordingButtonHovered = false
     let onOpenSettings: () -> Void
@@ -588,10 +592,21 @@ struct MeetingDetailContentView: View {
     init(
         meeting: Meeting,
         initialSelectedTab: MeetingViewTab? = nil,
+        initialHasTranscript: Bool = false,
+        initialHasGeneratedNotes: Bool = false,
         onOpenSettings: @escaping () -> Void,
         onDelete: @escaping () -> Void
     ) {
-        self._viewModel = StateObject(wrappedValue: MeetingViewModel(meeting: meeting, initialSelectedTab: initialSelectedTab))
+        self.meeting = meeting
+        self.initialSelectedTab = initialSelectedTab
+        self.initialHasTranscript = initialHasTranscript
+        self.initialHasGeneratedNotes = initialHasGeneratedNotes
+        self._viewModel = StateObject(wrappedValue: MeetingViewModel(
+            meeting: meeting,
+            initialSelectedTab: initialSelectedTab,
+            initialHasTranscript: initialHasTranscript,
+            initialHasGeneratedNotes: initialHasGeneratedNotes
+        ))
         self.onOpenSettings = onOpenSettings
         self.onDelete = onDelete
     }
@@ -666,36 +681,34 @@ struct MeetingDetailContentView: View {
         ) { result in
             importContextFile(result)
         }
+        .onChange(of: meeting.id) { _, _ in
+            viewModel.switchToMeeting(
+                meeting,
+                initialSelectedTab: initialSelectedTab,
+                initialHasTranscript: initialHasTranscript,
+                initialHasGeneratedNotes: initialHasGeneratedNotes
+            )
+            hoveredTab = nil
+            isContextEditing = false
+            isEnhancedNotesEditing = false
+            showCopyConfirmation = false
+        }
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 detailActionButtons
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
-                HStack(spacing: 15) {
-                    detailTabBar
+                detailTabBar
+            }
 
-                    Button {
-                        onOpenSettings()
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .frame(width: 34, height: 34)
-                            .background {
-                                Circle()
-                                    .fill(settingsButtonBackgroundColor)
-                                    .overlay {
-                                        Circle()
-                                            .stroke(settingsButtonBorderColor, lineWidth: 1)
-                                    }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .onHover { isSettingsButtonHovered = $0 }
-                    .help(langMgr.t("设置", "Settings"))
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    onOpenSettings()
+                } label: {
+                    Image(systemName: "gearshape")
                 }
-                .fixedSize()
+                .help(langMgr.t("设置", "Settings"))
             }
         }
     }
@@ -751,14 +764,6 @@ struct MeetingDetailContentView: View {
                 }
         }
         .fixedSize()
-    }
-
-    private var settingsButtonBackgroundColor: Color {
-        isSettingsButtonHovered ? Color.secondary.opacity(0.16) : Color.secondary.opacity(0.08)
-    }
-
-    private var settingsButtonBorderColor: Color {
-        isSettingsButtonHovered ? Color.secondary.opacity(0.22) : Color(nsColor: .separatorColor).opacity(0.32)
     }
 
     private func tabButtonBackgroundColor(for tab: MeetingViewTab) -> Color {
@@ -936,7 +941,7 @@ struct MeetingDetailContentView: View {
 
     private var titleActionButtons: some View {
         HStack(spacing: 8) {
-            if viewModel.selectedTab == .enhancedNotes && viewModel.hasGeneratedNotes {
+            if viewModel.selectedTab == .enhancedNotes && viewModel.toolbarHasGeneratedNotes {
                 Button {
                     viewModel.aiNotesSubTab = .notes
                 } label: {
@@ -1059,7 +1064,7 @@ struct MeetingDetailContentView: View {
         }
         .buttonStyle(.plain)
         .onHover { isGenerateButtonHovered = $0 }
-        .disabled(!viewModel.meeting.hasFinalTranscript || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
+        .disabled(!viewModel.toolbarHasFinalTranscript || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
         .help(generateButtonHelp)
     }
 
@@ -1108,7 +1113,7 @@ struct MeetingDetailContentView: View {
             return langMgr.t("生成中", "Generating")
         }
 
-        return viewModel.hasGeneratedNotes ? langMgr.t("重新生成纪要", "Regenerate Notes") : langMgr.t("生成纪要", "Generate Notes")
+        return viewModel.toolbarHasGeneratedNotes ? langMgr.t("重新生成纪要", "Regenerate Notes") : langMgr.t("生成纪要", "Generate Notes")
     }
 
     private var generateButtonHelp: String {
@@ -1116,7 +1121,7 @@ struct MeetingDetailContentView: View {
             return langMgr.t("录制结束后可以生成会议纪要", "End recording before generating notes")
         }
 
-        if !viewModel.meeting.hasFinalTranscript {
+        if !viewModel.toolbarHasFinalTranscript {
             return langMgr.t("需要完整转录后才能生成会议纪要", "A final transcript is required before generating notes")
         }
 
@@ -1124,11 +1129,11 @@ struct MeetingDetailContentView: View {
     }
 
     private var generateButtonForegroundColor: Color {
-        viewModel.meeting.hasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording ? .green : .secondary
+        viewModel.toolbarHasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording ? .green : .secondary
     }
 
     private var generateButtonBackgroundColor: Color {
-        if viewModel.meeting.hasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
+        if viewModel.toolbarHasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
             return Color.green.opacity(isGenerateButtonHovered ? 0.24 : 0.18)
         }
 
@@ -1136,7 +1141,7 @@ struct MeetingDetailContentView: View {
     }
 
     private var generateButtonBorderColor: Color {
-        if viewModel.meeting.hasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
+        if viewModel.toolbarHasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
             return Color.green.opacity(isGenerateButtonHovered ? 0.42 : 0.3)
         }
 
