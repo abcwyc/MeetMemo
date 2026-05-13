@@ -586,6 +586,7 @@ struct MeetingDetailContentView: View {
     @State private var hoveredTab: MeetingViewTab?
     @State private var isGenerateButtonHovered = false
     @State private var isRecordingButtonHovered = false
+    @State private var windowWidth: CGFloat = 1000
     let onOpenSettings: () -> Void
     let onDelete: () -> Void
 
@@ -693,13 +694,16 @@ struct MeetingDetailContentView: View {
             isEnhancedNotesEditing = false
             showCopyConfirmation = false
         }
+        .background(WindowWidthReader(width: $windowWidth))
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 detailActionButtons
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
-                detailTabBar
+                if shouldShowToolbarTabs {
+                    detailTabBar
+                }
             }
 
             ToolbarItem(placement: .primaryAction) {
@@ -711,6 +715,14 @@ struct MeetingDetailContentView: View {
                 .help(langMgr.t("设置", "Settings"))
             }
         }
+    }
+
+    private var shouldShowToolbarTabs: Bool {
+        windowWidth >= 500
+    }
+
+    private var usesCompactToolbarActions: Bool {
+        windowWidth < 700
     }
 
     private var detailActionButtons: some View {
@@ -916,10 +928,7 @@ struct MeetingDetailContentView: View {
             } label: {
                 Label(langMgr.t("导出 HTML", "Export as HTML"), systemImage: "square.and.arrow.up")
             }
-            .disabled(
-                viewModel.meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-                viewModel.meeting.oneLiner.isEmpty
-            )
+            .disabled(!viewModel.canExportCurrentTabHTML)
 
             Divider()
 
@@ -1038,13 +1047,18 @@ struct MeetingDetailContentView: View {
                     ProgressView()
                         .scaleEffect(0.4)
                         .frame(width: 12, height: 12)
+                } else if usesCompactToolbarActions {
+                    Image(systemName: "sparkles")
                 }
-                Text(generateButtonTitle)
+
+                if !usesCompactToolbarActions {
+                    Text(generateButtonTitle)
+                }
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(generateButtonForegroundColor)
-            .frame(minWidth: 106, minHeight: 30)
-            .padding(.horizontal, 12)
+            .frame(minWidth: usesCompactToolbarActions ? 30 : 106, minHeight: 30)
+            .padding(.horizontal, usesCompactToolbarActions ? 0 : 12)
             .background {
                 Capsule(style: .continuous)
                     .fill(generateButtonBackgroundColor)
@@ -1076,12 +1090,15 @@ struct MeetingDetailContentView: View {
             HStack(spacing: 6) {
                 Image(systemName: viewModel.recordingButtonIconName)
                     .foregroundColor(viewModel.isRecording ? .red : .accentColor)
-                Text(viewModel.recordingButtonText)
+
+                if !usesCompactToolbarActions {
+                    Text(viewModel.recordingButtonText)
+                }
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(recordingButtonForegroundColor)
-            .frame(minWidth: 104, minHeight: 30)
-            .padding(.horizontal, 12)
+            .frame(minWidth: usesCompactToolbarActions ? 30 : 104, minHeight: 30)
+            .padding(.horizontal, usesCompactToolbarActions ? 0 : 12)
             .background {
                 Capsule(style: .continuous)
                     .fill(recordingButtonBackgroundColor)
@@ -1476,6 +1493,70 @@ private struct WindowAppearanceSync: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
             nsView.window?.appearance = NSAppearance(named: appearance.nsAppearanceName)
+        }
+    }
+}
+
+private struct WindowWidthReader: NSViewRepresentable {
+    @Binding var width: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(width: $width)
+    }
+
+    func makeNSView(context: Context) -> WindowWidthReportingView {
+        let view = WindowWidthReportingView(frame: .zero)
+        view.onWidthChange = context.coordinator.updateWidth
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowWidthReportingView, context: Context) {
+        context.coordinator.width = $width
+        nsView.onWidthChange = context.coordinator.updateWidth
+        nsView.reportWidth()
+    }
+
+    final class Coordinator {
+        var width: Binding<CGFloat>
+
+        init(width: Binding<CGFloat>) {
+            self.width = width
+        }
+
+        func updateWidth(_ newWidth: CGFloat) {
+            width.wrappedValue = newWidth
+        }
+    }
+}
+
+private final class WindowWidthReportingView: NSView {
+    var onWidthChange: ((CGFloat) -> Void)?
+    private var resizeObserver: NSObjectProtocol?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        resizeObserver.map(NotificationCenter.default.removeObserver)
+        resizeObserver = nil
+
+        guard let window else { return }
+        reportWidth()
+        resizeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResizeNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.reportWidth()
+        }
+    }
+
+    deinit {
+        resizeObserver.map(NotificationCenter.default.removeObserver)
+    }
+
+    func reportWidth() {
+        guard let width = window?.frame.width else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onWidthChange?(width)
         }
     }
 }

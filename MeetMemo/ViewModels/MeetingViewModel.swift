@@ -323,6 +323,31 @@ class MeetingViewModel: ObservableObject {
     var hasGeneratedNotes: Bool {
         !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    var canExportCurrentTabHTML: Bool {
+        switch selectedTab {
+        case .context:
+            return meeting.hasMeetingContext
+        case .transcript:
+            return meeting.hasFinalTranscript
+        case .enhancedNotes:
+            switch aiNotesSubTab {
+            case .notes:
+                return !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .digest:
+                return !meeting.oneLiner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    !meeting.discussions.isEmpty ||
+                    !meeting.decisions.isEmpty ||
+                    !meeting.followUpTasks.isEmpty ||
+                    !meeting.risks.isEmpty ||
+                    !meeting.openQuestions.isEmpty ||
+                    !meeting.milestones.isEmpty ||
+                    !meeting.diagrams.isEmpty
+            }
+        case .summary:
+            return !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
     
     func toggleRecording() {
         // Prevent duplicate actions while validating API key or starting recording
@@ -654,25 +679,77 @@ class MeetingViewModel: ObservableObject {
             meeting.discussions = result.discussions
             meeting.milestones = result.milestones
             meeting.diagrams = result.diagrams
+            saveMeeting()
         } catch {
             print("⚠️ Structured extraction failed: \(error)")
         }
     }
 
     func exportHTML() {
+        guard canExportCurrentTabHTML else { return }
+
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.html]
         panel.canCreateDirectories = true
-        let safeName = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        panel.nameFieldStringValue = safeName.isEmpty ? "会议纪要.html" : "\(safeName).html"
+        let export = currentTabHTMLExport()
+        panel.nameFieldStringValue = export.fileName
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let html = MeetingHTMLExporter.generateHTML(for: meeting)
         do {
-            try html.write(to: url, atomically: true, encoding: .utf8)
+            try export.html.write(to: url, atomically: true, encoding: .utf8)
             NSWorkspace.shared.open(url)
         } catch {
             errorMessage = "HTML 导出失败：\(error.localizedDescription)"
         }
+    }
+
+    private func currentTabHTMLExport() -> (fileName: String, html: String) {
+        let baseName = sanitizedExportBaseName()
+
+        switch selectedTab {
+        case .context:
+            return (
+                "\(baseName)-会议资料.html",
+                MeetingHTMLExporter.generateContextHTML(for: meeting)
+            )
+        case .transcript:
+            return (
+                "\(baseName)-转录原文.html",
+                MeetingHTMLExporter.generateTranscriptHTML(
+                    for: meeting,
+                    displayChunks: transcriptDisplayChunks
+                )
+            )
+        case .enhancedNotes:
+            switch aiNotesSubTab {
+            case .notes:
+                return (
+                    "\(baseName)-AI纪要.html",
+                    MeetingHTMLExporter.generateNotesHTML(for: meeting)
+                )
+            case .digest:
+                return (
+                    "\(baseName)-摘要.html",
+                    MeetingHTMLExporter.generateDigestHTML(for: meeting)
+                )
+            }
+        case .summary:
+            return (
+                "\(baseName)-AI纪要.html",
+                MeetingHTMLExporter.generateNotesHTML(for: meeting)
+            )
+        }
+    }
+
+    private func sanitizedExportBaseName() -> String {
+        let title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = selectedTab == .transcript ? "转录原文" : (selectedTab == .context ? "会议资料" : "会议纪要")
+        let rawName = title.isEmpty ? fallback : title
+        let invalidCharacters = CharacterSet(charactersIn: "/\\?%*|\"<>:")
+        let cleaned = rawName
+            .components(separatedBy: invalidCharacters)
+            .joined(separator: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? fallback : cleaned
     }
 
     func extractFollowUpTasks() async {

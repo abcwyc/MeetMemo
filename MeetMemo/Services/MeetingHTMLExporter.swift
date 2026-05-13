@@ -3,6 +3,21 @@ import Foundation
 struct MeetingHTMLExporter {
 
     static func generateHTML(for meeting: Meeting) -> String {
+        generateDigestHTML(for: meeting)
+    }
+
+    static func generateNotesHTML(for meeting: Meeting) -> String {
+        let notes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = displayTitle(for: meeting, fallback: "AI纪要")
+        var bodySections = basicHeaderSection(title: title, meeting: meeting)
+        if !notes.isEmpty {
+            bodySections += notesSection(notes, title: "AI纪要")
+        }
+
+        return pageHTML(title: title, bodySections: bodySections)
+    }
+
+    static func generateDigestHTML(for meeting: Meeting) -> String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateStyle = .long
         dateFormatter.timeStyle = .short
@@ -44,19 +59,35 @@ struct MeetingHTMLExporter {
         if !meeting.diagrams.isEmpty {
             bodySections += diagramsSection(meeting.diagrams)
         }
-        let notes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !notes.isEmpty {
-            bodySections += notesSection(notes)
-        }
+        return pageHTML(title: displayTitle, bodySections: bodySections)
+    }
 
-        return """
+    static func generateContextHTML(for meeting: Meeting) -> String {
+        let title = displayTitle(for: meeting, fallback: "会议资料")
+        var bodySections = basicHeaderSection(title: "\(title) - 会议资料", meeting: meeting)
+        bodySections += contextSection(meeting)
+        return pageHTML(title: "\(title) - 会议资料", bodySections: bodySections)
+    }
+
+    static func generateTranscriptHTML(for meeting: Meeting, displayChunks: [TranscriptDisplayChunk]? = nil) -> String {
+        let title = displayTitle(for: meeting, fallback: "转录原文")
+        let chunks = (displayChunks ?? meeting.transcriptDisplayChunks).filter { $0.isFinal }
+        var bodySections = basicHeaderSection(title: "\(title) - 转录原文", meeting: meeting)
+        bodySections += transcriptSection(chunks)
+        return pageHTML(title: "\(title) - 转录原文", bodySections: bodySections)
+    }
+
+    // MARK: - Sections
+
+    private static func pageHTML(title: String, bodySections: String) -> String {
+        """
         <!DOCTYPE html>
         <html lang="zh-CN">
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
-          <title>\(displayTitle.esc)</title>
+          <title>\(title.esc)</title>
           <style>\(embeddedCSS)</style>
         </head>
         <body>
@@ -68,13 +99,37 @@ struct MeetingHTMLExporter {
         """
     }
 
-    // MARK: - Sections
+    private static func displayTitle(for meeting: Meeting, fallback: String) -> String {
+        let title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? fallback : title
+    }
+
+    private static func basicHeaderSection(title: String, meeting: Meeting) -> String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .long
+        dateFormatter.timeStyle = .short
+        let meetingDate = dateFormatter.string(from: meeting.date)
+
+        let exportFormatter = DateFormatter()
+        exportFormatter.dateStyle = .short
+        exportFormatter.timeStyle = .short
+        let exportDate = exportFormatter.string(from: Date())
+
+        return headerSection(
+            title: title,
+            meetingDate: meetingDate,
+            exportDate: exportDate,
+            meeting: meeting,
+            includeSummaryMeta: false
+        )
+    }
 
     private static func headerSection(
         title: String,
         meetingDate: String,
         exportDate: String,
-        meeting: Meeting
+        meeting: Meeting,
+        includeSummaryMeta: Bool = true
     ) -> String {
         var html = "<header>\n"
         html += "  <h1>\(title.esc)</h1>\n"
@@ -102,7 +157,7 @@ struct MeetingHTMLExporter {
             html += "  </div>\n"
         }
 
-        if !meeting.oneLiner.isEmpty {
+        if includeSummaryMeta && !meeting.oneLiner.isEmpty {
             html += "  <p class=\"one-liner\">\(meeting.oneLiner.esc)</p>\n"
         }
 
@@ -110,7 +165,7 @@ struct MeetingHTMLExporter {
         let tc = meeting.followUpTasks.count
         let rc = meeting.risks.count
         let qc = meeting.openQuestions.count
-        if dc + tc + rc + qc > 0 {
+        if includeSummaryMeta && dc + tc + rc + qc > 0 {
             html += "  <div class=\"metrics\">\n"
             if dc > 0 { html += "    <span class=\"chip\">\(dc) 项决策</span>\n" }
             if tc > 0 { html += "    <span class=\"chip\">\(tc) 项待办</span>\n" }
@@ -119,6 +174,66 @@ struct MeetingHTMLExporter {
             html += "  </div>\n"
         }
         html += "</header>\n\n"
+        return html
+    }
+
+    private static func contextSection(_ meeting: Meeting) -> String {
+        let usableItems = meeting.contextItems.filter { !$0.trimmedText.isEmpty }
+        var html = "<section>\n"
+        html += "  <h2>会议资料</h2>\n"
+
+        if usableItems.isEmpty {
+            let legacyText = meeting.userNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !legacyText.isEmpty {
+                html += "  <div class=\"context-card\">\n"
+                html += plainTextToHTML(legacyText)
+                html += "  </div>\n"
+            }
+        } else {
+            for item in usableItems {
+                html += "  <article class=\"context-card\">\n"
+                html += "    <div class=\"context-header\">\n"
+                html += "      <h3>\(item.displayTitle.esc)</h3>\n"
+                html += "      <span class=\"context-kind\">\(item.kind.displayName.esc)</span>\n"
+                html += "    </div>\n"
+                if let source = item.source?.trimmingCharacters(in: .whitespacesAndNewlines), !source.isEmpty {
+                    html += "    <p class=\"context-source\">\(source.esc)</p>\n"
+                }
+                html += "    <div class=\"context-body\">\n"
+                html += plainTextToHTML(item.trimmedText)
+                html += "    </div>\n"
+                html += "  </article>\n"
+            }
+        }
+
+        html += "</section>\n\n"
+        return html
+    }
+
+    private static func transcriptSection(_ chunks: [TranscriptDisplayChunk]) -> String {
+        var html = "<section>\n"
+        html += "  <h2>转录原文</h2>\n"
+        html += "  <div class=\"transcript-list\">\n"
+
+        for chunk in chunks {
+            let roleLabel = [chunk.sourceLabel, chunk.speakerLabel]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+
+            html += "    <div class=\"transcript-row\">\n"
+            html += "      <div class=\"transcript-meta\">\n"
+            html += "        <span class=\"transcript-time\">\(chunk.timeLabel.esc)</span>\n"
+            if !roleLabel.isEmpty {
+                html += "        <span class=\"transcript-speaker\">\(roleLabel.esc)</span>\n"
+            }
+            html += "      </div>\n"
+            html += "      <p class=\"transcript-text\">\(chunk.text.esc)</p>\n"
+            html += "    </div>\n"
+        }
+
+        html += "  </div>\n"
+        html += "</section>\n\n"
         return html
     }
 
@@ -291,9 +406,9 @@ struct MeetingHTMLExporter {
         return html
     }
 
-    private static func notesSection(_ markdown: String) -> String {
+    private static func notesSection(_ markdown: String, title: String = "完整纪要") -> String {
         var html = "<section>\n"
-        html += "  <h2>完整纪要</h2>\n"
+        html += "  <h2>\(title.esc)</h2>\n"
         html += "  <div class=\"notes-body\">\n"
         html += markdownToHTML(markdown)
         html += "  </div>\n"
@@ -403,6 +518,18 @@ struct MeetingHTMLExporter {
         if s.hasPrefix("|") { s = String(s.dropFirst()) }
         if s.hasSuffix("|") { s = String(s.dropLast()) }
         return s.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private static func plainTextToHTML(_ text: String) -> String {
+        let paragraphs = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return paragraphs.map { paragraph in
+            "<p>\(paragraph.esc.replacingOccurrences(of: "\n", with: "<br>"))</p>\n"
+        }.joined()
     }
 
     /// Apply inline Markdown (bold, italic) to HTML-escaped text.
@@ -518,6 +645,35 @@ struct MeetingHTMLExporter {
         padding: 7px 10px; margin-top: 6px;
       }
       .consensus-label { font-weight: 600; color: #166534; }
+
+      /* Context */
+      .context-card {
+        background: #fafafa; border: 1px solid #e8e8e8;
+        border-radius: 8px; padding: 14px 16px; margin-bottom: 12px;
+      }
+      .context-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+      .context-header h3 { margin: 0; text-transform: none; letter-spacing: 0; color: #1a1a1a; font-size: 0.98rem; }
+      .context-kind {
+        flex-shrink: 0; font-size: 0.72rem; font-weight: 600;
+        color: #666; background: #f0f0f0; border-radius: 999px; padding: 2px 8px;
+      }
+      .context-source { font-size: 0.78rem; color: #888; margin: 0 0 8px; overflow-wrap: anywhere; }
+      .context-body p { margin: 0 0 10px; color: #1a1a1a; }
+      .context-body p:last-child { margin-bottom: 0; }
+
+      /* Transcript */
+      .transcript-list { display: flex; flex-direction: column; gap: 10px; }
+      .transcript-row {
+        background: #fafafa; border: 1px solid #e8e8e8;
+        border-radius: 8px; padding: 10px 12px;
+      }
+      .transcript-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 4px; }
+      .transcript-time { font-size: 0.76rem; color: #888; font-variant-numeric: tabular-nums; }
+      .transcript-speaker {
+        font-size: 0.76rem; font-weight: 600; color: #2563eb;
+        background: rgba(37,99,235,0.10); border-radius: 999px; padding: 1px 7px;
+      }
+      .transcript-text { margin: 0; color: #1a1a1a; white-space: pre-wrap; }
 
       /* Decisions Grid */
       .decisions-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -654,6 +810,10 @@ struct MeetingHTMLExporter {
         .discussion-summary { color: #8e8e93; }
         .consensus-block { background: rgba(34,197,94,0.09); border-left-color: rgba(34,197,94,0.4); color: #e5e5e7; }
         .consensus-label { color: #4ade80; }
+        .context-card, .transcript-row { background: #242426; border-color: #3a3a3c; }
+        .context-header h3, .context-body p, .transcript-text { color: #e5e5e7; }
+        .context-kind { background: #2c2c2e; color: #adadb8; }
+        .context-source, .transcript-time { color: #8e8e93; }
         .header-meta-item { color: #636366; }
         .attendee-chip { background: #2c2c2e; color: #adadb8; }
         .diagram-card { background: #242426; border-color: #3a3a3c; }
@@ -670,6 +830,69 @@ struct MeetingHTMLExporter {
         font-size: 0.88rem;
         font-family: 'PingFang SC', 'Hiragino Sans GB', -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
       }
+      .diagram-content .card {
+        background: var(--bg-card);
+        border: 0.5px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 16px;
+      }
+      .diagram-content .badge {
+        display: inline-block;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: 500;
+        line-height: 1.6;
+      }
+      .diagram-content .badge-info    { background: var(--bg-info);    color: var(--text-info);    border: 0.5px solid var(--border-info); }
+      .diagram-content .badge-success { background: var(--bg-success); color: var(--text-success); border: 0.5px solid var(--border-success); }
+      .diagram-content .badge-warning { background: var(--bg-warning); color: var(--text-warning); border: 0.5px solid var(--border-warning); }
+      .diagram-content .badge-danger  { background: var(--bg-danger);  color: var(--text-danger);  border: 0.5px solid var(--border-danger); }
+      .diagram-content .badge-purple  { background: var(--bg-purple);  color: var(--text-purple);  border: 0.5px solid var(--border-purple); }
+      .diagram-content .timeline { display: flex; flex-direction: column; gap: 0; }
+      .diagram-content .timeline-item { display: flex; gap: 12px; padding-bottom: 16px; position: relative; }
+      .diagram-content .timeline-item:not(:last-child)::before {
+        content: '';
+        position: absolute;
+        left: 4px; top: 14px; bottom: 0;
+        width: 1px; background: var(--border);
+      }
+      .diagram-content .timeline-dot {
+        width: 10px; height: 10px; border-radius: 50%;
+        margin-top: 4px; flex-shrink: 0;
+      }
+      .diagram-content .dot-green { background: #639922; }
+      .diagram-content .dot-amber { background: #BA7517; }
+      .diagram-content .dot-red   { background: #E24B4A; }
+      .diagram-content .dot-blue  { background: #378ADD; }
+      .diagram-content .flow { display: flex; flex-direction: column; gap: 4px; }
+      .diagram-content .flow-node {
+        background: var(--bg-info); color: var(--text-info);
+        border: 0.5px solid var(--border-info);
+        border-radius: var(--radius); padding: 8px 12px;
+        font-size: 12px; text-align: center;
+      }
+      .diagram-content .flow-arrow { text-align: center; color: var(--text-muted); font-size: 14px; line-height: 1.2; }
+      .diagram-content .grid-2    { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .diagram-content .grid-3    { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+      .diagram-content .grid-auto { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+      .diagram-content .label {
+        font-size: 11px; font-weight: 500; letter-spacing: 0.06em;
+        text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;
+      }
+      .diagram-content table { border-collapse: collapse; width: 100%; font-size: 12px; }
+      .diagram-content th {
+        background: var(--bg-secondary); color: var(--text-secondary);
+        font-size: 11px; font-weight: 500; padding: 6px 10px;
+        text-align: left; border-bottom: 0.5px solid var(--border);
+      }
+      .diagram-content td {
+        padding: 8px 10px;
+        border-bottom: 0.5px solid var(--border);
+        color: var(--text);
+        vertical-align: top;
+      }
+      .diagram-content tr:last-child td { border-bottom: none; }
 
     """
 }

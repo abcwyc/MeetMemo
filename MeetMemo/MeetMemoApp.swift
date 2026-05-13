@@ -16,7 +16,7 @@ struct MeetMemoApp: App {
             ContentView()
                 .environmentObject(LanguageManager.shared)
                 .preferredColorScheme(appearanceMgr.appearance == .light ? .light : .dark)
-                .frame(minWidth: 700, minHeight: 400)
+                .frame(minWidth: 500, minHeight: 400)
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 1000, height: 600)
