@@ -959,7 +959,7 @@ struct MeetingDetailContentView: View {
                 .buttonStyle(DetailHeaderActionButtonStyle(isSelected: viewModel.aiNotesSubTab == .notes))
 
                 Button {
-                    viewModel.aiNotesSubTab = .digest
+                    viewModel.showActionDigest()
                 } label: {
                     Label(langMgr.t("行动摘要", "Action Digest"), systemImage: "list.bullet.rectangle")
                 }

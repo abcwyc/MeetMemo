@@ -189,7 +189,7 @@ E. 分类/对比矩阵 — 用于需要将内容归类或对比的会议：
 """
     }
 
-    private static func decodeResult(from response: String) throws -> StructuredSummaryResult {
+    static func decodeResult(from response: String) throws -> StructuredSummaryResult {
         let cleaned = extractJSONString(from: response)
         guard let data = cleaned.data(using: .utf8) else {
             throw StructuredExtractionError.invalidResponse

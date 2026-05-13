@@ -324,6 +324,27 @@ class MeetingViewModel: ObservableObject {
         !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    var hasStructuredSummaryContent: Bool {
+        !meeting.oneLiner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+            !meeting.discussions.isEmpty ||
+            !meeting.decisions.isEmpty ||
+            !meeting.risks.isEmpty ||
+            !meeting.openQuestions.isEmpty ||
+            !meeting.milestones.isEmpty ||
+            !meeting.diagrams.isEmpty
+    }
+
+    func showActionDigest() {
+        selectedTab = .enhancedNotes
+        aiNotesSubTab = .digest
+        extractStructuredSummaryIfNeeded()
+    }
+
+    func extractStructuredSummaryIfNeeded() {
+        guard hasGeneratedNotes, !hasStructuredSummaryContent, !isExtractingStructuredSummary else { return }
+        Task { await extractStructuredSummary() }
+    }
+
     var canExportCurrentTabHTML: Bool {
         switch selectedTab {
         case .context:
@@ -335,14 +356,7 @@ class MeetingViewModel: ObservableObject {
             case .notes:
                 return !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             case .digest:
-                return !meeting.oneLiner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                    !meeting.discussions.isEmpty ||
-                    !meeting.decisions.isEmpty ||
-                    !meeting.followUpTasks.isEmpty ||
-                    !meeting.risks.isEmpty ||
-                    !meeting.openQuestions.isEmpty ||
-                    !meeting.milestones.isEmpty ||
-                    !meeting.diagrams.isEmpty
+                return hasStructuredSummaryContent || !meeting.followUpTasks.isEmpty
             }
         case .summary:
             return !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

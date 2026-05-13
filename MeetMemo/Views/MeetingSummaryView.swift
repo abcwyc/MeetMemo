@@ -64,6 +64,9 @@ struct MeetingSummaryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.gray.opacity(0.05))
         .cornerRadius(8)
+        .onAppear {
+            viewModel.extractStructuredSummaryIfNeeded()
+        }
     }
 
     // MARK: - Header Section (Meeting Metadata)
