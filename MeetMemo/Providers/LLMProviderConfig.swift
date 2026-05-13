@@ -1,21 +1,19 @@
 import Foundation
 
 struct LLMProviderConfig: Codable, Hashable {
-    static let defaultBaseURL = "https://api.anthropic.com"
-
     var apiKey: String
-    var baseURL: String = Self.defaultBaseURL
+    var baseURL: String = ""
     var model: String
 
     var isConfigured: Bool {
         !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var normalizedBaseURL: String {
         let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalized = trimmed.isEmpty ? Self.defaultBaseURL : trimmed
-        return normalized.hasSuffix("/") ? String(normalized.dropLast()) : normalized
+        return trimmed.hasSuffix("/") ? String(trimmed.dropLast()) : trimmed
     }
 
     var apiStyle: LLMAPIStyle {

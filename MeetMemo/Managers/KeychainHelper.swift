@@ -192,7 +192,7 @@ class KeychainHelper {
             sttAppId: values["sttAppId"] ?? "",
             sttAccessToken: values["sttAccessToken"] ?? "",
             llmApiKey: values["llmApiKey"] ?? "",
-            llmBaseURL: values["llmBaseURL"] ?? LLMProviderConfig.defaultBaseURL,
+            llmBaseURL: values["llmBaseURL"] ?? "",
             llmModel: values["llmModel"] ?? ""
         )
     }

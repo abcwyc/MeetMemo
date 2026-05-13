@@ -4,7 +4,7 @@ struct Settings: Codable {
     var sttAppId: String = ""
     var sttAccessToken: String = ""
     var llmApiKey: String = ""
-    var llmBaseURL: String = LLMProviderConfig.defaultBaseURL
+    var llmBaseURL: String = ""
     var llmModel: String = ""
     
     // Computed properties that access UserDefaults
@@ -79,7 +79,7 @@ struct Settings: Codable {
         sttAppId: String = "",
         sttAccessToken: String = "",
         llmApiKey: String = "",
-        llmBaseURL: String = LLMProviderConfig.defaultBaseURL,
+        llmBaseURL: String = "",
         llmModel: String = ""
     ) {
         self.sttAppId = sttAppId

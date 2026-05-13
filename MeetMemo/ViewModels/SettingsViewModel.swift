@@ -21,11 +21,7 @@ class SettingsViewModel: ObservableObject {
         settings.sttAccessToken = providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmApiKey = providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let storedBaseURL = providerConfig.llmBaseURL
-        settings.llmBaseURL = storedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? LLMProviderConfig.defaultBaseURL
-            : storedBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-
+        settings.llmBaseURL = providerConfig.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmModel = providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
@@ -75,14 +71,10 @@ class SettingsViewModel: ObservableObject {
             return
         }
 
-        let normalizedBaseURL = settings.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? LLMProviderConfig.defaultBaseURL
-            : settings.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-
         settings.sttAppId = settings.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.sttAccessToken = settings.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmApiKey = settings.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.llmBaseURL = normalizedBaseURL
+        settings.llmBaseURL = settings.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmModel = settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let allSaved = KeychainHelper.shared.saveProviderConfig(settings)
@@ -233,7 +225,7 @@ class SettingsViewModel: ObservableObject {
 
         return LLMProviderConfig(
             apiKey: settings.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
-            baseURL: trimmedBaseURL.isEmpty ? LLMProviderConfig.defaultBaseURL : trimmedBaseURL,
+            baseURL: trimmedBaseURL,
             model: settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
         )
     }

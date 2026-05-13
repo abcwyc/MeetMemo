@@ -7,7 +7,7 @@ struct OnboardingView: View {
     @State private var sttAppId = ""
     @State private var sttAccessToken = ""
     @State private var llmApiKey = ""
-    @State private var llmBaseURL = LLMProviderConfig.defaultBaseURL
+    @State private var llmBaseURL = ""
     @State private var llmModel = ""
     @State private var micPermissionGranted = false
     @State private var systemAudioPermissionGranted = false
@@ -219,6 +219,7 @@ struct OnboardingView: View {
         !sttAppId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 

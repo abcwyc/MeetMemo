@@ -945,6 +945,9 @@ class AudioManager: NSObject, ObservableObject {
         let normalized = message.lowercased()
 
         return normalized.contains("read result timeout")
+            || normalized.contains("server processing timeout")
+            || normalized.contains("execution timeout")
+            || normalized.contains("stream_volume_cal_tob")
             || normalized.contains("session expired")
             || normalized.contains("socket is not connected")
             || normalized.contains("connection lost")
