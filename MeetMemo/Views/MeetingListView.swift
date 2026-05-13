@@ -954,14 +954,14 @@ struct MeetingDetailContentView: View {
                 Button {
                     viewModel.aiNotesSubTab = .notes
                 } label: {
-                    Label(langMgr.t("总结", "Summary"), systemImage: "doc.text")
+                    Label(langMgr.t("会议纪要", "Meeting Notes"), systemImage: "doc.text")
                 }
                 .buttonStyle(DetailHeaderActionButtonStyle(isSelected: viewModel.aiNotesSubTab == .notes))
 
                 Button {
                     viewModel.aiNotesSubTab = .digest
                 } label: {
-                    Label(langMgr.t("摘要", "Digest"), systemImage: "list.bullet.rectangle")
+                    Label(langMgr.t("行动摘要", "Action Digest"), systemImage: "list.bullet.rectangle")
                 }
                 .buttonStyle(DetailHeaderActionButtonStyle(isSelected: viewModel.aiNotesSubTab == .digest))
             }

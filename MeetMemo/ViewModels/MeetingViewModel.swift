@@ -10,8 +10,8 @@ extension Notification.Name {
 }
 
 enum AINotesSubTab {
-    case notes   // 总结：markdown 格式纪要
-    case digest  // 摘要：结构化纪要
+    case notes   // 会议纪要：markdown 格式纪要
+    case digest  // 行动摘要：结构化纪要
 }
 
 enum MeetingViewTab: String, CaseIterable {
