@@ -18,10 +18,10 @@ class RecordingSessionManager: ObservableObject {
     private let transcriptUpdateSubject = PassthroughSubject<[TranscriptChunk], Never>()
     private var isStoppingFromSessionManager = false
     private var hasObservedAudioRecordingStart = false
-    
+
     // Store transcript chunks for the active recording session
     private var activeRecordingTranscriptChunks: [TranscriptChunk] = []
-    
+
     private init() {
         setupAudioManagerBindings()
         setupDebouncedSaving()
@@ -73,12 +73,12 @@ class RecordingSessionManager: ObservableObject {
                 guard let self = self, self.isRecording, self.activeMeetingId != nil else { return }
                 self.activeRecordingTranscriptChunks = newChunks
                 self.activeRecordingTranscriptChunksUpdated = newChunks
-                
+
                 self.transcriptUpdateSubject.send(newChunks)
             }
             .store(in: &cancellables)
     }
-    
+
     private func setupDebouncedSaving() {
         transcriptUpdateSubject
             .debounce(for: .seconds(2), scheduler: DispatchQueue.main)

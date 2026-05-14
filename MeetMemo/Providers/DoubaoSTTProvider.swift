@@ -24,6 +24,8 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
     private var currentConnectID: String?
     private var isDisconnecting = false
     private var didSendFinalAudio = false
+    private var didSendFinalAudioAt: Date?
+    private var lastTranscriptAt: Date?
     private var isConnected = false
     private var nextAudioSequence: Int32 = 2
     private var pendingAudioBytes = 0
@@ -55,6 +57,8 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
             self.currentConnectID = connectID
             self.isDisconnecting = false
             self.didSendFinalAudio = false
+            self.didSendFinalAudioAt = nil
+            self.lastTranscriptAt = nil
             self.isConnected = false
             self.nextAudioSequence = 2
             self.pendingAudioBytes = 0
@@ -86,6 +90,32 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
 
     func sendLastAudio() {
         sendAudioFrame(Data(), isLast: true)
+    }
+
+    /// 等待服务端最终转录结果送达或超时。检测规则：
+    /// 1) 如未发过 sendLastAudio，立即返回。
+    /// 2) 收到 sendLastAudio 之后的首个转录回包，并保持 300ms 无新回包，认为已收齐。
+    /// 3) 始终以 `timeout` 为上限退出，避免阻塞 stop 流程。
+    func awaitPendingFinalization(timeout: TimeInterval) async {
+        let quietWindow: TimeInterval = 0.3
+        let pollInterval = UInt64(0.05 * 1_000_000_000)
+        let deadline = Date().addingTimeInterval(timeout)
+
+        while Date() < deadline {
+            let (sentAt, transcriptAt, disconnecting): (Date?, Date?, Bool) = stateLock.withLock {
+                (didSendFinalAudioAt, lastTranscriptAt, isDisconnecting)
+            }
+
+            if disconnecting { return }
+            guard let sentAt else { return }
+
+            if let transcriptAt, transcriptAt > sentAt,
+               Date().timeIntervalSince(transcriptAt) >= quietWindow {
+                return
+            }
+
+            try? await Task.sleep(nanoseconds: pollInterval)
+        }
     }
 
     func disconnect() {
@@ -196,7 +226,10 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
             let seq = nextAudioSequence
             nextAudioSequence &+= 1
             pendingAudioBytes += pendingBytes
-            if isLast { didSendFinalAudio = true }
+            if isLast {
+                didSendFinalAudio = true
+                didSendFinalAudioAt = Date()
+            }
             return (socketTask, seq, pendingBytes)
         }
 
@@ -279,6 +312,7 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
         guard let utterances = response.transcript?.result?.utterances, !utterances.isEmpty else {
             if let text = response.transcript?.result?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
                !text.isEmpty {
+                stateLock.withLock { lastTranscriptAt = Date() }
                 DispatchQueue.main.async {
                     self.onTranscriptUpdate?(STTTranscriptUpdate(
                         text: text,
@@ -298,6 +332,7 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
             utteranceTracker.diff(utterances)
         }
 
+        var didEmit = false
         for change in changes {
             switch change {
             case .new(let utterance), .updated(let utterance):
@@ -311,6 +346,7 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
                     isCorrection = false
                 }
 
+                didEmit = true
                 DispatchQueue.main.async {
                     self.onTranscriptUpdate?(STTTranscriptUpdate(
                         text: text,
@@ -323,6 +359,10 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
                     ))
                 }
             }
+        }
+
+        if didEmit {
+            stateLock.withLock { lastTranscriptAt = Date() }
         }
     }
 

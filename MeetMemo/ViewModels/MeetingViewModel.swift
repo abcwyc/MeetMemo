@@ -393,9 +393,20 @@ class MeetingViewModel: ObservableObject {
 
             print("🔄 Loaded full meeting: \(meetingId)")
             self.isApplyingLoadedMeeting = true
-            self.meeting = self.hasLocalUnsavedChanges
-                ? self.mergingLoadedMeeting(savedMeeting, withLocalEditsFrom: self.meeting)
-                : savedMeeting
+            let isLiveRecording = self.recordingSessionManager.isRecordingMeeting(meetingId)
+            if isLiveRecording {
+                // 直播录制中：transcriptChunks 以内存中的活跃片段为准，
+                // 仅从磁盘合并其它持久化字段，避免覆盖最新的 final/interim。
+                var merged = self.hasLocalUnsavedChanges
+                    ? self.mergingLoadedMeeting(savedMeeting, withLocalEditsFrom: self.meeting)
+                    : savedMeeting
+                merged.transcriptChunks = self.recordingSessionManager.getTranscriptChunks(for: meetingId)
+                self.meeting = merged
+            } else {
+                self.meeting = self.hasLocalUnsavedChanges
+                    ? self.mergingLoadedMeeting(savedMeeting, withLocalEditsFrom: self.meeting)
+                    : savedMeeting
+            }
             self.isApplyingLoadedMeeting = false
             self.refreshTranscriptDisplayChunks()
             self.isNewMeeting = self.isEmpty

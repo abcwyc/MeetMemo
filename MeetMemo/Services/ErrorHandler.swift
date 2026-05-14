@@ -201,6 +201,11 @@ class ErrorHandler {
         isConcurrencyQuotaDetail(normalizedErrorDetail(message))
     }
 
+    /// 永久性的鉴权/配置错误——重连无意义，应立即停止录音。
+    func isPermanentAuthErrorMessage(_ message: String) -> Bool {
+        isInvalidAPIKeyDetail(normalizedErrorDetail(message))
+    }
+
     private func normalizedErrorDetail(_ message: String?) -> String {
         let trimmed = (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
