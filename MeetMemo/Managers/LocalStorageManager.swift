@@ -11,8 +11,10 @@ class LocalStorageManager {
     private let meetingsDirectory: URL
     private let meetingSummariesDirectory: URL
     private let templatesDirectory: URL
+    private let migrationQuarantineDirectory: URL
     private let storageLock = NSRecursiveLock()
     private var deletedMeetingIDs = Set<UUID>()
+    private var hasCreatedMigrationBackup = false
     
     private init() {
         // The Documents directory should always exist for the app container, but keep
@@ -33,6 +35,7 @@ class LocalStorageManager {
         
         // Create templates subdirectory
         templatesDirectory = documentsDirectory.appendingPathComponent("Templates")
+        migrationQuarantineDirectory = documentsDirectory.appendingPathComponent("Meetings_Migration_Quarantine")
         
         // Ensure directories exist
         try? FileManager.default.createDirectory(at: meetingsDirectory,
@@ -41,9 +44,19 @@ class LocalStorageManager {
                                                withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: templatesDirectory,
                                                withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: migrationQuarantineDirectory,
+                                               withIntermediateDirectories: true)
     }
     
     // MARK: - Meeting Management
+
+    func prepareMigrationsForLaunch() {
+        withStorageLock {
+            guard !hasCreatedMigrationBackup else { return }
+            guard meetingFilesContainOlderDataVersionLocked() else { return }
+            _ = createMigrationBackupIfNeededLocked()
+        }
+    }
     
     /// Saves a meeting to local storage
     /// - Parameter meeting: The meeting to save
@@ -115,8 +128,6 @@ class LocalStorageManager {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
             
-            var didCreateBackup = false
-            
             let meetings = fileURLs.compactMap { url -> Meeting? in
                 guard let data = try? Data(contentsOf: url),
                       let meeting = try? decoder.decode(Meeting.self, from: data) else {
@@ -131,11 +142,7 @@ class LocalStorageManager {
 
                 // Check if migration is needed
                 if meeting.dataVersion < Meeting.currentDataVersion {
-                    // Create backup **once** before we start mutating anything
-                    if !didCreateBackup {
-                        _ = DataMigrationManager.shared.backupMeetingsDirectory()
-                        didCreateBackup = true
-                    }
+                    _ = createMigrationBackupIfNeededLocked()
 
                     if let migratedMeeting = DataMigrationManager.shared.migrateMeeting(meeting) {
                         if saveMeeting(migratedMeeting) {
@@ -143,11 +150,12 @@ class LocalStorageManager {
                             return migratedMeeting
                         }
                         print("❌ Failed to save migrated meeting: \(migratedMeeting.id)")
+                        return migratedMeeting
                     } else {
                         print("❌ Failed to migrate meeting: \(meeting.id)")
+                        quarantineMeetingFileLocked(url, meetingId: meeting.id, reason: "migration failed")
                     }
-                    // Return original if anything failed
-                    return meeting
+                    return nil
                 }
 
                 saveMeetingSummary(MeetingSummary(meeting: meeting))
@@ -230,6 +238,34 @@ class LocalStorageManager {
         })
     }
 
+    private func meetingFilesContainOlderDataVersionLocked() -> Bool {
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: meetingsDirectory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return false
+        }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        return fileURLs.contains { url in
+            guard url.pathExtension == "json",
+                  let data = try? Data(contentsOf: url),
+                  let meeting = try? decoder.decode(Meeting.self, from: data) else {
+                return false
+            }
+
+            return meeting.dataVersion < Meeting.currentDataVersion
+        }
+    }
+
+    private func createMigrationBackupIfNeededLocked() -> URL? {
+        guard !hasCreatedMigrationBackup else { return nil }
+        hasCreatedMigrationBackup = true
+        return DataMigrationManager.shared.backupMeetingsDirectory()
+    }
+
     /// Loads a single meeting from local storage.
     /// Use this when opening a detail view so large transcripts in unrelated
     /// meetings do not block navigation.
@@ -253,9 +289,17 @@ class LocalStorageManager {
             return nil
         }
 
-        if meeting.dataVersion < Meeting.currentDataVersion,
-           let migratedMeeting = DataMigrationManager.shared.migrateMeeting(meeting) {
-            _ = saveMeetingLocked(migratedMeeting)
+        if meeting.dataVersion < Meeting.currentDataVersion {
+            _ = createMigrationBackupIfNeededLocked()
+            guard let migratedMeeting = DataMigrationManager.shared.migrateMeeting(meeting) else {
+                print("❌ Failed to migrate meeting: \(meeting.id)")
+                quarantineMeetingFileLocked(fileURL, meetingId: meeting.id, reason: "migration failed")
+                return nil
+            }
+
+            if !saveMeetingLocked(migratedMeeting) {
+                print("❌ Failed to save migrated meeting: \(migratedMeeting.id). Using migrated in-memory copy.")
+            }
             return migratedMeeting
         }
 
@@ -309,6 +353,32 @@ class LocalStorageManager {
     private func removeFileIfPresent(at url: URL) throws {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         try FileManager.default.removeItem(at: url)
+    }
+
+    private func quarantineMeetingFileLocked(_ fileURL: URL, meetingId: UUID, reason: String) {
+        do {
+            try FileManager.default.createDirectory(at: migrationQuarantineDirectory,
+                                                   withIntermediateDirectories: true)
+
+            let destination = uniqueQuarantineURL(for: fileURL)
+            try FileManager.default.moveItem(at: fileURL, to: destination)
+            try removeFileIfPresent(at: meetingSummaryFileURL(for: meetingId))
+            print("🚧 Quarantined meeting \(meetingId) after \(reason): \(destination.lastPathComponent)")
+        } catch {
+            print("❌ Failed to quarantine meeting \(meetingId): \(error)")
+        }
+    }
+
+    private func uniqueQuarantineURL(for fileURL: URL) -> URL {
+        let baseURL = migrationQuarantineDirectory.appendingPathComponent(fileURL.lastPathComponent)
+        guard FileManager.default.fileExists(atPath: baseURL.path) else {
+            return baseURL
+        }
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+            .replacingOccurrences(of: ":", with: "-")
+        let quarantinedName = "\(fileURL.deletingPathExtension().lastPathComponent)-\(timestamp).\(fileURL.pathExtension)"
+        return migrationQuarantineDirectory.appendingPathComponent(quarantinedName)
     }
 
     private func saveMeetingSummary(_ summary: MeetingSummary) {

@@ -11,6 +11,10 @@ import SwiftUI
 struct MeetMemoApp: App {
     @StateObject private var appearanceMgr = AppearanceManager.shared
 
+    init() {
+        LocalStorageManager.shared.prepareMigrationsForLaunch()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

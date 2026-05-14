@@ -5,6 +5,7 @@ import Combine
 // Add notification name for meeting saved events
 extension Notification.Name {
     static let meetingSaved = Notification.Name("MeetingSaved")
+    static let meetingWillDelete = Notification.Name("MeetingWillDelete")
     static let meetingDeleted = Notification.Name("MeetingDeleted")
     static let meetingRenamed = Notification.Name("MeetingRenamed")
 }
@@ -95,6 +96,7 @@ class MeetingViewModel: ObservableObject {
     private var isApplyingTemplateSelection = false
     private var hasLocalUnsavedChanges = false
     private var isApplyingLoadedMeeting = false
+    private var isStreamingGeneratedNotes = false
     private var generationTask: Task<Void, Never>?
     private var generationCounter: Int = 0
     
@@ -216,6 +218,7 @@ class MeetingViewModel: ObservableObject {
             .sink { [weak self] meeting in
                 guard let self else { return }
                 guard !self.isApplyingLoadedMeeting else { return }
+                guard !self.isStreamingGeneratedNotes else { return }
 
                 self.hasLocalUnsavedChanges = true
 
@@ -238,11 +241,25 @@ class MeetingViewModel: ObservableObject {
         // If this meeting is deleted from the sidebar while its detail view is
         // open, prevent the detail view's disappear/auto-save hooks from
         // recreating the just-deleted file.
+        // willDelete 必须同步执行——否则 sink 会被推到下一个 run loop tick，
+        // 而 ListVM 在 post 之后立刻调用 deleteMeetingSummary，待 sink 跑时
+        // 文件已被删、deletedMeetingIDs 已 insert，saveMeeting 会被拦截。
+        NotificationCenter.default.publisher(for: .meetingWillDelete)
+            .compactMap { $0.object as? Meeting }
+            .sink { [weak self] deleting in
+                guard let self, deleting.id == self.meeting.id else { return }
+                self.cancelGeneratingNotes()
+                self.saveMeeting()
+            }
+            .store(in: &cancellables)
+
         NotificationCenter.default.publisher(for: .meetingDeleted)
             .receive(on: RunLoop.main)
             .compactMap { $0.object as? Meeting }
             .sink { [weak self] deleted in
                 guard let self, deleted.id == self.meeting.id else { return }
+                self.cancelGeneratingNotes()
+                self.hasLocalUnsavedChanges = false
                 self.isDeleted = true
             }
             .store(in: &cancellables)
@@ -549,6 +566,7 @@ class MeetingViewModel: ObservableObject {
         generationTask?.cancel()
         generationTask = nil
         isGeneratingNotes = false
+        isStreamingGeneratedNotes = false
     }
 
     private func runGenerateNotes() async {
@@ -558,17 +576,22 @@ class MeetingViewModel: ObservableObject {
         }
 
         isGeneratingNotes = true
+        isStreamingGeneratedNotes = true
         errorMessage = nil
         generationCounter += 1
         let myGeneration = generationCounter
+        let meetingId = meeting.id
+        let meetingSnapshot = meeting
+        let templateIdSnapshot = selectedTemplateId
         defer {
             if generationCounter == myGeneration {
                 isGeneratingNotes = false
+                isStreamingGeneratedNotes = false
                 generationTask = nil
             }
         }
 
-        let previousGeneratedNotes = meeting.generatedNotes
+        let previousGeneratedNotes = meetingSnapshot.generatedNotes
         var receivedContent = false
         
         // Load settings for generation
@@ -577,17 +600,24 @@ class MeetingViewModel: ObservableObject {
         
         // Use streaming generation
         let stream = NotesGenerator.shared.generateNotesStream(
-            meeting: meeting,
+            meeting: meetingSnapshot,
             userBlurb: userBlurb,
             systemPrompt: systemPrompt,
-            templateId: selectedTemplateId
+            templateId: templateIdSnapshot
         )
         
         var hasError = false
         for await result in stream {
+            guard isCurrentGeneration(meetingId: meetingId, generation: myGeneration) else {
+                hasError = true
+                break
+            }
+
             if Task.isCancelled {
-                meeting.generatedNotes = previousGeneratedNotes
-                toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                if meeting.id == meetingId {
+                    meeting.generatedNotes = previousGeneratedNotes
+                    toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
                 hasError = true
                 break
             }
@@ -609,19 +639,30 @@ class MeetingViewModel: ObservableObject {
                 break
             }
         }
+
+        if Task.isCancelled {
+            hasError = true
+        }
         
         // Only save if there was no error
         if !hasError {
             if meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 if let generated = await NotesGenerator.shared.generateTitle(meeting: meeting) {
+                    guard isCurrentGeneration(meetingId: meetingId, generation: myGeneration) else { return }
                     meeting.title = generated
                 }
             }
+            guard isCurrentGeneration(meetingId: meetingId, generation: myGeneration) else { return }
+            isStreamingGeneratedNotes = false
             saveMeeting()
             selectedTab = .enhancedNotes
             aiNotesSubTab = .notes
             Task { await self.extractStructuredSummary() }
         }
+    }
+
+    private func isCurrentGeneration(meetingId: UUID, generation: Int) -> Bool {
+        meeting.id == meetingId && generationCounter == generation
     }
     
     func saveMeeting() {
@@ -911,6 +952,9 @@ class MeetingViewModel: ObservableObject {
             print("🛑 Stopping recording for meeting being deleted: \(meeting.id)")
             recordingSessionManager.stopRecording()
         }
+
+        cancelGeneratingNotes()
+        saveMeeting()
         
         let success = LocalStorageManager.shared.deleteMeeting(meeting)
         if success {

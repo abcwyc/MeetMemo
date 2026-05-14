@@ -5,6 +5,13 @@ import Foundation
 import LocalAuthentication
 import Security
 
+enum ProviderConfigLoadResult {
+    case success(Settings)
+    case notFound
+    case authenticationFailed
+    case unavailable(OSStatus)
+}
+
 /// Manages secure storage of sensitive data using the macOS Keychain
 class KeychainHelper {
     static let shared = KeychainHelper()
@@ -24,16 +31,33 @@ class KeychainHelper {
     // MARK: - Provider configuration
 
     func getProviderConfig() -> Settings? {
-        if let settings: Settings = getCodable(forKey: providerConfigKey) {
-            return settings
-        }
-
-        guard let legacySettings = getLegacyProviderConfigWithoutAuthentication() else {
+        guard case .success(let settings) = loadProviderConfig() else {
             return nil
         }
 
+        return settings
+    }
+
+    func loadProviderConfig() -> ProviderConfigLoadResult {
+        switch getCodableResult(forKey: providerConfigKey) as KeychainLookupResult<Settings> {
+        case .success(let settings):
+            return .success(settings)
+        case .notFound:
+            break
+        case .authenticationFailed:
+            return .authenticationFailed
+        case .unavailable(let status):
+            return .unavailable(status)
+        case .decodeFailed:
+            return .unavailable(errSecDecode)
+        }
+
+        guard let legacySettings = getLegacyProviderConfigWithoutAuthentication() else {
+            return .notFound
+        }
+
         _ = saveProviderConfig(legacySettings)
-        return legacySettings
+        return .success(legacySettings)
     }
 
     func saveProviderConfig(_ settings: Settings) -> Bool {
@@ -163,11 +187,30 @@ class KeychainHelper {
     }
 
     private func getCodable<T: Decodable>(forKey key: String) -> T? {
-        guard let data = getData(forKey: key, allowAuthentication: true) else {
+        guard case .success(let value) = getCodableResult(forKey: key) as KeychainLookupResult<T> else {
             return nil
         }
 
-        return try? JSONDecoder().decode(T.self, from: data)
+        return value
+    }
+
+    private func getCodableResult<T: Decodable>(forKey key: String) -> KeychainLookupResult<T> {
+        switch getDataResult(forKey: key, allowAuthentication: true) {
+        case .success(let data):
+            do {
+                return .success(try JSONDecoder().decode(T.self, from: data))
+            } catch {
+                return .decodeFailed
+            }
+        case .notFound:
+            return .notFound
+        case .authenticationFailed:
+            return .authenticationFailed
+        case .unavailable(let status):
+            return .unavailable(status)
+        case .decodeFailed:
+            return .decodeFailed
+        }
     }
 
     private func getLegacyProviderConfigWithoutAuthentication() -> Settings? {
@@ -198,6 +241,14 @@ class KeychainHelper {
     }
 
     private func getData(forKey key: String, allowAuthentication: Bool) -> Data? {
+        guard case .success(let data) = getDataResult(forKey: key, allowAuthentication: allowAuthentication) else {
+            return nil
+        }
+
+        return data
+    }
+
+    private func getDataResult(forKey key: String, allowAuthentication: Bool) -> KeychainLookupResult<Data> {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
@@ -215,8 +266,22 @@ class KeychainHelper {
         var item: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         
-        guard status == errSecSuccess, let data = item as? Data else { return nil }
-        return data
+        guard status == errSecSuccess else {
+            switch status {
+            case errSecItemNotFound:
+                return .notFound
+            case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:
+                return .authenticationFailed
+            default:
+                return .unavailable(status)
+            }
+        }
+
+        guard let data = item as? Data else {
+            return .decodeFailed
+        }
+
+        return .success(data)
     }
     
     /// Deletes a value from the keychain
@@ -232,4 +297,12 @@ class KeychainHelper {
         let status = SecItemDelete(query as CFDictionary)
         return status == errSecSuccess
     }
-} 
+}
+
+private enum KeychainLookupResult<Value> {
+    case success(Value)
+    case notFound
+    case authenticationFailed
+    case unavailable(OSStatus)
+    case decodeFailed
+}

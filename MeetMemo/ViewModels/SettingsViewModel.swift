@@ -16,7 +16,32 @@ class SettingsViewModel: ObservableObject {
     
     /// Loads provider credentials from keychain.
     func loadProviderConfig() {
-        let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
+        let providerConfig: Settings
+        switch KeychainHelper.shared.loadProviderConfig() {
+        case .success(let settings):
+            providerConfig = settings
+        case .notFound:
+            providerConfig = Settings()
+        case .authenticationFailed:
+            providerConfig = Settings()
+            activeAlert = AlertMessage(
+                title: LanguageManager.shared.t("无法读取密钥", "Cannot Read Credentials"),
+                message: LanguageManager.shared.t(
+                    "Keychain 需要认证或认证已取消，请重新打开设置并输入服务配置。",
+                    "Keychain authentication was required or cancelled. Reopen Settings and enter your provider configuration again."
+                )
+            )
+        case .unavailable(let status):
+            providerConfig = Settings()
+            activeAlert = AlertMessage(
+                title: LanguageManager.shared.t("无法读取密钥", "Cannot Read Credentials"),
+                message: LanguageManager.shared.t(
+                    "Keychain 暂时不可用，错误码：\(status)。请重新输入服务配置。",
+                    "Keychain is unavailable, status: \(status). Please enter your provider configuration again."
+                )
+            )
+        }
+
         settings.sttAppId = providerConfig.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.sttAccessToken = providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmApiKey = providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines)

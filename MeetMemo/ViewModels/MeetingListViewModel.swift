@@ -81,6 +81,8 @@ class MeetingListViewModel: ObservableObject {
             recordingSessionManager.stopRecording()
         }
 
+        NotificationCenter.default.post(name: .meetingWillDelete, object: meeting.placeholderMeeting)
+
         let success = LocalStorageManager.shared.deleteMeetingSummary(meeting)
         if success {
             meetings.removeAll { $0.id == meeting.id }
