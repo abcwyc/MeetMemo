@@ -181,16 +181,7 @@ final class AudioFileTranscriber {
 }
 
 private actor AudioFileTranscriptionState {
-    private struct InterimTranscriptState {
-        var text: String
-        var speakerTag: String?
-        var speakerId: Int?
-        var startTime: Int?
-        var endTime: Int?
-    }
-
-    private var chunks: [TranscriptChunk] = []
-    private var currentInterim: [AudioSource: InterimTranscriptState] = [:]
+    private var transcriptAccumulator = TranscriptUpdateAccumulator()
     private var errorMessageValue: String?
     private var updateCountValue = 0
     private var isFinalizing = false
@@ -204,7 +195,7 @@ private actor AudioFileTranscriptionState {
     }
 
     func finalChunks() -> [TranscriptChunk] {
-        chunks.filter { $0.isFinal }
+        transcriptAccumulator.chunks.filter { $0.isFinal }
     }
 
     func beginFinalizing() {
@@ -212,7 +203,7 @@ private actor AudioFileTranscriptionState {
     }
 
     func recordError(_ message: String, isTransportError: Bool) {
-        if isFinalizing && isTransportError && !chunks.isEmpty {
+        if isFinalizing && isTransportError && !transcriptAccumulator.chunks.isEmpty {
             return
         }
 
@@ -221,74 +212,7 @@ private actor AudioFileTranscriptionState {
 
     func apply(_ update: STTTranscriptUpdate, source: AudioSource) {
         updateCountValue += 1
-
-        let inheritedState = currentInterim[source]
-        let resolvedUpdate = STTTranscriptUpdate(
-            text: update.text,
-            isFinal: update.isFinal,
-            speakerTag: update.speakerTag ?? inheritedState?.speakerTag,
-            speakerId: update.speakerId ?? inheritedState?.speakerId,
-            startTime: update.startTime ?? inheritedState?.startTime,
-            endTime: update.endTime ?? inheritedState?.endTime,
-            isCorrection: update.isCorrection
-        )
-
-        if update.isCorrection {
-            if let idx = chunks.lastIndex(where: {
-                $0.source == source && $0.isFinal &&
-                $0.startTime == resolvedUpdate.startTime &&
-                $0.endTime == resolvedUpdate.endTime
-            }) {
-                chunks[idx] = TranscriptChunk(
-                    id: chunks[idx].id,
-                    timestamp: chunks[idx].timestamp,
-                    source: source,
-                    text: resolvedUpdate.text,
-                    isFinal: true,
-                    speakerTag: resolvedUpdate.speakerTag,
-                    speakerId: resolvedUpdate.speakerId,
-                    startTime: resolvedUpdate.startTime,
-                    endTime: resolvedUpdate.endTime
-                )
-                chunks.removeAll { !$0.isFinal && $0.source == source }
-            }
-            return
-        }
-
-        if update.isFinal {
-            chunks.removeAll { !$0.isFinal && $0.source == source }
-            chunks.append(TranscriptChunk(
-                timestamp: Date(),
-                source: source,
-                text: resolvedUpdate.text,
-                isFinal: true,
-                speakerTag: resolvedUpdate.speakerTag,
-                speakerId: resolvedUpdate.speakerId,
-                startTime: resolvedUpdate.startTime,
-                endTime: resolvedUpdate.endTime
-            ))
-            currentInterim.removeValue(forKey: source)
-        } else {
-            currentInterim[source] = InterimTranscriptState(
-                text: resolvedUpdate.text,
-                speakerTag: resolvedUpdate.speakerTag,
-                speakerId: resolvedUpdate.speakerId,
-                startTime: resolvedUpdate.startTime,
-                endTime: resolvedUpdate.endTime
-            )
-
-            chunks.removeAll { !$0.isFinal && $0.source == source }
-            chunks.append(TranscriptChunk(
-                timestamp: Date(),
-                source: source,
-                text: resolvedUpdate.text,
-                isFinal: false,
-                speakerTag: resolvedUpdate.speakerTag,
-                speakerId: resolvedUpdate.speakerId,
-                startTime: resolvedUpdate.startTime,
-                endTime: resolvedUpdate.endTime
-            ))
-        }
+        transcriptAccumulator.apply(update, source: source)
     }
 }
 

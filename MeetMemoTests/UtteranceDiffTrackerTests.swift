@@ -28,8 +28,18 @@ final class UtteranceDiffTrackerTests: XCTestCase {
         XCTAssertEqual(changed.count, 2)
     }
 
+    func testDoubaoUtteranceDecodesSnakeCaseTimes() throws {
+        let utterances = try decodeUtterances("""
+        [
+          {"text":"hello","definite":true,"start_time":120,"end_time":980,"speaker_id":"1"}
+        ]
+        """)
+
+        XCTAssertEqual(utterances.first?.startTime, 120)
+        XCTAssertEqual(utterances.first?.endTime, 980)
+    }
+
     private func decodeUtterances(_ json: String) throws -> [DoubaoUtterance] {
         try JSONDecoder().decode([DoubaoUtterance].self, from: Data(json.utf8))
     }
 }
-

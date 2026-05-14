@@ -23,7 +23,7 @@ final class AudioProcessingPipeline: @unchecked Sendable {
         source: AudioSource,
         inputFormat: AVAudioFormat,
         targetFormat: AVAudioFormat,
-        maxPendingBuffers: Int = 24,
+        maxPendingBuffers: Int = 96,
         onAudioData: @escaping AudioDataHandler,
         onAudioLevel: @escaping AudioLevelHandler
     ) {

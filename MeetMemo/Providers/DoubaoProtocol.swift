@@ -346,6 +346,8 @@ struct DoubaoUtterance: Decodable {
         case additions
         case startTime
         case endTime
+        case startTimeSnake = "start_time"
+        case endTimeSnake = "end_time"
     }
 
     private enum AdditionsCodingKeys: String, CodingKey {
@@ -366,7 +368,9 @@ struct DoubaoUtterance: Decodable {
         definite = try container.decodeIfPresent(Bool.self, forKey: .definite)
         words = try container.decodeIfPresent([DoubaoWord].self, forKey: .words)
         startTime = try container.decodeIfPresent(Int.self, forKey: .startTime)
+            ?? container.decodeIfPresent(Int.self, forKey: .startTimeSnake)
         endTime = try container.decodeIfPresent(Int.self, forKey: .endTime)
+            ?? container.decodeIfPresent(Int.self, forKey: .endTimeSnake)
 
         // Decode additions so decodeSpeakerTag can read speaker_id from it.
         // Swift Decodable only decodes fields we explicitly ask for — not having .additions

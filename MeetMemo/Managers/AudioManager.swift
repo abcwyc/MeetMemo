@@ -48,14 +48,6 @@ class AudioManager: NSObject, ObservableObject {
     private var micRetryCount = 0
     private let maxMicRetries = 3
 
-    private struct InterimTranscriptState {
-        var text: String
-        var speakerTag: String?
-        var speakerId: Int?
-        var startTime: Int?
-        var endTime: Int?
-    }
-
     private final class STTSessionTimeOffset {
         var milliseconds: Int
         var isActive: Bool
@@ -66,7 +58,7 @@ class AudioManager: NSObject, ObservableObject {
         }
     }
 
-    private var currentInterim: [AudioSource: InterimTranscriptState] = [:]
+    private var transcriptAccumulator = TranscriptUpdateAccumulator()
     private var cancellables = Set<AnyCancellable>()
 
     private override init() {
@@ -108,7 +100,9 @@ class AudioManager: NSObject, ObservableObject {
         recordingStateMachine.start(sessionID: startedSessionID)
         errorMessage = nil
         recordingStartedAt = Date()
+        transcriptChunks = transcriptChunks.filter(\.isFinal)
         recordingBaseOffsetMilliseconds = Self.maximumTranscriptEndTime(in: transcriptChunks)
+        transcriptAccumulator.reset(chunks: transcriptChunks)
 
         startRecordingTask?.cancel()
         startRecordingTask = Task { [weak self] in
@@ -151,7 +145,7 @@ class AudioManager: NSObject, ObservableObject {
 
         cleanupAudioEngine()
         disconnectSTTProviders(sendLastAudio: false)
-        currentInterim.removeAll()
+        transcriptAccumulator.removeAllInterimState()
         recordingStateMachine.reset()
 
         print("Internal cleanup completed")
@@ -514,7 +508,7 @@ class AudioManager: NSObject, ObservableObject {
             }
 
             self.disconnectSTTProviders(sendLastAudio: false)
-            self.currentInterim.removeAll()
+            self.transcriptAccumulator.removeAllInterimState()
             self.recordingStateMachine.reset()
             self.isRecording = self.recordingStateMachine.state.isRecordingVisible
             self.recordingStartedAt = nil
@@ -741,7 +735,7 @@ class AudioManager: NSObject, ObservableObject {
                 systemSTT = newProvider
             }
 
-            currentInterim.removeValue(forKey: source)
+            transcriptAccumulator.removeInterimState(for: source)
             errorMessage = nil
             print("✅ Rotated STT provider for \(source)")
         } catch {
@@ -816,83 +810,8 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     private func handleTranscriptUpdate(_ update: STTTranscriptUpdate, source: AudioSource) {
-        let inheritedState = currentInterim[source]
-        let resolvedUpdate = STTTranscriptUpdate(
-            text: update.text,
-            isFinal: update.isFinal,
-            speakerTag: update.speakerTag ?? inheritedState?.speakerTag,
-            speakerId: update.speakerId ?? inheritedState?.speakerId,
-            startTime: update.startTime ?? inheritedState?.startTime,
-            endTime: update.endTime ?? inheritedState?.endTime,
-            isCorrection: update.isCorrection
-        )
-
-        // Handle corrections: replace the matching final chunk with the updated version.
-        if update.isCorrection {
-            if let idx = transcriptChunks.lastIndex(where: {
-                $0.source == source && $0.isFinal &&
-                $0.startTime == resolvedUpdate.startTime &&
-                $0.endTime == resolvedUpdate.endTime
-            }) {
-                let updated = TranscriptChunk(
-                    id: transcriptChunks[idx].id,
-                    timestamp: transcriptChunks[idx].timestamp,
-                    source: source,
-                    text: resolvedUpdate.text,
-                    isFinal: true,
-                    speakerTag: resolvedUpdate.speakerTag,
-                    speakerId: resolvedUpdate.speakerId,
-                    startTime: resolvedUpdate.startTime,
-                    endTime: resolvedUpdate.endTime
-                )
-                transcriptChunks[idx] = updated
-                if let interimIdx = transcriptChunks.lastIndex(where: { !$0.isFinal && $0.source == source }) {
-                    transcriptChunks.remove(at: interimIdx)
-                }
-            }
-            return
-        }
-
-        if update.isFinal {
-            transcriptChunks.removeAll { !$0.isFinal && $0.source == source }
-
-            let chunk = TranscriptChunk(
-                timestamp: Date(),
-                source: source,
-                text: resolvedUpdate.text,
-                isFinal: true,
-                speakerTag: resolvedUpdate.speakerTag,
-                speakerId: resolvedUpdate.speakerId,
-                startTime: resolvedUpdate.startTime,
-                endTime: resolvedUpdate.endTime
-            )
-            transcriptChunks.append(chunk)
-            currentInterim.removeValue(forKey: source)
-        } else {
-            currentInterim[source] = InterimTranscriptState(
-                text: resolvedUpdate.text,
-                speakerTag: resolvedUpdate.speakerTag,
-                speakerId: resolvedUpdate.speakerId,
-                startTime: resolvedUpdate.startTime,
-                endTime: resolvedUpdate.endTime
-            )
-
-            if let lastIndex = transcriptChunks.lastIndex(where: { !$0.isFinal && $0.source == source }) {
-                transcriptChunks.remove(at: lastIndex)
-            }
-
-            let chunk = TranscriptChunk(
-                timestamp: Date(),
-                source: source,
-                text: resolvedUpdate.text,
-                isFinal: false,
-                speakerTag: resolvedUpdate.speakerTag,
-                speakerId: resolvedUpdate.speakerId,
-                startTime: resolvedUpdate.startTime,
-                endTime: resolvedUpdate.endTime
-            )
-            transcriptChunks.append(chunk)
-        }
+        transcriptAccumulator.apply(update, source: source)
+        transcriptChunks = transcriptAccumulator.chunks
     }
 
     private func handleSTTProviderError(_ message: String, source: AudioSource) {
@@ -1013,7 +932,7 @@ class AudioManager: NSObject, ObservableObject {
 
         micSTT = nil
         systemSTT = nil
-        currentInterim.removeAll()
+        transcriptAccumulator.removeAllInterimState()
     }
 
     private func handleAudioEngineConfigurationChange() {
