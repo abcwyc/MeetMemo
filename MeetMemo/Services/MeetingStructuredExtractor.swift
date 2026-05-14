@@ -8,7 +8,7 @@ enum StructuredExtractionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingNotes:
-            return "当前会议还没有可用于结构化提取的 AI 纪要。"
+            return "当前会议还没有可用于结构化提取的转录原文。"
         case .llmNotConfigured:
             return "LLM 服务尚未配置，无法提取结构化摘要。"
         case .invalidResponse:
@@ -39,8 +39,8 @@ final class MeetingStructuredExtractor {
     }
 
     func extract(from meeting: Meeting) async throws -> StructuredSummaryResult {
-        let notes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !notes.isEmpty else {
+        let transcript = meeting.formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty else {
             throw StructuredExtractionError.missingNotes
         }
 
@@ -56,7 +56,7 @@ final class MeetingStructuredExtractor {
 
         let messages = [
             ChatMessage(role: "system", content: Self.systemPrompt),
-            ChatMessage(role: "user", content: Self.userPrompt(meeting: meeting, notes: notes))
+            ChatMessage(role: "user", content: Self.userPrompt(meeting: meeting, transcript: transcript))
         ]
 
         var response = ""
@@ -69,13 +69,13 @@ final class MeetingStructuredExtractor {
     }
 
     private static let systemPrompt = """
-你是一个会议纪要结构化提取助手。请从会议纪要中提取关键结构化信息。
+你是一个会议转录结构化提取助手。请只从会议转录原文中提取关键结构化信息。
 只输出 JSON，不要输出 Markdown、解释或代码块。
 
 JSON 必须是如下对象结构：
 {
   "one_liner": "一句话概括本次会议最重要的结论或成果，不超过50字",
-  "host": "会议主持人或发起人，从会议纪要中提取，无法判断则为空字符串",
+  "host": "会议主持人或发起人，从会议转录原文中提取，无法判断则为空字符串",
   "location": "会议地点，如'线上'、'北京办公室'等，无法判断则为空字符串",
   "discussions": [
     {
@@ -83,7 +83,7 @@ JSON 必须是如下对象结构：
       "summary": "该议题的讨论过程摘要，包括主要观点和分歧（如有），不超过120字",
       "consensus": "该议题最终达成的共识或明确结论，没有则为空字符串",
       "has_consensus": true,
-      "source_excerpt": "转录或会议纪要中支持该议题的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "会议转录原文中支持该议题的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "decisions": [
@@ -92,7 +92,7 @@ JSON 必须是如下对象结构：
       "owner": "决策人或责任方，没有则为空字符串",
       "reason": "决策原因或背景，没有则为空字符串",
       "confidence": "high 或 medium 或 low",
-      "source_excerpt": "会议纪要中支持该决策的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "会议转录原文中支持该决策的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "risks": [
@@ -101,7 +101,7 @@ JSON 必须是如下对象结构：
       "severity": "high 或 medium 或 low",
       "mitigation": "缓解措施，没有则为空字符串",
       "owner": "风险负责人，没有则为空字符串",
-      "source_excerpt": "转录或会议纪要中支持该风险的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "会议转录原文中支持该风险的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "open_questions": [
@@ -109,7 +109,7 @@ JSON 必须是如下对象结构：
       "question": "待确认问题描述",
       "owner": "负责确认的人，没有则为空字符串",
       "next_step": "下一步行动，没有则为空字符串",
-      "source_excerpt": "转录或会议纪要中支持该问题的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "会议转录原文中支持该问题的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "milestones": [
@@ -117,7 +117,7 @@ JSON 必须是如下对象结构：
       "title": "里程碑名称，简洁",
       "description": "主要交付内容或目标，没有则为空字符串",
       "target_date": "目标时间，直接使用原文表述如'5月底'、'下周五'，没有则为空字符串",
-      "source_excerpt": "转录或会议纪要中支持该里程碑的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "会议转录原文中支持该里程碑的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "diagrams": [
@@ -145,9 +145,9 @@ JSON 必须是如下对象结构：
 - open_questions：提取会议中尚未达成结论、需要后续确认或跟进的问题。
 - 如果某类信息在会议中不存在，对应数组返回空数组 []。
 - one_liner 必须存在，不能为空字符串。
-- host 和 location 若无法从纪要中判断，返回空字符串。
-- 优先以「会议转录原文」作为事实依据，「AI 纪要」仅作为压缩参考；如果两者冲突，以转录原文为准。
-- source_excerpt 应优先摘自会议转录原文；若只能从 AI 纪要找到依据，可摘自 AI 纪要。不要为无依据的信息编造 source_excerpt。
+- host 和 location 若无法从转录原文中判断，返回空字符串。
+- 只能使用「会议转录原文」作为事实依据。不要参考 AI 纪要、会议资料或其他外部信息。
+- source_excerpt 必须摘自会议转录原文。不要为无依据的信息编造 source_excerpt。
 
 【图示生成规则 diagrams】
 
@@ -166,19 +166,13 @@ JSON 必须是如下对象结构：
 - items 控制在 3-8 项，内容紧凑，不要填充空泛节点。
 """
 
-    private static func userPrompt(meeting: Meeting, notes: String) -> String {
+    private static func userPrompt(meeting: Meeting, transcript: String) -> String {
         """
 会议标题：\(meeting.title.isEmpty ? "未命名会议" : meeting.title)
 会议日期：\(meeting.date.formatted(date: .long, time: .shortened))
 
-会议资料（用户补充，可为空）：
-\(meeting.formattedMeetingContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无" : meeting.formattedMeetingContext)
-
-AI 纪要（结构参考）：
-\(notes)
-
-会议转录原文（事实依据）：
-\(meeting.formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines))
+会议转录原文（唯一事实依据）：
+\(transcript)
 """
     }
 
@@ -193,6 +187,8 @@ AI 纪要（结构参考）：
         do {
             raw = try decoder.decode(RawStructuredSummary.self, from: data)
         } catch {
+            print("⚠️ Structured extraction decode failed: \(error)")
+            print("⚠️ Structured extraction response prefix: \(String(cleaned.prefix(800)))")
             throw StructuredExtractionError.invalidResponse
         }
 
@@ -410,6 +406,23 @@ private struct RawStructuredSummary: Decodable {
     let open_questions: [RawOpenQuestion]?
     let milestones: [RawMilestone]?
     let diagrams: [RawDiagram]?
+
+    private enum CodingKeys: String, CodingKey {
+        case one_liner, host, location, discussions, decisions, risks, open_questions, milestones, diagrams
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        one_liner = c.lossyString(forKey: .one_liner)
+        host = c.lossyOptionalString(forKey: .host)
+        location = c.lossyOptionalString(forKey: .location)
+        discussions = c.lossyArray(RawDiscussion.self, forKey: .discussions)
+        decisions = c.lossyArray(RawDecision.self, forKey: .decisions)
+        risks = c.lossyArray(RawRisk.self, forKey: .risks)
+        open_questions = c.lossyArray(RawOpenQuestion.self, forKey: .open_questions)
+        milestones = c.lossyArray(RawMilestone.self, forKey: .milestones)
+        diagrams = c.lossyArray(RawDiagram.self, forKey: .diagrams)
+    }
 }
 
 private struct RawDiscussion: Decodable {
@@ -418,6 +431,19 @@ private struct RawDiscussion: Decodable {
     let consensus: String
     let has_consensus: Bool
     let source_excerpt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case title, summary, consensus, has_consensus, source_excerpt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.lossyString(forKey: .title)
+        summary = c.lossyString(forKey: .summary)
+        consensus = c.lossyString(forKey: .consensus)
+        has_consensus = c.lossyBool(forKey: .has_consensus)
+        source_excerpt = c.lossyOptionalString(forKey: .source_excerpt)
+    }
 }
 
 private struct RawDecision: Decodable {
@@ -426,6 +452,19 @@ private struct RawDecision: Decodable {
     let reason: String
     let confidence: String
     let source_excerpt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case title, owner, reason, confidence, source_excerpt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.lossyString(forKey: .title)
+        owner = c.lossyString(forKey: .owner)
+        reason = c.lossyString(forKey: .reason)
+        confidence = c.lossyString(forKey: .confidence, defaultValue: "medium")
+        source_excerpt = c.lossyOptionalString(forKey: .source_excerpt)
+    }
 }
 
 private struct RawRisk: Decodable {
@@ -434,6 +473,19 @@ private struct RawRisk: Decodable {
     let mitigation: String
     let owner: String
     let source_excerpt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case title, severity, mitigation, owner, source_excerpt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.lossyString(forKey: .title)
+        severity = c.lossyString(forKey: .severity, defaultValue: "medium")
+        mitigation = c.lossyString(forKey: .mitigation)
+        owner = c.lossyString(forKey: .owner)
+        source_excerpt = c.lossyOptionalString(forKey: .source_excerpt)
+    }
 }
 
 private struct RawOpenQuestion: Decodable {
@@ -441,6 +493,18 @@ private struct RawOpenQuestion: Decodable {
     let owner: String
     let next_step: String
     let source_excerpt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case question, owner, next_step, source_excerpt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        question = c.lossyString(forKey: .question)
+        owner = c.lossyString(forKey: .owner)
+        next_step = c.lossyString(forKey: .next_step)
+        source_excerpt = c.lossyOptionalString(forKey: .source_excerpt)
+    }
 }
 
 private struct RawMilestone: Decodable {
@@ -448,6 +512,18 @@ private struct RawMilestone: Decodable {
     let description: String
     let target_date: String
     let source_excerpt: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case title, description, target_date, source_excerpt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.lossyString(forKey: .title)
+        description = c.lossyString(forKey: .description)
+        target_date = c.lossyString(forKey: .target_date)
+        source_excerpt = c.lossyOptionalString(forKey: .source_excerpt)
+    }
 }
 
 private struct RawDiagram: Decodable {
@@ -455,6 +531,18 @@ private struct RawDiagram: Decodable {
     let diagram_type: String?
     let items: [RawDiagramItem]?
     let html: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case title, diagram_type, items, html
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.lossyString(forKey: .title)
+        diagram_type = c.lossyOptionalString(forKey: .diagram_type)
+        items = c.lossyArray(RawDiagramItem.self, forKey: .items)
+        html = c.lossyOptionalString(forKey: .html)
+    }
 }
 
 private struct RawDiagramItem: Decodable {
@@ -475,6 +563,105 @@ private struct RawDiagramItem: Decodable {
         date = try c.decodeIfPresent(String.self, forKey: .date) ?? ""
         owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
         status = try c.decodeIfPresent(String.self, forKey: .status) ?? "info"
+    }
+}
+
+private struct LossyDecodableArray<Element: Decodable>: Decodable {
+    let elements: [Element]
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        var elements: [Element] = []
+
+        while !container.isAtEnd {
+            do {
+                elements.append(try container.decode(Element.self))
+            } catch {
+                _ = try? container.decode(JSONValue.self)
+            }
+        }
+
+        self.elements = elements
+    }
+}
+
+private enum JSONValue: Decodable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: JSONValue])
+    case array([JSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let single = try decoder.singleValueContainer()
+        if single.decodeNil() {
+            self = .null
+        } else if let value = try? single.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? single.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? single.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? single.decode([String: JSONValue].self) {
+            self = .object(value)
+        } else if let value = try? single.decode([JSONValue].self) {
+            self = .array(value)
+        } else {
+            throw DecodingError.dataCorruptedError(
+                in: single,
+                debugDescription: "Unsupported JSON value"
+            )
+        }
+    }
+}
+
+private extension KeyedDecodingContainer {
+    func lossyString(forKey key: Key, defaultValue: String = "") -> String {
+        lossyOptionalString(forKey: key) ?? defaultValue
+    }
+
+    func lossyOptionalString(forKey key: Key) -> String? {
+        if let value = try? decodeIfPresent(String.self, forKey: key) {
+            return value
+        }
+        if let value = try? decodeIfPresent(Int.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? decodeIfPresent(Double.self, forKey: key) {
+            return String(value)
+        }
+        if let value = try? decodeIfPresent(Bool.self, forKey: key) {
+            return value ? "true" : "false"
+        }
+        return nil
+    }
+
+    func lossyBool(forKey key: Key, defaultValue: Bool = false) -> Bool {
+        if let value = try? decodeIfPresent(Bool.self, forKey: key) {
+            return value
+        }
+        if let value = try? decodeIfPresent(String.self, forKey: key) {
+            let normalized = value
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if ["true", "yes", "1", "是", "有"].contains(normalized) { return true }
+            if ["false", "no", "0", "否", "无"].contains(normalized) { return false }
+        }
+        if let value = try? decodeIfPresent(Int.self, forKey: key) {
+            return value != 0
+        }
+        return defaultValue
+    }
+
+    func lossyArray<Element: Decodable>(_ type: Element.Type, forKey key: Key) -> [Element]? {
+        if let value = try? decodeIfPresent([Element].self, forKey: key) {
+            return value
+        }
+        if let lossy = try? decodeIfPresent(LossyDecodableArray<Element>.self, forKey: key) {
+            return lossy.elements
+        }
+        return nil
     }
 }
 

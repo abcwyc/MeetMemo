@@ -1316,7 +1316,7 @@ struct MeetingDetailContentView: View {
     private var enhancedNotesView: some View {
         VStack(alignment: .leading, spacing: 0) {
             if !isEnhancedNotesEditing {
-                oneLinerCard
+                notesStatusCard
             }
             if isEnhancedNotesEditing {
                 IMESafeTextEditor(text: Binding(
@@ -1338,12 +1338,12 @@ struct MeetingDetailContentView: View {
     }
 
     @ViewBuilder
-    private var oneLinerCard: some View {
-        if viewModel.isExtractingStructuredSummary && viewModel.meeting.oneLiner.isEmpty {
+    private var notesStatusCard: some View {
+        if viewModel.isGeneratingNotes {
             HStack(spacing: 6) {
                 ProgressView()
                     .scaleEffect(0.65)
-                Text(langMgr.t("正在提取摘要...", "Extracting summary..."))
+                Text(langMgr.t("正在生成会议纪要...", "Generating meeting notes..."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1352,7 +1352,32 @@ struct MeetingDetailContentView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             .padding(.bottom, 8)
-        } else if !viewModel.meeting.oneLiner.isEmpty {
+        } else if viewModel.isExtractingStructuredSummary {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.green)
+                    .font(.caption)
+                Text(langMgr.t(
+                    "会议纪要已生成，正在后台提取行动摘要。",
+                    "Meeting notes are ready. Action digest is being extracted in the background."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .padding(.bottom, 8)
+        } else {
+            oneLinerCard
+        }
+    }
+
+    @ViewBuilder
+    private var oneLinerCard: some View {
+        if !viewModel.meeting.oneLiner.isEmpty {
             HStack(spacing: 6) {
                 Image(systemName: "sparkles")
                     .foregroundStyle(.secondary)
@@ -2475,8 +2500,12 @@ private struct FollowUpTaskRow: View {
             TextField(langMgr.t("补充说明", "Details"), text: $task.detail)
                 .textFieldStyle(.roundedBorder)
 
-            if !task.sourceExcerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                Text(task.sourceExcerpt)
+            let sourceExcerpt = nonDuplicateFollowUpTaskExcerpt(
+                task.sourceExcerpt,
+                comparedTo: [task.title, task.detail]
+            )
+            if !sourceExcerpt.isEmpty {
+                Text(sourceExcerpt)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
@@ -2506,6 +2535,32 @@ private struct FollowUpTaskRow: View {
         .background(Color.gray.opacity(0.06))
         .cornerRadius(8)
     }
+}
+
+private func nonDuplicateFollowUpTaskExcerpt(_ text: String, comparedTo visibleTexts: [String]) -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "" }
+
+    let normalizedText = normalizedFollowUpTaskText(trimmed)
+    let normalizedVisibleTexts = visibleTexts
+        .map { normalizedFollowUpTaskText($0) }
+        .filter { !$0.isEmpty && $0.count >= 8 }
+
+    let duplicatesVisibleText = normalizedVisibleTexts.contains { visibleText in
+        normalizedText == visibleText ||
+        normalizedText.contains(visibleText) ||
+        visibleText.contains(normalizedText)
+    }
+
+    return duplicatesVisibleText ? "" : trimmed
+}
+
+private func normalizedFollowUpTaskText(_ text: String) -> String {
+    text
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+        .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"'‘’。.!！?？"))
+        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
 }
 
 private struct BorderlessRoundedTextField: NSViewRepresentable {

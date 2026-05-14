@@ -157,11 +157,6 @@ final class ReminderManager {
             lines.append("来自会议：\(meeting.title)")
         }
 
-        let excerpt = task.sourceExcerpt.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !excerpt.isEmpty {
-            lines.append("来源片段：\(excerpt)")
-        }
-
         return lines.joined(separator: "\n")
     }
 }

@@ -1015,10 +1015,17 @@ class MeetingViewModel: ObservableObject {
         var newTasks: [MeetingFollowUpTask] = []
 
         for task in extractedTasks {
-            let key = normalizedTaskKey(for: task)
+            var sanitizedTask = task
+            sanitizedTask.sourceExcerpt = nonDuplicateSourceExcerpt(
+                sanitizedTask.sourceExcerpt,
+                title: sanitizedTask.title,
+                detail: sanitizedTask.detail
+            )
+
+            let key = normalizedTaskKey(for: sanitizedTask)
             guard !key.isEmpty, !existingKeys.contains(key) else { continue }
             existingKeys.insert(key)
-            newTasks.append(task)
+            newTasks.append(sanitizedTask)
         }
 
         meeting.followUpTasks.append(contentsOf: newTasks)
@@ -1040,7 +1047,26 @@ class MeetingViewModel: ObservableObject {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+            .trimmingCharacters(in: CharacterSet(charactersIn: "“”\"'‘’。.!！?？"))
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+    }
+
+    private func nonDuplicateSourceExcerpt(_ sourceExcerpt: String, title: String, detail: String) -> String {
+        let trimmedExcerpt = sourceExcerpt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedExcerpt.isEmpty else { return "" }
+
+        let normalizedExcerpt = normalizedTaskToken(trimmedExcerpt)
+        let relatedTexts = [title, detail]
+            .map { normalizedTaskToken($0) }
+            .filter { !$0.isEmpty && $0.count >= 8 }
+
+        let duplicatesVisibleText = relatedTexts.contains { related in
+            normalizedExcerpt == related ||
+            normalizedExcerpt.contains(related) ||
+            related.contains(normalizedExcerpt)
+        }
+
+        return duplicatesVisibleText ? "" : trimmedExcerpt
     }
 
     private func updateFollowUpTask(_ id: UUID, update: (inout MeetingFollowUpTask) -> Void) {
