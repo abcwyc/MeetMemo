@@ -706,7 +706,7 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         oldProvider.sendLastAudio()
-        oldProvider.disconnect()
+        scheduleDisconnectAfterFinalFlush(oldProvider)
 
         do {
             let timeOffset = STTSessionTimeOffset(milliseconds: elapsedRecordingMilliseconds(), isActive: true)
@@ -921,9 +921,11 @@ class AudioManager: NSObject, ObservableObject {
             micProvider?.sendLastAudio()
             systemProvider?.sendLastAudio()
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                micProvider?.disconnect()
-                systemProvider?.disconnect()
+            if let micProvider {
+                scheduleDisconnectAfterFinalFlush(micProvider)
+            }
+            if let systemProvider {
+                scheduleDisconnectAfterFinalFlush(systemProvider)
             }
         } else {
             micProvider?.disconnect()
@@ -933,6 +935,12 @@ class AudioManager: NSObject, ObservableObject {
         micSTT = nil
         systemSTT = nil
         transcriptAccumulator.removeAllInterimState()
+    }
+
+    private func scheduleDisconnectAfterFinalFlush(_ provider: STTProvider) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + finalAudioFlushDelay) {
+            provider.disconnect()
+        }
     }
 
     private func handleAudioEngineConfigurationChange() {

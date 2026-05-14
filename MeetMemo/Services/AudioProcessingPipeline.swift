@@ -86,7 +86,7 @@ final class AudioProcessingPipeline: @unchecked Sendable {
 
         let outputFrameCapacity = AVAudioFrameCount(
             max(1, Double(buffer.frameLength) * targetFormat.sampleRate / buffer.format.sampleRate)
-        )
+        ) + 32
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputFrameCapacity) else {
             return
         }
@@ -104,7 +104,8 @@ final class AudioProcessingPipeline: @unchecked Sendable {
             return buffer
         }
 
-        guard status == .haveData, error == nil else {
+        guard error == nil,
+              status == .haveData || status == .inputRanDry || status == .endOfStream else {
             return
         }
 

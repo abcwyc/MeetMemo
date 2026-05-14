@@ -39,5 +39,44 @@ final class MeetingTranscriptFormattingTests: XCTestCase {
             """
         )
     }
-}
 
+    func testTranscriptDisplayChunksAreSortedByTimeline() {
+        let meeting = Meeting(transcriptChunks: [
+            TranscriptChunk(
+                source: .mic,
+                text: "后面的内容",
+                isFinal: true,
+                speakerTag: "speaker-1",
+                startTime: 1_501_000,
+                endTime: 1_503_000
+            ),
+            TranscriptChunk(
+                source: .mic,
+                text: "开头迟到的内容",
+                isFinal: true,
+                speakerTag: "speaker-1",
+                startTime: 0,
+                endTime: 3_000
+            ),
+            TranscriptChunk(
+                source: .mic,
+                text: "中间迟到的内容",
+                isFinal: true,
+                speakerTag: "speaker-1",
+                startTime: 1_501_000,
+                endTime: 1_501_500
+            )
+        ])
+
+        XCTAssertEqual(
+            meeting.transcriptDisplayChunks.map(\.text),
+            [
+                """
+                开头迟到的内容
+                中间迟到的内容
+                后面的内容
+                """
+            ]
+        )
+    }
+}

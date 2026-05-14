@@ -197,7 +197,8 @@ struct TranscriptUpdateAccumulator {
         let shorter = lhs.count <= rhs.count ? lhs : rhs
         let longer = lhs.count <= rhs.count ? rhs : lhs
         let commonPrefix = zip(shorter, longer).prefix { $0 == $1 }.count
-        return commonPrefix >= min(shorter.count, 12)
+        let requiredPrefix = max(12, Int(ceil(Double(shorter.count) * 0.8)))
+        return commonPrefix >= min(shorter.count, requiredPrefix)
     }
 
     private static func speakersAreCompatible(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
@@ -238,17 +239,6 @@ struct TranscriptUpdateAccumulator {
     }
 
     private mutating func sortChunksByTimeline() {
-        chunks.sort { lhs, rhs in
-            switch (lhs.startTime, rhs.startTime) {
-            case let (lhsStart?, rhsStart?) where lhsStart != rhsStart:
-                return lhsStart < rhsStart
-            case (.some, nil):
-                return true
-            case (nil, .some):
-                return false
-            default:
-                return lhs.timestamp < rhs.timestamp
-            }
-        }
+        chunks = chunks.sortedByTranscriptTimeline()
     }
 }

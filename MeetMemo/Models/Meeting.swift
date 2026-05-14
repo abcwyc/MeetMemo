@@ -78,6 +78,32 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
 }
 
 extension Array where Element == TranscriptChunk {
+    func sortedByTranscriptTimeline() -> [TranscriptChunk] {
+        sorted { lhs, rhs in
+            switch (lhs.startTime, rhs.startTime) {
+            case let (lhsStart?, rhsStart?) where lhsStart != rhsStart:
+                return lhsStart < rhsStart
+            case (.some, .some):
+                switch (lhs.endTime, rhs.endTime) {
+                case let (lhsEnd?, rhsEnd?) where lhsEnd != rhsEnd:
+                    return lhsEnd < rhsEnd
+                case (.some, nil):
+                    return true
+                case (nil, .some):
+                    return false
+                default:
+                    return lhs.timestamp < rhs.timestamp
+                }
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            default:
+                return lhs.timestamp < rhs.timestamp
+            }
+        }
+    }
+
     func mergingTranscriptCorrections(
         preservingMissingFinalChunksFrom fallback: [TranscriptChunk]
     ) -> [TranscriptChunk] {
@@ -88,18 +114,7 @@ extension Array where Element == TranscriptChunk {
 
         guard !missingFinalChunks.isEmpty else { return self }
 
-        return (self + missingFinalChunks).sorted { lhs, rhs in
-            switch (lhs.startTime, rhs.startTime) {
-            case let (lhsStart?, rhsStart?) where lhsStart != rhsStart:
-                return lhsStart < rhsStart
-            case (.some, nil):
-                return true
-            case (nil, .some):
-                return false
-            default:
-                return lhs.timestamp < rhs.timestamp
-            }
-        }
+        return (self + missingFinalChunks).sortedByTranscriptTimeline()
     }
 }
 
@@ -690,6 +705,7 @@ struct Meeting: Codable, Identifiable, Hashable {
     // Computed property for backward compatibility with existing code
     var transcript: String {
         return transcriptChunks
+            .sortedByTranscriptTimeline()
             .filter { $0.isFinal }
             .map { $0.text }
             .joined(separator: " ")
@@ -730,7 +746,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         var groupedChunks: [TranscriptDisplayChunk] = []
         var currentGroup: TranscriptDisplayGroup?
 
-        for chunk in transcriptChunks {
+        for chunk in transcriptChunks.sortedByTranscriptTimeline() {
             let trimmedText = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedText.isEmpty else { continue }
 
@@ -777,7 +793,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         var currentTexts: [String] = []
         var currentTimestamp: Date?
         
-        for chunk in transcriptChunks {
+        for chunk in transcriptChunks.sortedByTranscriptTimeline() {
             if chunk.source != currentSource {
                 // Finish previous section if exists
                 if let source = currentSource, !currentTexts.isEmpty, let timestamp = currentTimestamp {
@@ -815,6 +831,7 @@ struct Meeting: Codable, Identifiable, Hashable {
     // Separate computed properties for mic and system transcripts
     var micTranscript: String {
         return transcriptChunks
+            .sortedByTranscriptTimeline()
             .filter { $0.source == .mic && $0.isFinal }
             .map { $0.text }
             .joined(separator: " ")
@@ -822,6 +839,7 @@ struct Meeting: Codable, Identifiable, Hashable {
     
     var systemTranscript: String {
         return transcriptChunks
+            .sortedByTranscriptTimeline()
             .filter { $0.source == .system && $0.isFinal }
             .map { $0.text }
             .joined(separator: " ")
@@ -831,7 +849,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         var result: [String: String] = [:]
         var nextSpeakerIndex = 0
 
-        for chunk in transcriptChunks {
+        for chunk in transcriptChunks.sortedByTranscriptTimeline() {
             guard let key = chunk.speakerIdentityKey, result[key] == nil else { continue }
             result[key] = Self.speakerLabel(for: nextSpeakerIndex)
             nextSpeakerIndex += 1
@@ -858,7 +876,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         let labelMap = buildSpeakerLabelMap()
         var sampleTextsByKey: [String: [String]] = [:]
 
-        for chunk in transcriptChunks {
+        for chunk in transcriptChunks.sortedByTranscriptTimeline() {
             guard let key = chunk.speakerIdentityKey else { continue }
             let text = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
@@ -1005,7 +1023,7 @@ struct MeetingSummary: Codable, Identifiable, Hashable {
             return String(meeting.formattedMeetingContext.trimmingCharacters(in: .whitespacesAndNewlines).prefix(160))
         }
 
-        if let transcriptPreview = meeting.transcriptChunks.first(where: {
+        if let transcriptPreview = meeting.transcriptChunks.sortedByTranscriptTimeline().first(where: {
             $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         })?.text.trimmingCharacters(in: .whitespacesAndNewlines) {
             return String(transcriptPreview.prefix(160))

@@ -197,6 +197,41 @@ final class TranscriptUpdateAccumulatorTests: XCTestCase {
         )
     }
 
+    func testSharedOpeningDoesNotMergeDistinctUtterances() {
+        var accumulator = TranscriptUpdateAccumulator()
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "我们这个问题先放一下，后面再讨论",
+                isFinal: true,
+                speakerTag: "A",
+                speakerId: 1,
+                startTime: 1_000,
+                endTime: 3_000,
+                isCorrection: false
+            ),
+            source: .mic
+        )
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "我们这个问题其实可以从另一个角度看",
+                isFinal: true,
+                speakerTag: "A",
+                speakerId: 1,
+                startTime: 4_000,
+                endTime: 6_000,
+                isCorrection: false
+            ),
+            source: .mic
+        )
+
+        XCTAssertEqual(accumulator.chunks.map(\.text), [
+            "我们这个问题先放一下，后面再讨论",
+            "我们这个问题其实可以从另一个角度看"
+        ])
+    }
+
     func testCorrectionUpdatesExistingFinalInPlace() {
         var accumulator = TranscriptUpdateAccumulator()
 

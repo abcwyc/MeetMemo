@@ -93,8 +93,11 @@ class RecordingSessionManager: ObservableObject {
     func startRecording(for meetingId: UUID, existingChunks: [TranscriptChunk] = []) {
         print("🎙️ Starting recording for meeting: \(meetingId)")
 
-        activeRecordingTranscriptChunks = existingChunks
-        audioManager.transcriptChunks = existingChunks
+        let resumableChunks = existingChunks
+            .filter(\.isFinal)
+            .sortedByTranscriptTimeline()
+        activeRecordingTranscriptChunks = resumableChunks
+        audioManager.transcriptChunks = resumableChunks
 
         activeMeetingId = meetingId
         activeRecordingStartedAt = Date()
