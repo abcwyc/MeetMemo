@@ -21,9 +21,14 @@ struct MeetingSummaryView: View {
     var body: some View {
         ScrollView {
             if !hasAnyContent && !isExtracting {
-                emptyState
+                VStack(alignment: .leading, spacing: 16) {
+                    statusSection
+                    emptyState
+                }
+                .padding()
             } else {
                 VStack(alignment: .leading, spacing: 24) {
+                    statusSection
                     headerSection
 
                     if isExtracting && meeting.oneLiner.isEmpty {
@@ -70,6 +75,27 @@ struct MeetingSummaryView: View {
     }
 
     // MARK: - Header Section (Meeting Metadata)
+
+    @ViewBuilder
+    private var statusSection: some View {
+        if let message = viewModel.structuredSummaryErrorMessage {
+            SummaryStatusBanner(
+                icon: "exclamationmark.triangle",
+                message: message,
+                tint: .red,
+                actionTitle: langMgr.t("重试", "Retry"),
+                action: { viewModel.refreshStructuredSummary() }
+            )
+        } else if viewModel.isStructuredSummaryStale {
+            SummaryStatusBanner(
+                icon: "arrow.triangle.2.circlepath",
+                message: langMgr.t("AI 纪要、转录或会议资料已变化，行动摘要可能不是最新。", "Notes, transcript, or prep changed. This digest may be out of date."),
+                tint: .orange,
+                actionTitle: langMgr.t("刷新", "Refresh"),
+                action: { viewModel.refreshStructuredSummary() }
+            )
+        }
+    }
 
     private var headerSection: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -230,7 +256,11 @@ struct MeetingSummaryView: View {
             )
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(meeting.openQuestions.enumerated()), id: \.element.id) { index, question in
-                    OpenQuestionRow(question: question, langMgr: langMgr)
+                    OpenQuestionRow(
+                        question: question,
+                        langMgr: langMgr,
+                        onCreateTask: { viewModel.addFollowUpTask(from: question) }
+                    )
                     if index < meeting.openQuestions.count - 1 {
                         Divider().padding(.leading, 36)
                     }
@@ -297,6 +327,36 @@ struct MeetingSummaryView: View {
             )
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct SummaryStatusBanner: View {
+    let icon: String
+    let message: String
+    let tint: Color
+    let actionTitle: String
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+            Text(message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+            Button(actionTitle, action: action)
+                .font(.caption.weight(.medium))
+                .buttonStyle(.bordered)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(tint.opacity(0.20), lineWidth: 1)
+        )
     }
 }
 
@@ -411,6 +471,8 @@ private struct DecisionGridCard: View {
             Spacer(minLength: 6)
 
             confidenceBadge
+
+            EvidenceText(text: decision.sourceExcerpt)
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 80, alignment: .topLeading)
@@ -478,6 +540,13 @@ private struct TaskTableSection: View {
                             Text(task.detail)
                                 .font(.caption2)
                                 .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                        }
+                        if !task.sourceExcerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text("“\(task.sourceExcerpt)”")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                                .italic()
                                 .lineLimit(1)
                         }
                     }
@@ -580,6 +649,8 @@ private struct RiskCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                EvidenceText(text: risk.sourceExcerpt)
             }
         }
         .padding(10)
@@ -617,6 +688,7 @@ private struct RiskCard: View {
 private struct OpenQuestionRow: View {
     let question: MeetingOpenQuestion
     let langMgr: LanguageManager
+    let onCreateTask: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -646,6 +718,16 @@ private struct OpenQuestionRow: View {
                         }
                     }
                 }
+
+                EvidenceText(text: question.sourceExcerpt)
+
+                Button {
+                    onCreateTask()
+                } label: {
+                    Label(langMgr.t("转为待办", "Make Task"), systemImage: "plus.circle")
+                }
+                .font(.caption)
+                .buttonStyle(.borderless)
             }
         }
         .padding(.horizontal, 12)
@@ -697,6 +779,8 @@ private struct DiscussionCard: View {
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
+
+                EvidenceText(text: discussion.sourceExcerpt)
             }
         }
         .padding(12)
@@ -750,10 +834,27 @@ private struct MilestoneRow: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                EvidenceText(text: milestone.sourceExcerpt)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+}
+
+private struct EvidenceText: View {
+    let text: String
+
+    var body: some View {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            Text("“\(trimmed)”")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .italic()
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 }
 

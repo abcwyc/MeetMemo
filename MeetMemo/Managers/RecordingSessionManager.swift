@@ -8,6 +8,8 @@ class RecordingSessionManager: ObservableObject {
     static let shared = RecordingSessionManager()
     
     @Published var isRecording = false
+    /// 点击结束录制后、await STT final flush 完成前的中间态。镜像自 AudioManager。
+    @Published var isStoppingRecording = false
     @Published var activeMeetingId: UUID?
     @Published var errorMessage: String?
     @Published var activeRecordingTranscriptChunksUpdated: [TranscriptChunk] = []
@@ -28,6 +30,12 @@ class RecordingSessionManager: ObservableObject {
     }
     
     private func setupAudioManagerBindings() {
+        audioManager.$isStoppingRecording
+            .sink { [weak self] value in
+                self?.isStoppingRecording = value
+            }
+            .store(in: &cancellables)
+
         // Bind to audio manager state
         audioManager.$isRecording
             .sink { [weak self] isRecording in

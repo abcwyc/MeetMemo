@@ -55,6 +55,7 @@ class MeetingViewModel: ObservableObject {
     @Published var isLoadingMeeting = false
     @Published var isExtractingFollowUpTasks = false
     @Published var isExtractingStructuredSummary = false
+    @Published var structuredSummaryErrorMessage: String?
     @Published var syncingFollowUpTaskIds: Set<UUID> = []
     @Published var transcriptDisplayChunks: [TranscriptDisplayChunk] = []
     @Published private var hasStartedRecordingSession = false
@@ -77,6 +78,13 @@ class MeetingViewModel: ObservableObject {
     // Computed property that always uses the direct RecordingSessionManager check
     var isRecording: Bool {
         return recordingSessionManager.isRecordingMeeting(meeting.id)
+    }
+
+    /// 用户已点结束录制，但 STT final flush 还在收尾——UI 据此显示 spinner。
+    /// 只在当前 detail 对应的活动会议上为 true，避免影响其它详情页。
+    var isStoppingRecording: Bool {
+        return recordingSessionManager.isStoppingRecording
+            && recordingSessionManager.activeMeetingId == meeting.id
     }
     @Published var selectedTab: MeetingViewTab
     @Published var aiNotesSubTab: AINotesSubTab = .notes
@@ -313,6 +321,9 @@ class MeetingViewModel: ObservableObject {
     
     var recordingButtonText: String {
         let lang = LanguageManager.shared
+        if isStoppingRecording {
+            return lang.t("处理中", "Processing")
+        }
         if isRecording {
             return lang.t("结束录制", "End Recording")
         }
@@ -351,6 +362,10 @@ class MeetingViewModel: ObservableObject {
             !meeting.diagrams.isEmpty
     }
 
+    var isStructuredSummaryStale: Bool {
+        meeting.isStructuredSummaryStale
+    }
+
     func showActionDigest() {
         selectedTab = .enhancedNotes
         aiNotesSubTab = .digest
@@ -359,6 +374,11 @@ class MeetingViewModel: ObservableObject {
 
     func extractStructuredSummaryIfNeeded() {
         guard hasGeneratedNotes, !hasStructuredSummaryContent, !isExtractingStructuredSummary else { return }
+        Task { await extractStructuredSummary() }
+    }
+
+    func refreshStructuredSummary() {
+        guard hasGeneratedNotes, !isExtractingStructuredSummary else { return }
         Task { await extractStructuredSummary() }
     }
 
@@ -381,8 +401,8 @@ class MeetingViewModel: ObservableObject {
     }
     
     func toggleRecording() {
-        // Prevent duplicate actions while validating API key or starting recording
-        if isValidatingKey || isStartingRecording { return }
+        // Prevent duplicate actions while validating API key, starting, or finalizing a stop.
+        if isValidatingKey || isStartingRecording || isStoppingRecording { return }
         // Use the same computed isRecording property for perfect consistency
         if isRecording {
             stopRecording()
@@ -732,6 +752,7 @@ class MeetingViewModel: ObservableObject {
     func extractStructuredSummary() async {
         guard !isExtractingStructuredSummary else { return }
         isExtractingStructuredSummary = true
+        structuredSummaryErrorMessage = nil
         defer { isExtractingStructuredSummary = false }
 
         do {
@@ -745,8 +766,11 @@ class MeetingViewModel: ObservableObject {
             meeting.discussions = result.discussions
             meeting.milestones = result.milestones
             meeting.diagrams = result.diagrams
+            meeting.structuredSummarySourceHash = meeting.structuredSummaryCurrentSourceHash
+            meeting.structuredSummaryGeneratedAt = Date()
             saveMeeting()
         } catch {
+            structuredSummaryErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             print("⚠️ Structured extraction failed: \(error)")
         }
     }
@@ -833,6 +857,16 @@ class MeetingViewModel: ObservableObject {
         }
     }
 
+    func populateFollowUpTasksFromStructuredSummaryIfNeeded() {
+        guard meeting.followUpTasks.isEmpty else { return }
+
+        let derivedTasks = derivedFollowUpTasksFromStructuredSummary()
+        let appendedCount = mergeExtractedFollowUpTasks(derivedTasks)
+        if appendedCount > 0 {
+            saveMeeting()
+        }
+    }
+
     func addManualFollowUpTask(title: String) {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
@@ -845,6 +879,24 @@ class MeetingViewModel: ObservableObject {
             )
         )
         saveMeeting()
+    }
+
+    func addFollowUpTask(from question: MeetingOpenQuestion) {
+        let title = question.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? question.question
+            : question.nextStep
+        var task = MeetingFollowUpTask(
+            title: title,
+            detail: question.question,
+            sourceExcerpt: question.sourceExcerpt,
+            kind: .confirmation,
+            owner: question.owner,
+            isManual: false
+        )
+        task.updatedAt = Date()
+        if mergeExtractedFollowUpTasks([task]) > 0 {
+            saveMeeting()
+        }
     }
 
     func deleteFollowUpTask(_ task: MeetingFollowUpTask) {
@@ -914,22 +966,81 @@ class MeetingViewModel: ObservableObject {
         }
     }
 
-    private func mergeExtractedFollowUpTasks(_ extractedTasks: [MeetingFollowUpTask]) {
-        var existingKeys = Set(meeting.followUpTasks.map { normalizedTaskKey($0.title) })
+    private func derivedFollowUpTasksFromStructuredSummary() -> [MeetingFollowUpTask] {
+        let questionTasks = meeting.openQuestions.map { question in
+            MeetingFollowUpTask(
+                title: question.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? question.question
+                    : question.nextStep,
+                detail: question.question,
+                sourceExcerpt: question.sourceExcerpt,
+                kind: .confirmation,
+                owner: question.owner,
+                isManual: false
+            )
+        }
+
+        let milestoneTasks = meeting.milestones.map { milestone in
+            let title = milestone.targetDate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? milestone.title
+                : "\(milestone.title)（\(milestone.targetDate)）"
+            return MeetingFollowUpTask(
+                title: title,
+                detail: milestone.milestoneDescription,
+                sourceExcerpt: milestone.sourceExcerpt,
+                kind: .actionItem,
+                isManual: false
+            )
+        }
+
+        let decisionTasks = meeting.decisions.map { decision in
+            MeetingFollowUpTask(
+                title: "落实决策：\(decision.title)",
+                detail: decision.reason,
+                sourceExcerpt: decision.sourceExcerpt,
+                kind: .followUp,
+                owner: decision.owner,
+                isManual: false
+            )
+        }
+
+        return (questionTasks + milestoneTasks + decisionTasks).filter {
+            !$0.trimmedTitle.isEmpty
+        }
+    }
+
+    @discardableResult
+    private func mergeExtractedFollowUpTasks(_ extractedTasks: [MeetingFollowUpTask]) -> Int {
+        var existingKeys = Set(meeting.followUpTasks.map { normalizedTaskKey(for: $0) })
         var newTasks: [MeetingFollowUpTask] = []
 
         for task in extractedTasks {
-            let key = normalizedTaskKey(task.title)
+            let key = normalizedTaskKey(for: task)
             guard !key.isEmpty, !existingKeys.contains(key) else { continue }
             existingKeys.insert(key)
             newTasks.append(task)
         }
 
         meeting.followUpTasks.append(contentsOf: newTasks)
+        return newTasks.count
     }
 
-    private func normalizedTaskKey(_ title: String) -> String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private func normalizedTaskKey(for task: MeetingFollowUpTask) -> String {
+        [
+            task.title,
+            task.owner,
+            task.sourceExcerpt
+        ]
+        .map { normalizedTaskToken($0) }
+        .filter { !$0.isEmpty }
+        .joined(separator: "|")
+    }
+
+    private func normalizedTaskToken(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
     }
 
     private func updateFollowUpTask(_ id: UUID, update: (inout MeetingFollowUpTask) -> Void) {

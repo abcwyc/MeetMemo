@@ -1088,8 +1088,14 @@ struct MeetingDetailContentView: View {
             viewModel.toggleRecording()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: viewModel.recordingButtonIconName)
-                    .foregroundColor(viewModel.isRecording ? .red : .accentColor)
+                if viewModel.isStoppingRecording {
+                    ProgressView()
+                        .controlSize(.small)
+                        .progressViewStyle(.circular)
+                } else {
+                    Image(systemName: viewModel.recordingButtonIconName)
+                        .foregroundColor(viewModel.isRecording ? .red : .accentColor)
+                }
 
                 if !usesCompactToolbarActions {
                     Text(viewModel.recordingButtonText)
@@ -1119,7 +1125,7 @@ struct MeetingDetailContentView: View {
         }
         .buttonStyle(.plain)
         .onHover { isRecordingButtonHovered = $0 }
-        .disabled(cannotStartRecording || viewModel.isValidatingKey || viewModel.isStartingRecording)
+        .disabled(cannotStartRecording || viewModel.isValidatingKey || viewModel.isStartingRecording || viewModel.isStoppingRecording)
         .help(cannotStartRecording
             ? langMgr.t("另一个会议正在录制中", "Another meeting is currently being recorded")
             : langMgr.t("开始、继续或结束本次会议的录制", "Start, resume, or end recording for this meeting"))
@@ -2149,10 +2155,7 @@ private struct FollowUpTasksSheet: View {
         .task {
             await loadReminderLists()
             await viewModel.refreshReminderLinks()
-            if viewModel.meeting.followUpTasks.isEmpty &&
-                !viewModel.meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                await viewModel.extractFollowUpTasks()
-            }
+            viewModel.populateFollowUpTasksFromStructuredSummaryIfNeeded()
         }
     }
 
@@ -2215,7 +2218,8 @@ private struct FollowUpTasksSheet: View {
     private var hasStructuredContent: Bool {
         !viewModel.meeting.decisions.isEmpty ||
         !viewModel.meeting.risks.isEmpty ||
-        !viewModel.meeting.openQuestions.isEmpty
+        !viewModel.meeting.openQuestions.isEmpty ||
+        !viewModel.meeting.milestones.isEmpty
     }
 
     private var taskList: some View {
@@ -2669,6 +2673,13 @@ private struct RiskRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if !risk.sourceExcerpt.isEmpty {
+                Text("\u{201C}\(risk.sourceExcerpt)\u{201D}")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .italic()
+                    .lineLimit(2)
+            }
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -2708,6 +2719,13 @@ private struct OpenQuestionRow: View {
                 Text(langMgr.t("下一步：\(question.nextStep)", "Next: \(question.nextStep)"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if !question.sourceExcerpt.isEmpty {
+                Text("\u{201C}\(question.sourceExcerpt)\u{201D}")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .italic()
+                    .lineLimit(2)
             }
         }
         .padding(8)

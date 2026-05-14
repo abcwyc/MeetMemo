@@ -268,6 +268,7 @@ struct MeetingHTMLExporter {
                 html += "        <span class=\"consensus-label\">达成共识：</span>\(d.consensus.esc)\n"
                 html += "      </div>\n"
             }
+            html += evidenceLine(d.sourceExcerpt)
             html += "    </div>\n"
             html += "  </div>\n"
         }
@@ -289,6 +290,7 @@ struct MeetingHTMLExporter {
             }
             html += "      <p class=\"dg-title\">\(d.title.esc)</p>\n"
             html += "      <p class=\"dg-badge\" style=\"color:\(badgeColor)\">\(isApproved ? "✓ " : "")\(badgeText)</p>\n"
+            html += evidenceLine(d.sourceExcerpt)
             html += "    </div>\n"
         }
         html += "  </div>\n"
@@ -318,6 +320,9 @@ struct MeetingHTMLExporter {
                 html += "        <td>\(task.title.esc)"
                 if !task.detail.isEmpty {
                     html += "<br><span class=\"task-detail\">\(task.detail.esc)</span>"
+                }
+                if !task.sourceExcerpt.isEmpty {
+                    html += "<br><span class=\"evidence\">“\(task.sourceExcerpt.esc)”</span>"
                 }
                 html += "</td>\n"
                 if task.owner.isEmpty {
@@ -350,6 +355,7 @@ struct MeetingHTMLExporter {
             if !r.owner.isEmpty {
                 html += "      <p class=\"card-meta\">负责：\(r.owner.esc)</p>\n"
             }
+            html += evidenceLine(r.sourceExcerpt)
             html += "    </div>\n"
             html += "  </div>\n"
         }
@@ -373,6 +379,7 @@ struct MeetingHTMLExporter {
                 if !q.nextStep.isEmpty { html += "→ \(q.nextStep.esc)" }
                 html += "</p>\n"
             }
+            html += evidenceLine(q.sourceExcerpt)
             html += "      </div>\n"
             html += "    </div>\n"
         }
@@ -398,6 +405,7 @@ struct MeetingHTMLExporter {
             if !m.milestoneDescription.isEmpty {
                 html += "        <p class=\"milestone-desc\">\(m.milestoneDescription.esc)</p>\n"
             }
+            html += evidenceLine(m.sourceExcerpt)
             html += "      </div>\n"
             html += "    </div>\n"
         }
@@ -414,6 +422,11 @@ struct MeetingHTMLExporter {
         html += "  </div>\n"
         html += "</section>\n"
         return html
+    }
+
+    private static func evidenceLine(_ text: String) -> String {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "" }
+        return "      <p class=\"evidence\">“\(text.esc)”</p>\n"
     }
 
     // MARK: - Markdown → HTML
@@ -691,6 +704,7 @@ struct MeetingHTMLExporter {
       .task-table th { text-align: left; font-size: 0.75rem; color: #888; font-weight: 600; padding: 6px 10px; background: #f4f4f4; }
       .task-table td { padding: 8px 10px; border-top: 1px solid #ebebeb; vertical-align: top; color: #1a1a1a; }
       .task-detail { font-size: 0.78rem; color: #aaa; }
+      .evidence { font-size: 0.76rem; color: #aaa; font-style: italic; margin: 4px 0 0; }
       .task-owner { font-size: 0.78rem; font-weight: 500; color: #2563eb; background: rgba(37,99,235,0.1); border-radius: 100px; padding: 2px 7px; }
       .task-owner-empty { color: #ccc; }
       .task-due { font-size: 0.82rem; color: #666; white-space: nowrap; }
@@ -794,7 +808,7 @@ struct MeetingHTMLExporter {
         .dg-category { color: #636366; }
         .task-table th { background: #2c2c2e; color: #636366; }
         .task-table td { color: #e5e5e7; border-top-color: #3a3a3c; }
-        .task-detail { color: #636366; }
+        .task-detail, .evidence { color: #636366; }
         .task-due { color: #8e8e93; }
         .question-list { background: #242426; border-color: #3a3a3c; }
         .question-row { border-bottom-color: #3a3a3c; }

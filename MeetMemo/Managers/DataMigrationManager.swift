@@ -65,6 +65,12 @@ class DataMigrationManager {
             migratedMeeting.dataVersion = 7
         }
 
+        if migratedMeeting.dataVersion < 8 {
+            migratedMeeting.structuredSummarySourceHash = ""
+            migratedMeeting.structuredSummaryGeneratedAt = nil
+            migratedMeeting.dataVersion = 8
+        }
+
         if migratedMeeting.dataVersion < Meeting.currentDataVersion {
             print("⚠️ No migration path for versions \(migratedMeeting.dataVersion + 1)...\(Meeting.currentDataVersion)")
             return nil

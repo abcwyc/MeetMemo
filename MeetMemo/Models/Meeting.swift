@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum AudioSource: String, Codable, CaseIterable {
@@ -281,6 +282,7 @@ struct MeetingRisk: Codable, Identifiable, Hashable {
     var severity: String    // "high" | "medium" | "low"
     var mitigation: String
     var owner: String
+    var sourceExcerpt: String
     var createdAt: Date
 
     init(
@@ -289,6 +291,7 @@ struct MeetingRisk: Codable, Identifiable, Hashable {
         severity: String = "medium",
         mitigation: String = "",
         owner: String = "",
+        sourceExcerpt: String = "",
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -296,7 +299,23 @@ struct MeetingRisk: Codable, Identifiable, Hashable {
         self.severity = severity
         self.mitigation = mitigation
         self.owner = owner
+        self.sourceExcerpt = sourceExcerpt
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, severity, mitigation, owner, sourceExcerpt, createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        severity = try c.decodeIfPresent(String.self, forKey: .severity) ?? "medium"
+        mitigation = try c.decodeIfPresent(String.self, forKey: .mitigation) ?? ""
+        owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        sourceExcerpt = try c.decodeIfPresent(String.self, forKey: .sourceExcerpt) ?? ""
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 
@@ -305,6 +324,7 @@ struct MeetingOpenQuestion: Codable, Identifiable, Hashable {
     var question: String
     var owner: String
     var nextStep: String
+    var sourceExcerpt: String
     var createdAt: Date
 
     init(
@@ -312,13 +332,29 @@ struct MeetingOpenQuestion: Codable, Identifiable, Hashable {
         question: String,
         owner: String = "",
         nextStep: String = "",
+        sourceExcerpt: String = "",
         createdAt: Date = Date()
     ) {
         self.id = id
         self.question = question
         self.owner = owner
         self.nextStep = nextStep
+        self.sourceExcerpt = sourceExcerpt
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, question, owner, nextStep, sourceExcerpt, createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        question = try c.decodeIfPresent(String.self, forKey: .question) ?? ""
+        owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
+        nextStep = try c.decodeIfPresent(String.self, forKey: .nextStep) ?? ""
+        sourceExcerpt = try c.decodeIfPresent(String.self, forKey: .sourceExcerpt) ?? ""
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 
@@ -327,6 +363,7 @@ struct MeetingMilestone: Codable, Identifiable, Hashable {
     var title: String
     var milestoneDescription: String
     var targetDate: String
+    var sourceExcerpt: String
     var createdAt: Date
 
     init(
@@ -334,13 +371,29 @@ struct MeetingMilestone: Codable, Identifiable, Hashable {
         title: String,
         milestoneDescription: String = "",
         targetDate: String = "",
+        sourceExcerpt: String = "",
         createdAt: Date = Date()
     ) {
         self.id = id
         self.title = title
         self.milestoneDescription = milestoneDescription
         self.targetDate = targetDate
+        self.sourceExcerpt = sourceExcerpt
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, milestoneDescription, targetDate, sourceExcerpt, createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        milestoneDescription = try c.decodeIfPresent(String.self, forKey: .milestoneDescription) ?? ""
+        targetDate = try c.decodeIfPresent(String.self, forKey: .targetDate) ?? ""
+        sourceExcerpt = try c.decodeIfPresent(String.self, forKey: .sourceExcerpt) ?? ""
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 
@@ -350,6 +403,7 @@ struct MeetingDiscussion: Codable, Identifiable, Hashable {
     var summary: String
     var consensus: String
     var hasConsensus: Bool
+    var sourceExcerpt: String
     var createdAt: Date
 
     init(
@@ -358,6 +412,7 @@ struct MeetingDiscussion: Codable, Identifiable, Hashable {
         summary: String = "",
         consensus: String = "",
         hasConsensus: Bool = false,
+        sourceExcerpt: String = "",
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -365,7 +420,23 @@ struct MeetingDiscussion: Codable, Identifiable, Hashable {
         self.summary = summary
         self.consensus = consensus
         self.hasConsensus = hasConsensus
+        self.sourceExcerpt = sourceExcerpt
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, summary, consensus, hasConsensus, sourceExcerpt, createdAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        summary = try c.decodeIfPresent(String.self, forKey: .summary) ?? ""
+        consensus = try c.decodeIfPresent(String.self, forKey: .consensus) ?? ""
+        hasConsensus = try c.decodeIfPresent(Bool.self, forKey: .hasConsensus) ?? false
+        sourceExcerpt = try c.decodeIfPresent(String.self, forKey: .sourceExcerpt) ?? ""
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
     }
 }
 
@@ -544,11 +615,13 @@ struct Meeting: Codable, Identifiable, Hashable {
     var host: String
     var location: String
     var diagrams: [MeetingDiagram]
+    var structuredSummarySourceHash: String
+    var structuredSummaryGeneratedAt: Date?
     // MARK: - Data versioning
     /// Version of this Meeting record on disk. Useful for migration.
     var dataVersion: Int
     /// Current app data version. Increment whenever you make a breaking change to `Meeting` that requires migration.
-    static let currentDataVersion = 7
+    static let currentDataVersion = 8
 
     init(id: UUID = UUID(),
          date: Date = Date(),
@@ -570,6 +643,8 @@ struct Meeting: Codable, Identifiable, Hashable {
          host: String = "",
          location: String = "",
          diagrams: [MeetingDiagram] = [],
+         structuredSummarySourceHash: String = "",
+         structuredSummaryGeneratedAt: Date? = nil,
          dataVersion: Int = Meeting.currentDataVersion) {
         self.id = id
         self.date = date
@@ -591,6 +666,8 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.host = host
         self.location = location
         self.diagrams = diagrams
+        self.structuredSummarySourceHash = structuredSummarySourceHash
+        self.structuredSummaryGeneratedAt = structuredSummaryGeneratedAt
         self.dataVersion = dataVersion
     }
 
@@ -615,6 +692,8 @@ struct Meeting: Codable, Identifiable, Hashable {
         case host
         case location
         case diagrams
+        case structuredSummarySourceHash
+        case structuredSummaryGeneratedAt
         case dataVersion
     }
 
@@ -645,7 +724,24 @@ struct Meeting: Codable, Identifiable, Hashable {
         host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
         location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
         diagrams = try container.decodeIfPresent([MeetingDiagram].self, forKey: .diagrams) ?? []
+        structuredSummarySourceHash = try container.decodeIfPresent(String.self, forKey: .structuredSummarySourceHash) ?? ""
+        structuredSummaryGeneratedAt = try container.decodeIfPresent(Date.self, forKey: .structuredSummaryGeneratedAt)
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
+    }
+
+    var structuredSummaryCurrentSourceHash: String {
+        let sourceText = [
+            generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines),
+            formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines),
+            formattedMeetingContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        ].joined(separator: "\n\n---\n\n")
+        let digest = SHA256.hash(data: Data(sourceText.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    var isStructuredSummaryStale: Bool {
+        !structuredSummarySourceHash.isEmpty &&
+        structuredSummarySourceHash != structuredSummaryCurrentSourceHash
     }
 
     var hasMeetingContext: Bool {

@@ -13,6 +13,9 @@ class AudioManager: NSObject, ObservableObject {
 
     @Published var transcriptChunks: [TranscriptChunk] = []
     @Published var isRecording = false
+    /// 用户点击结束录制后、await STT final flush 完成前的中间态。
+    /// 用于在 UI 上显示"处理中"指示，避免按钮看上去卡了几秒。
+    @Published var isStoppingRecording: Bool = false
     @Published var errorMessage: String?
     @Published var micAudioLevel: Float = 0.0
     @Published var systemAudioLevel: Float = 0.0
@@ -33,7 +36,6 @@ class AudioManager: NSObject, ObservableObject {
     private var recordingStartedAt: Date?
     private var recordingBaseOffsetMilliseconds = 0
     private var recordingStateMachine = AudioRecordingStateMachine()
-    private var isStoppingRecording: Bool { recordingStateMachine.state.isStopping }
 
     // Unique identifier for the current recording session
     private var sessionID = UUID()
@@ -145,6 +147,7 @@ class AudioManager: NSObject, ObservableObject {
         stopAudioPipelines()
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
+        isStoppingRecording = true
         sessionID = UUID()
         isRecording = false
         recordingStartedAt = nil
@@ -164,6 +167,7 @@ class AudioManager: NSObject, ObservableObject {
         disconnectSTTProviders(sendLastAudio: false)
         transcriptAccumulator.removeAllInterimState()
         recordingStateMachine.reset()
+        isStoppingRecording = false
 
         print("Internal cleanup completed")
     }
@@ -503,6 +507,9 @@ class AudioManager: NSObject, ObservableObject {
         sttRecoveryTasks.removeAll()
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
+        // 标记为"处理中"——isRecording 仍为 true，UI 可据此显示 spinner，
+        // 不影响内部 isRecording 检查（任何 stop-aware 路径仍读 isStoppingRecording）。
+        isStoppingRecording = true
         print("Stopping recording...")
 
         micAudioLevel = 0.0
@@ -550,6 +557,7 @@ class AudioManager: NSObject, ObservableObject {
             self.transcriptAccumulator.removeAllInterimState()
             self.recordingStateMachine.reset()
             self.isRecording = self.recordingStateMachine.state.isRecordingVisible
+            self.isStoppingRecording = false
             self.recordingStartedAt = nil
             self.recordingBaseOffsetMilliseconds = 0
             AudioLevelManager.shared.updateRecordingState(false)
