@@ -14,7 +14,7 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
     private let endpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
     private let resourceId = "volc.seedasr.sauc.duration"
     private let maximumWebSocketMessageSize = 64 * 1024 * 1024
-    private let maximumPendingAudioBytes = 2 * 1024 * 1024
+    private let maximumPendingAudioBytes = 10 * 1024 * 1024
     private let stateLock = NSLock()
     private let utteranceTrackerLock = NSLock()
     private let callbackLock = NSLock()

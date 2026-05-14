@@ -13,12 +13,19 @@ struct TranscriptUpdateAccumulator {
     private var interimStates: [String: InterimTranscriptState] = [:]
     private var latestInterimKeyBySource: [AudioSource: String] = [:]
 
+    /// 记录是否已经有序，避免不必要的排序
+    private var isSorted: Bool = true
+
     init(chunks: [TranscriptChunk] = []) {
-        self.chunks = chunks
+        // 初始化时先排序
+        self.chunks = chunks.sortedByTranscriptTimeline()
+        isSorted = true
     }
 
     mutating func reset(chunks: [TranscriptChunk] = []) {
-        self.chunks = chunks
+        // 重置时先排序
+        self.chunks = chunks.sortedByTranscriptTimeline()
+        isSorted = true
         interimStates.removeAll()
         latestInterimKeyBySource.removeAll()
     }
@@ -35,6 +42,7 @@ struct TranscriptUpdateAccumulator {
 
     mutating func apply(_ update: STTTranscriptUpdate, source: AudioSource) {
         let resolvedUpdate = resolved(update, source: source)
+        isSorted = false // 任何修改都会导致数组可能无序
 
         if update.isCorrection,
            let finalIndex = matchingChunkIndex(for: resolvedUpdate, source: source, isFinal: true) {
@@ -239,6 +247,10 @@ struct TranscriptUpdateAccumulator {
     }
 
     private mutating func sortChunksByTimeline() {
+        // 只有在需要时才排序，避免不必要的性能开销
+        guard !isSorted else { return }
+
         chunks = chunks.sortedByTranscriptTimeline()
+        isSorted = true
     }
 }
