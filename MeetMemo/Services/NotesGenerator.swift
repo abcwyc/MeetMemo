@@ -125,18 +125,36 @@ final class NotesGenerator {
         }
     }
 
-    /// Generates a concise meeting title from the transcript using the configured LLM.
-    /// Returns nil if the title cannot be generated (e.g. empty transcript or provider not configured).
+    /// Generates a concise meeting title from the generated notes when available,
+    /// falling back to the transcript before notes exist.
+    /// Returns nil if the title cannot be generated (e.g. empty source content or provider not configured).
     func generateTitle(meeting: Meeting) async -> String? {
         let config = APIKeyValidator.shared.currentLLMConfig()
         guard config.isConfigured else { return nil }
 
+        let generatedNotes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         let transcript = meeting.formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !transcript.isEmpty else { return nil }
+        let sourceContent = generatedNotes.isEmpty ? transcript : generatedNotes
+        guard !sourceContent.isEmpty else { return nil }
 
-        let truncated = String(transcript.prefix(3000))
+        let truncated = String(sourceContent.prefix(6000))
         let messages = [
-            ChatMessage(role: "system", content: "根据以下会议记录，生成一个简洁的中文会议标题（不超过20个字）。只输出标题本身，不要引号、标点或其他任何内容。"),
+            ChatMessage(
+                role: "system",
+                content: """
+根据以下会议内容生成一个中文会议标题。
+
+目标：让人一眼看出这场会议的主体是什么，而不只是知道它是一场“讨论”或“沟通”。
+
+要求：
+- 优先突出会议主体，例如具体项目、产品、客户、功能、方案、事件或问题。
+- 尽量使用“主体 + 核心议题/动作”的结构，例如“行动摘要生成方案评审”“新版转写链路上线排期”。
+- 避免只输出“项目沟通会”“需求讨论会”“周会纪要”这类泛化标题。
+- 如果存在多个议题，选择影响最大、结论最明确或占比最高的主线。
+- 标题控制在 12 到 24 个汉字之间，必要时可略短，但不要为了简短牺牲主体信息。
+- 只输出标题本身，不要引号、标点或其他任何内容。
+"""
+            ),
             ChatMessage(role: "user", content: truncated)
         ]
 

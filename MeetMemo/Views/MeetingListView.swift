@@ -1372,26 +1372,27 @@ struct MeetingDetailContentView: View {
             .background(Color.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
             .padding(.bottom, 8)
         } else {
-            oneLinerCard
+            meetingSummaryCard
         }
     }
 
     @ViewBuilder
-    private var oneLinerCard: some View {
+    private var meetingSummaryCard: some View {
         if !viewModel.meeting.oneLiner.isEmpty {
-            HStack(spacing: 6) {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
+            HStack {
                 Text(viewModel.meeting.oneLiner)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .italic()
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
                 Spacer()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.gray.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Color.gray.opacity(0.12), lineWidth: 1)
+            )
             .padding(.bottom, 8)
         }
     }

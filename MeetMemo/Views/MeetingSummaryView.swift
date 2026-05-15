@@ -31,10 +31,6 @@ struct MeetingSummaryView: View {
                     statusSection
                     headerSection
 
-                    if isExtracting && !hasAnyContent {
-                        extractingIndicator
-                    }
-
                     if !meeting.discussions.isEmpty {
                         discussionsSection
                     }
@@ -163,17 +159,6 @@ struct MeetingSummaryView: View {
                 .frame(width: 14)
             Text(text)
                 .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    // MARK: - Extracting Indicator
-
-    private var extractingIndicator: some View {
-        HStack(spacing: 8) {
-            ProgressView().scaleEffect(0.7)
-            Text(langMgr.t("正在分析转录原文...", "Analyzing transcript..."))
-                .font(.subheadline)
                 .foregroundStyle(.secondary)
         }
     }
