@@ -171,6 +171,8 @@ class MeetingListViewModel: ObservableObject {
                     self?.audioImportProgress = progress
                 }
             }
+            try Task.checkCancellation()
+
             let title = url.deletingPathExtension().lastPathComponent
             let meeting = Meeting(
                 title: title.isEmpty ? LanguageManager.shared.t("导入的会议", "Imported Meeting") : title,

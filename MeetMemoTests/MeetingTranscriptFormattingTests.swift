@@ -38,6 +38,15 @@ final class MeetingTranscriptFormattingTests: XCTestCase {
             online · 发言人 B · 00:03 - 00:04: 对方回复
             """
         )
+
+        XCTAssertEqual(
+            meeting.compactTranscript,
+            """
+            发言人 A: 第一句
+            第二句
+            发言人 B: 对方回复
+            """
+        )
     }
 
     func testDisplayGroupingSplitsSameSpeakerAfterLongGap() {

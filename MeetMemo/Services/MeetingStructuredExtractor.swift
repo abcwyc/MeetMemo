@@ -4,6 +4,7 @@ enum StructuredExtractionError: LocalizedError {
     case missingNotes
     case llmNotConfigured
     case invalidResponse
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -13,6 +14,8 @@ enum StructuredExtractionError: LocalizedError {
             return "LLM 服务尚未配置，无法提取结构化摘要。"
         case .invalidResponse:
             return "结构化摘要提取结果格式不正确，请稍后重试。"
+        case .timedOut:
+            return "结构化摘要提取超时，请稍后重试。"
         }
     }
 }
@@ -26,7 +29,6 @@ struct StructuredSummaryResult {
     let openQuestions: [MeetingOpenQuestion]
     let discussions: [MeetingDiscussion]
     let milestones: [MeetingMilestone]
-    let diagrams: [MeetingDiagram]
 }
 
 final class MeetingStructuredExtractor {
@@ -38,8 +40,12 @@ final class MeetingStructuredExtractor {
         self.client = client
     }
 
-    func extract(from meeting: Meeting) async throws -> StructuredSummaryResult {
-        let transcript = meeting.formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Default per-call timeout. Structured extraction returns a short JSON payload, so 60s
+    /// is generous; mainly guards against a hung connection.
+    static let defaultTimeout: TimeInterval = 60
+
+    func extract(from meeting: Meeting, timeout: TimeInterval = defaultTimeout) async throws -> StructuredSummaryResult {
+        let transcript = meeting.compactTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !transcript.isEmpty else {
             throw StructuredExtractionError.missingNotes
         }
@@ -56,16 +62,43 @@ final class MeetingStructuredExtractor {
 
         let messages = [
             ChatMessage(role: "system", content: Self.systemPrompt),
-            ChatMessage(role: "user", content: Self.userPrompt(meeting: meeting, transcript: transcript))
+            ChatMessage(
+                role: "user",
+                content: Self.userPrompt(
+                    meeting: meeting,
+                    generatedNotes: meeting.generatedNotes,
+                    transcript: transcript
+                )
+            )
         ]
 
-        var response = ""
-        let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)
-        for try await chunk in stream {
-            response += chunk
-        }
+        let client = self.client
+        return try await withThrowingTaskGroup(of: StructuredSummaryResult.self) { group in
+            group.addTask {
+                var response = ""
+                let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)
+                for try await chunk in stream {
+                    try Task.checkCancellation()
+                    response += chunk
+                }
+                return try Self.decodeResult(from: response)
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw StructuredExtractionError.timedOut
+            }
 
-        return try Self.decodeResult(from: response)
+            do {
+                guard let result = try await group.next() else {
+                    throw StructuredExtractionError.invalidResponse
+                }
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                throw error
+            }
+        }
     }
 
     private static let systemPrompt = """
@@ -119,26 +152,11 @@ JSON 必须是如下对象结构：
       "target_date": "目标时间，直接使用原文表述如'5月底'、'下周五'，没有则为空字符串",
       "source_excerpt": "会议转录原文中支持该里程碑的相关原文短句，不超过80字，没有则为空字符串"
     }
-  ],
-  "diagrams": [
-    {
-      "title": "图示标题",
-      "diagram_type": "timeline 或 flow 或 comparison 或 matrix 或 categories",
-      "items": [
-        {
-          "title": "节点/阶段/任务名称",
-          "detail": "补充说明，没有则为空字符串",
-          "date": "时间或阶段，没有则为空字符串",
-          "owner": "负责人，没有则为空字符串",
-          "status": "info 或 success 或 warning 或 danger 或 purple"
-        }
-      ]
-    }
   ]
 }
 
 提取规则：
-- discussions：提取会议中实质讨论过的主要议题（3-6 条）。summary 侧重「讨论了什么、有何分歧或不同观点」，consensus 侧重「最终达成了什么共识或结论」。has_consensus 为 true 时 consensus 不能为空。纯粹的信息汇报或结论宣布不视为议题讨论。若无法区分具体议题，返回空数组 []。
+- discussions：只提取会议中最重要的实质议题（0-3 条）。summary 侧重「讨论了什么、有何分歧或不同观点」，consensus 侧重「最终达成了什么共识或结论」。has_consensus 为 true 时 consensus 不能为空。纯粹的信息汇报或结论宣布不视为议题讨论。若无法区分具体议题，返回空数组 []。
 - milestones：提取会议中提及的具体交付节点或上线计划（通常有时间节点）。与 decisions 的区别在于 milestones 侧重「交付时间线」，decisions 侧重「方向选择」。没有明确时间节点的目标不算里程碑。若无里程碑信息，返回空数组 []。
 - decisions：只提取会议中明确达成、被多方认可的决策。不要把"建议"、"想法"、"讨论方向"误判为已确认决策。confidence 为 low 时表示你对该决策的判断不确定。
 - risks：提取会议中明确提及的风险、阻塞项、潜在问题。
@@ -147,32 +165,22 @@ JSON 必须是如下对象结构：
 - one_liner 必须存在，不能为空字符串，控制在30到50个汉字左右。
 - one_liner 要帮助读者快速回忆这次会议讨论了什么；优先写清核心议题，并尽量补充最关键的决策、结论或待办，不要只写成标题式短语。
 - host 和 location 若无法从转录原文中判断，返回空字符串。
+- 「AI 会议纪要」只用于帮助定位重点，不可作为事实依据。
 - 只能使用「会议转录原文」作为事实依据。不要参考 AI 纪要、会议资料或其他外部信息。
 - source_excerpt 必须摘自会议转录原文。不要为无依据的信息编造 source_excerpt。
-
-【图示生成规则 diagrams】
-
-仅当会议涉及明确的流程变更、时间线、责任分工或结构对比时生成，最多 2 个。若内容不适合可视化，返回空数组 []。
-
-请根据会议内容选择最合适的图示类型：
-- timeline：多个里程碑/阶段
-- flow：单向流程或决策链路
-- comparison：优化前后、方案对比
-- matrix：多人责任分工或任务矩阵
-- categories：分类归纳
-
-图示质量要求：
-- 所有节点/单元格内容必须来自本次会议的真实信息，不得使用示例文字或占位符
-- 不输出 HTML、CSS、Markdown 或 JavaScript。只输出上述 diagram_type + items 结构。
-- items 控制在 3-8 项，内容紧凑，不要填充空泛节点。
 """
 
-    private static func userPrompt(meeting: Meeting, transcript: String) -> String {
-        """
+    private static func userPrompt(meeting: Meeting, generatedNotes: String, transcript: String) -> String {
+        let trimmedNotes = generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return """
 会议标题：\(meeting.title.isEmpty ? "未命名会议" : meeting.title)
 会议日期：\(meeting.date.formatted(date: .long, time: .shortened))
 
-会议转录原文（唯一事实依据）：
+AI 会议纪要（仅用于快速定位重点，不可作为事实依据）：
+\(trimmedNotes.isEmpty ? "无" : trimmedNotes)
+
+会议转录原文（唯一事实依据，已省略时间戳和音源标签）：
 \(transcript)
 """
     }
@@ -253,13 +261,6 @@ JSON 必须是如下对象结构：
             )
         } ?? []
 
-        let diagrams = raw.diagrams?.compactMap { item -> MeetingDiagram? in
-            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            let html = HTMLSanitizer.sanitizeDiagramHTML(renderDiagramHTML(item))
-            guard !title.isEmpty, !html.isEmpty else { return nil }
-            return MeetingDiagram(title: title, htmlContent: html)
-        } ?? []
-
         return StructuredSummaryResult(
             oneLiner: raw.one_liner.trimmingCharacters(in: .whitespacesAndNewlines),
             host: (raw.host ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
@@ -268,8 +269,7 @@ JSON 必须是如下对象结构：
             risks: risks,
             openQuestions: openQuestions,
             discussions: discussions,
-            milestones: milestones,
-            diagrams: diagrams
+            milestones: milestones
         )
     }
 
@@ -292,107 +292,6 @@ JSON 必须是如下对象结构：
         return String(cleaned[start...end])
     }
 
-    private static func renderDiagramHTML(_ diagram: RawDiagram) -> String {
-        if let legacyHTML = diagram.html?.trimmingCharacters(in: .whitespacesAndNewlines), !legacyHTML.isEmpty {
-            return legacyHTML
-        }
-
-        let items = (diagram.items ?? []).filter { !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard !items.isEmpty else { return "" }
-
-        switch diagram.diagram_type ?? "" {
-        case "timeline":
-            return renderTimeline(items)
-        case "flow":
-            return renderFlow(items)
-        default:
-            return renderCards(items)
-        }
-    }
-
-    private static func renderTimeline(_ items: [RawDiagramItem]) -> String {
-        var html = "<div class=\"timeline\">"
-        for item in items {
-            html += "<div class=\"timeline-item\">"
-            html += "<span class=\"timeline-dot \(dotClass(for: item.status))\"></span>"
-            html += "<div class=\"card\">"
-            html += "<div style=\"display:flex;gap:8px;justify-content:space-between;align-items:start;\">"
-            html += "<strong>\(item.title.escapedHTML)</strong>"
-            if !item.date.isEmpty {
-                html += "<span class=\"badge \(badgeClass(for: item.status))\">\(item.date.escapedHTML)</span>"
-            }
-            html += "</div>"
-            html += diagramDetailHTML(item)
-            html += "</div></div>"
-        }
-        html += "</div>"
-        return html
-    }
-
-    private static func renderFlow(_ items: [RawDiagramItem]) -> String {
-        var html = "<div class=\"flow\">"
-        for (index, item) in items.enumerated() {
-            html += "<div class=\"flow-node\">"
-            html += "<strong>\(item.title.escapedHTML)</strong>"
-            html += diagramDetailHTML(item)
-            html += "</div>"
-            if index < items.count - 1 {
-                html += "<div class=\"flow-arrow\">↓</div>"
-            }
-        }
-        html += "</div>"
-        return html
-    }
-
-    private static func renderCards(_ items: [RawDiagramItem]) -> String {
-        let gridClass = items.count <= 2 ? "grid-2" : (items.count == 3 ? "grid-3" : "grid-auto")
-        var html = "<div class=\"\(gridClass)\">"
-        for item in items {
-            html += "<div class=\"card\">"
-            html += "<div class=\"label\">\(labelText(for: item).escapedHTML)</div>"
-            html += "<strong>\(item.title.escapedHTML)</strong>"
-            html += diagramDetailHTML(item)
-            html += "</div>"
-        }
-        html += "</div>"
-        return html
-    }
-
-    private static func diagramDetailHTML(_ item: RawDiagramItem) -> String {
-        var parts: [String] = []
-        if !item.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            parts.append("<p>\(item.detail.escapedHTML)</p>")
-        }
-        if !item.owner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            parts.append("<span class=\"badge \(badgeClass(for: item.status))\">\(item.owner.escapedHTML)</span>")
-        }
-        return parts.joined()
-    }
-
-    private static func labelText(for item: RawDiagramItem) -> String {
-        if !item.date.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return item.date }
-        if !item.owner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return item.owner }
-        return item.status.isEmpty ? "ITEM" : item.status
-    }
-
-    private static func badgeClass(for status: String) -> String {
-        switch status {
-        case "success": return "badge-success"
-        case "warning": return "badge-warning"
-        case "danger": return "badge-danger"
-        case "purple": return "badge-purple"
-        default: return "badge-info"
-        }
-    }
-
-    private static func dotClass(for status: String) -> String {
-        switch status {
-        case "success": return "dot-green"
-        case "warning": return "dot-amber"
-        case "danger": return "dot-red"
-        default: return "dot-blue"
-        }
-    }
 }
 
 // MARK: - Raw decodable types
@@ -406,10 +305,9 @@ private struct RawStructuredSummary: Decodable {
     let risks: [RawRisk]?
     let open_questions: [RawOpenQuestion]?
     let milestones: [RawMilestone]?
-    let diagrams: [RawDiagram]?
 
     private enum CodingKeys: String, CodingKey {
-        case one_liner, host, location, discussions, decisions, risks, open_questions, milestones, diagrams
+        case one_liner, host, location, discussions, decisions, risks, open_questions, milestones
     }
 
     init(from decoder: Decoder) throws {
@@ -422,7 +320,6 @@ private struct RawStructuredSummary: Decodable {
         risks = c.lossyArray(RawRisk.self, forKey: .risks)
         open_questions = c.lossyArray(RawOpenQuestion.self, forKey: .open_questions)
         milestones = c.lossyArray(RawMilestone.self, forKey: .milestones)
-        diagrams = c.lossyArray(RawDiagram.self, forKey: .diagrams)
     }
 }
 
@@ -524,46 +421,6 @@ private struct RawMilestone: Decodable {
         description = c.lossyString(forKey: .description)
         target_date = c.lossyString(forKey: .target_date)
         source_excerpt = c.lossyOptionalString(forKey: .source_excerpt)
-    }
-}
-
-private struct RawDiagram: Decodable {
-    let title: String
-    let diagram_type: String?
-    let items: [RawDiagramItem]?
-    let html: String?
-
-    private enum CodingKeys: String, CodingKey {
-        case title, diagram_type, items, html
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        title = c.lossyString(forKey: .title)
-        diagram_type = c.lossyOptionalString(forKey: .diagram_type)
-        items = c.lossyArray(RawDiagramItem.self, forKey: .items)
-        html = c.lossyOptionalString(forKey: .html)
-    }
-}
-
-private struct RawDiagramItem: Decodable {
-    let title: String
-    let detail: String
-    let date: String
-    let owner: String
-    let status: String
-
-    private enum CodingKeys: String, CodingKey {
-        case title, detail, date, owner, status
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
-        detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
-        date = try c.decodeIfPresent(String.self, forKey: .date) ?? ""
-        owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
-        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "info"
     }
 }
 

@@ -50,7 +50,8 @@ final class AudioFileTranscriber {
         await state.beginFinalizing()
         progress?(1.0)
         provider.sendLastAudio()
-        try await waitForFinalTranscript(state: state)
+        await provider.awaitPendingFinalization(timeout: 12)
+        try await waitForFinalTranscript(state: state, timeout: 2)
 
         let chunks = await state.finalChunks()
         guard !chunks.isEmpty else {
@@ -144,12 +145,15 @@ final class AudioFileTranscriber {
         }
     }
 
-    private func waitForFinalTranscript(state: AudioFileTranscriptionState) async throws {
+    private func waitForFinalTranscript(
+        state: AudioFileTranscriptionState,
+        timeout: TimeInterval
+    ) async throws {
         let start = Date()
         var lastCount = await state.updateCount
         var lastChange = Date()
 
-        while Date().timeIntervalSince(start) < 12 {
+        while Date().timeIntervalSince(start) < timeout {
             try Task.checkCancellation()
 
             if let error = await state.errorMessage {

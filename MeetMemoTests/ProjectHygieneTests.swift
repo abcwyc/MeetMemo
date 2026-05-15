@@ -32,6 +32,16 @@ final class ProjectHygieneTests: XCTestCase {
         XCTAssertTrue(script.contains("APP_PASSWORD: Set"))
     }
 
+    func testAudioImportFlowKeepsFinalizationAndCancellationGuards() throws {
+        let root = repositoryRoot()
+        let transcriber = try read("MeetMemo/Services/AudioFileTranscriber.swift", from: root)
+        let viewModel = try read("MeetMemo/ViewModels/MeetingListViewModel.swift", from: root)
+
+        XCTAssertTrue(transcriber.contains("provider.sendLastAudio()"))
+        XCTAssertTrue(transcriber.contains("await provider.awaitPendingFinalization(timeout: 12)"))
+        XCTAssertTrue(viewModel.contains("try Task.checkCancellation()"))
+    }
+
     private func repositoryRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

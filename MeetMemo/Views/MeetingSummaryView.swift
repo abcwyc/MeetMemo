@@ -14,8 +14,7 @@ struct MeetingSummaryView: View {
         !meeting.followUpTasks.isEmpty ||
         !meeting.risks.isEmpty ||
         !meeting.openQuestions.isEmpty ||
-        !meeting.milestones.isEmpty ||
-        !meeting.diagrams.isEmpty
+        !meeting.milestones.isEmpty
     }
 
     var body: some View {
@@ -55,9 +54,6 @@ struct MeetingSummaryView: View {
                         milestonesSection
                     }
 
-                    if !meeting.diagrams.isEmpty {
-                        diagramsSection
-                    }
                 }
                 .padding()
             }
@@ -288,21 +284,6 @@ struct MeetingSummaryView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.gray.opacity(0.10), lineWidth: 1)
             )
-        }
-    }
-
-    // MARK: - Diagrams Section
-
-    private var diagramsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SummarySectionHeader(
-                icon: "chart.xyaxis.line",
-                title: langMgr.t("图示", "Diagrams"),
-                count: meeting.diagrams.count
-            )
-            ForEach(meeting.diagrams) { diagram in
-                DiagramCard(diagram: diagram)
-            }
         }
     }
 
@@ -840,31 +821,5 @@ private struct MilestoneRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-    }
-}
-
-// MARK: - Diagram Card
-
-private struct DiagramCard: View {
-    let diagram: MeetingDiagram
-    @State private var contentHeight: CGFloat = 160
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(diagram.title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            DiagramWebView(htmlContent: diagram.htmlContent, contentHeight: $contentHeight)
-                .frame(height: contentHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.gray.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Color.gray.opacity(0.12), lineWidth: 1)
-        )
     }
 }

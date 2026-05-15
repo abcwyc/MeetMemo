@@ -2,7 +2,7 @@ import XCTest
 @testable import MeetMemo
 
 final class MeetingStructuredExtractorTests: XCTestCase {
-    func testDecodeResultParsesStructuredSummaryAndSanitizesDiagrams() throws {
+    func testDecodeResultParsesStructuredSummary() throws {
         let response = """
         ```json
         {
@@ -47,12 +47,6 @@ final class MeetingStructuredExtractorTests: XCTestCase {
               "description": "完成首批用户发布",
               "target_date": "下周一"
             }
-          ],
-          "diagrams": [
-            {
-              "title": "发布流程",
-              "html": "<div class='flow'><script>alert(1)</script><div class='flow-node unknown' onclick='bad()'>灰度 20%</div></div>"
-            }
           ]
         }
         ```
@@ -68,11 +62,6 @@ final class MeetingStructuredExtractorTests: XCTestCase {
         XCTAssertEqual(result.risks.first?.severity, "medium")
         XCTAssertEqual(result.openQuestions.first?.nextStep, "周五前确认")
         XCTAssertEqual(result.milestones.first?.targetDate, "下周一")
-        XCTAssertEqual(result.diagrams.first?.title, "发布流程")
-        XCTAssertFalse(result.diagrams.first?.htmlContent.lowercased().contains("<script") ?? true)
-        XCTAssertFalse(result.diagrams.first?.htmlContent.lowercased().contains("onclick") ?? true)
-        XCTAssertFalse(result.diagrams.first?.htmlContent.contains("unknown") ?? true)
-        XCTAssertTrue(result.diagrams.first?.htmlContent.contains(#"class="flow-node""#) ?? false)
     }
 
     func testDecodeResultRejectsInvalidJSON() {

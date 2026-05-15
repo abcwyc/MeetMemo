@@ -508,20 +508,6 @@ struct MeetingDiscussion: Codable, Identifiable, Hashable {
     }
 }
 
-struct MeetingDiagram: Codable, Identifiable, Hashable {
-    var id: UUID
-    var title: String
-    var htmlContent: String
-    var createdAt: Date
-
-    init(id: UUID = UUID(), title: String, htmlContent: String, createdAt: Date = Date()) {
-        self.id = id
-        self.title = title
-        self.htmlContent = htmlContent
-        self.createdAt = createdAt
-    }
-}
-
 struct CollapsedTranscriptChunk: Identifiable {
     let id: UUID
     let timestamp: Date
@@ -682,7 +668,6 @@ struct Meeting: Codable, Identifiable, Hashable {
     var milestones: [MeetingMilestone]
     var host: String
     var location: String
-    var diagrams: [MeetingDiagram]
     var structuredSummarySourceHash: String
     var structuredSummaryGeneratedAt: Date?
     // MARK: - Data versioning
@@ -710,7 +695,6 @@ struct Meeting: Codable, Identifiable, Hashable {
          milestones: [MeetingMilestone] = [],
          host: String = "",
          location: String = "",
-         diagrams: [MeetingDiagram] = [],
          structuredSummarySourceHash: String = "",
          structuredSummaryGeneratedAt: Date? = nil,
          dataVersion: Int = Meeting.currentDataVersion) {
@@ -733,7 +717,6 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.milestones = milestones
         self.host = host
         self.location = location
-        self.diagrams = diagrams
         self.structuredSummarySourceHash = structuredSummarySourceHash
         self.structuredSummaryGeneratedAt = structuredSummaryGeneratedAt
         self.dataVersion = dataVersion
@@ -759,7 +742,6 @@ struct Meeting: Codable, Identifiable, Hashable {
         case milestones
         case host
         case location
-        case diagrams
         case structuredSummarySourceHash
         case structuredSummaryGeneratedAt
         case dataVersion
@@ -791,7 +773,6 @@ struct Meeting: Codable, Identifiable, Hashable {
         milestones = try container.decodeIfPresent([MeetingMilestone].self, forKey: .milestones) ?? []
         host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
         location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
-        diagrams = try container.decodeIfPresent([MeetingDiagram].self, forKey: .diagrams) ?? []
         structuredSummarySourceHash = try container.decodeIfPresent(String.self, forKey: .structuredSummarySourceHash) ?? ""
         structuredSummaryGeneratedAt = try container.decodeIfPresent(Date.self, forKey: .structuredSummaryGeneratedAt)
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
@@ -895,6 +876,26 @@ struct Meeting: Codable, Identifiable, Hashable {
                 }
 
                 return "\(roleLabel) · \(chunk.timeLabel): \(chunk.text)"
+            }
+            .joined(separator: "\n")
+    }
+
+    /// Compact transcript for downstream extraction where timestamps and audio-source labels add cost but little value.
+    var compactTranscript: String {
+        let finalChunks = transcriptDisplayChunks.filter { $0.isFinal }
+
+        guard !finalChunks.isEmpty else { return "" }
+
+        return finalChunks
+            .map { chunk in
+                let speakerLabel = chunk.speakerLabel?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if let speakerLabel, !speakerLabel.isEmpty {
+                    return "\(speakerLabel): \(chunk.text)"
+                }
+
+                return chunk.text
             }
             .joined(separator: "\n")
     }

@@ -112,6 +112,7 @@ class MeetingViewModel: ObservableObject {
     private var isStreamingGeneratedNotes = false
     private var generationTask: Task<Void, Never>?
     private var generationCounter: Int = 0
+    private var structuredExtractionToken: UUID?
     
     // Computed property to check if meeting is empty
     var isEmpty: Bool {
@@ -366,8 +367,7 @@ class MeetingViewModel: ObservableObject {
             !meeting.decisions.isEmpty ||
             !meeting.risks.isEmpty ||
             !meeting.openQuestions.isEmpty ||
-            !meeting.milestones.isEmpty ||
-            !meeting.diagrams.isEmpty
+            !meeting.milestones.isEmpty
     }
 
     var isStructuredSummaryStale: Bool {
@@ -620,12 +620,13 @@ class MeetingViewModel: ObservableObject {
         }
 
         let previousGeneratedNotes = meetingSnapshot.generatedNotes
+        let previousOneLiner = meetingSnapshot.oneLiner
         var receivedContent = false
-        
+
         // Load settings for generation
         let userBlurb = UserDefaultsManager.shared.userBlurb
         let systemPrompt = UserDefaultsManager.shared.systemPrompt
-        
+
         // Use streaming generation
         let stream = NotesGenerator.shared.generateNotesStream(
             meeting: meetingSnapshot,
@@ -633,7 +634,7 @@ class MeetingViewModel: ObservableObject {
             systemPrompt: systemPrompt,
             templateId: templateIdSnapshot
         )
-        
+
         var hasError = false
         for await result in stream {
             guard isCurrentGeneration(meetingId: meetingId, generation: myGeneration) else {
@@ -644,6 +645,7 @@ class MeetingViewModel: ObservableObject {
             if Task.isCancelled {
                 if meeting.id == meetingId {
                     meeting.generatedNotes = previousGeneratedNotes
+                    meeting.oneLiner = previousOneLiner
                     toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }
                 hasError = true
@@ -654,12 +656,18 @@ class MeetingViewModel: ObservableObject {
             case .content(let chunk):
                 if !receivedContent {
                     meeting.generatedNotes = ""
+                    // Drop the stale one-liner so the AI-notes header card disappears
+                    // immediately; extractStructuredSummary will repopulate after the
+                    // new notes finish. Other structured fields stay visible on the
+                    // digest tab until they're refreshed.
+                    meeting.oneLiner = ""
                     receivedContent = true
                 }
                 meeting.generatedNotes += chunk
                 toolbarHasGeneratedNotes = true
             case .error(let error):
                 meeting.generatedNotes = previousGeneratedNotes
+                meeting.oneLiner = previousOneLiner
                 toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 errorMessage = error
                 hasError = true
@@ -759,13 +767,37 @@ class MeetingViewModel: ObservableObject {
 
     func extractStructuredSummary() async {
         guard !isExtractingStructuredSummary else { return }
+
+        // Pin the meeting identity at task start. The Task may outlive the active meeting
+        // (user switches sidebar selection during the multi-second LLM call); on completion
+        // we must discard the result rather than overwriting whatever meeting is now loaded.
+        let token = UUID()
+        let meetingId = meeting.id
+        let snapshot = meeting
+        structuredExtractionToken = token
+
         isExtractingStructuredSummary = true
         structuredSummaryErrorMessage = nil
-        defer { isExtractingStructuredSummary = false }
+        defer {
+            if structuredExtractionToken == token {
+                isExtractingStructuredSummary = false
+            }
+        }
 
         do {
-            let result = try await MeetingStructuredExtractor.shared.extract(from: meeting)
-            meeting.oneLiner = result.oneLiner
+            let result = try await MeetingStructuredExtractor.shared.extract(from: snapshot)
+            guard structuredExtractionToken == token, meeting.id == meetingId else { return }
+            // Don't overwrite oneLiner with empty — the model occasionally returns ""
+            // despite the prompt rule, which would erase the header card entirely.
+            // Fall back to the current value, then to the title.
+            if !result.oneLiner.isEmpty {
+                meeting.oneLiner = result.oneLiner
+            } else if meeting.oneLiner.isEmpty {
+                let trimmedTitle = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedTitle.isEmpty {
+                    meeting.oneLiner = trimmedTitle
+                }
+            }
             meeting.host = result.host
             meeting.location = result.location
             meeting.decisions = result.decisions
@@ -773,11 +805,11 @@ class MeetingViewModel: ObservableObject {
             meeting.openQuestions = result.openQuestions
             meeting.discussions = result.discussions
             meeting.milestones = result.milestones
-            meeting.diagrams = result.diagrams
             meeting.structuredSummarySourceHash = meeting.structuredSummaryCurrentSourceHash
             meeting.structuredSummaryGeneratedAt = Date()
             saveMeeting()
         } catch {
+            guard structuredExtractionToken == token, meeting.id == meetingId else { return }
             structuredSummaryErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             print("⚠️ Structured extraction failed: \(error)")
         }

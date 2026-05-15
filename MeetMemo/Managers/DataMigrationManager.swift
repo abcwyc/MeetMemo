@@ -61,7 +61,6 @@ class DataMigrationManager {
         if migratedMeeting.dataVersion < 7 {
             migratedMeeting.host = ""
             migratedMeeting.location = ""
-            migratedMeeting.diagrams = []
             migratedMeeting.dataVersion = 7
         }
 
