@@ -86,6 +86,11 @@ class MeetingViewModel: ObservableObject {
         return recordingSessionManager.isStoppingRecording
             && recordingSessionManager.activeMeetingId == meeting.id
     }
+
+    var isRecoveringSTT: Bool {
+        recordingSessionManager.isRecoveringSTT
+            && recordingSessionManager.activeMeetingId == meeting.id
+    }
     @Published var selectedTab: MeetingViewTab
     @Published var aiNotesSubTab: AINotesSubTab = .notes
 
@@ -322,7 +327,10 @@ class MeetingViewModel: ObservableObject {
     var recordingButtonText: String {
         let lang = LanguageManager.shared
         if isStoppingRecording {
-            return lang.t("处理中", "Processing")
+            return lang.t("补全中", "Finalizing")
+        }
+        if isRecoveringSTT {
+            return lang.t("恢复中", "Recovering")
         }
         if isRecording {
             return lang.t("结束录制", "End Recording")

@@ -55,7 +55,9 @@ struct TranscriptUpdateAccumulator {
                 speakerTag: resolvedUpdate.speakerTag,
                 speakerId: resolvedUpdate.speakerId,
                 startTime: resolvedUpdate.startTime,
-                endTime: resolvedUpdate.endTime
+                endTime: resolvedUpdate.endTime,
+                isLowConfidence: resolvedUpdate.isLowConfidence,
+                arrivalUptimeMilliseconds: chunks[finalIndex].arrivalUptimeMilliseconds
             )
             removeMatchingInterims(for: resolvedUpdate, source: source)
             sortChunksByTimeline()
@@ -76,7 +78,9 @@ struct TranscriptUpdateAccumulator {
                     speakerTag: resolvedUpdate.speakerTag,
                     speakerId: resolvedUpdate.speakerId,
                     startTime: resolvedUpdate.startTime,
-                    endTime: resolvedUpdate.endTime
+                    endTime: resolvedUpdate.endTime,
+                    isLowConfidence: resolvedUpdate.isLowConfidence,
+                    arrivalUptimeMilliseconds: chunks[finalIndex].arrivalUptimeMilliseconds
                 )
             } else {
                 chunks.append(TranscriptChunk(
@@ -87,7 +91,8 @@ struct TranscriptUpdateAccumulator {
                     speakerTag: resolvedUpdate.speakerTag,
                     speakerId: resolvedUpdate.speakerId,
                     startTime: resolvedUpdate.startTime,
-                    endTime: resolvedUpdate.endTime
+                    endTime: resolvedUpdate.endTime,
+                    isLowConfidence: resolvedUpdate.isLowConfidence
                 ))
             }
             sortChunksByTimeline()
@@ -102,7 +107,8 @@ struct TranscriptUpdateAccumulator {
             speakerTag: resolvedUpdate.speakerTag,
             speakerId: resolvedUpdate.speakerId,
             startTime: resolvedUpdate.startTime,
-            endTime: resolvedUpdate.endTime
+            endTime: resolvedUpdate.endTime,
+            isLowConfidence: resolvedUpdate.isLowConfidence
         )
 
         removeMatchingInterims(for: resolvedUpdate, source: source)
@@ -134,7 +140,8 @@ struct TranscriptUpdateAccumulator {
             speakerId: update.speakerId ?? inheritedState?.speakerId,
             startTime: update.startTime ?? inheritedState?.startTime,
             endTime: update.endTime ?? inheritedState?.endTime,
-            isCorrection: update.isCorrection
+            isCorrection: update.isCorrection,
+            isLowConfidence: update.isLowConfidence
         )
     }
 
@@ -161,29 +168,49 @@ struct TranscriptUpdateAccumulator {
         chunks.removeAll {
             $0.source == source
                 && !$0.isFinal
-                && (($0.startTime == update.startTime && $0.endTime == update.endTime)
+                && (Self.hasExactConcreteRangeMatch($0, update)
                     || Self.intervalsOverlap($0, update))
         }
+    }
+
+    /// Two updates only count as the "same" interim window when both sides have explicit
+    /// (startTime, endTime) and they are equal. Nil-on-nil must not be treated as a match,
+    /// or any timing-less low-confidence update could silently wipe earlier interim drafts.
+    private static func hasExactConcreteRangeMatch(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
+        guard let chunkStart = chunk.startTime,
+              let chunkEnd = chunk.endTime,
+              let updateStart = update.startTime,
+              let updateEnd = update.endTime else {
+            return false
+        }
+        return chunkStart == updateStart && chunkEnd == updateEnd
     }
 
     private mutating func removeSupersededIncrementalChunks(for update: STTTranscriptUpdate, source: AudioSource) {
         let updateText = Self.normalizedText(update.text)
         guard updateText.count >= 4 else { return }
-        let now = Date()
+        let nowUptimeMilliseconds = Int(ProcessInfo.processInfo.systemUptime * 1000)
 
         chunks.removeAll { chunk in
             guard chunk.source == source else { return false }
+            guard !chunk.isLowConfidence, !update.isLowConfidence else { return false }
             guard Self.speakersAreCompatible(chunk, update) else { return false }
 
             let chunkText = Self.normalizedText(chunk.text)
             guard chunkText != updateText else { return false }
             guard Self.areIncrementalVersions(chunkText, updateText) else { return false }
 
+            // Distinct utterances can legitimately share a long opening.
+            // Once both sides have concrete, non-overlapping ranges, preserve them.
+            if Self.hasConcreteNonOverlappingRanges(chunk, update) {
+                return false
+            }
+
             if Self.intervalsOverlap(chunk, update) {
                 return true
             }
 
-            if abs(now.timeIntervalSince(chunk.timestamp)) <= 90 {
+            if abs(nowUptimeMilliseconds - chunk.arrivalUptimeMilliseconds) <= 90_000 {
                 return true
             }
 
@@ -244,6 +271,21 @@ struct TranscriptUpdateAccumulator {
         }
 
         return max(chunkStart, updateStart) < min(chunkEnd, updateEnd)
+    }
+
+    private static func hasConcreteNonOverlappingRanges(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
+        guard let chunkStart = chunk.startTime,
+              let chunkEnd = chunk.endTime,
+              let updateStart = update.startTime,
+              let updateEnd = update.endTime else {
+            return false
+        }
+
+        guard chunkStart < chunkEnd, updateStart < updateEnd else {
+            return false
+        }
+
+        return !intervalsOverlap(chunk, update)
     }
 
     private mutating func sortChunksByTimeline() {

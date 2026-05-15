@@ -554,9 +554,10 @@ struct TranscriptChunkRowView: View {
 
                 Text(chunk.text)
                     .font(.body)
-                    .foregroundColor(.primary)
+                    .foregroundColor(chunk.isLowConfidence ? .secondary : .primary)
+                    .italic(chunk.isLowConfidence)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .opacity(chunk.isFinal ? 1.0 : 0.72)
+                    .opacity(chunk.isFinal ? (chunk.isLowConfidence ? 0.8 : 1.0) : 0.72)
             }
         }
         .padding(.vertical, 4)

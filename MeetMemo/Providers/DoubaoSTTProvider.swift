@@ -1,6 +1,12 @@
 import Foundation
 
 final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
+    let capabilities = STTProviderCapabilities(
+        supportsStableUtteranceTiming: true,
+        supportsCorrections: true,
+        supportsFinalizationFlush: true
+    )
+
     var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)? {
         get { callbackLock.withLock { onTranscriptUpdateHandler } }
         set { callbackLock.withLock { onTranscriptUpdateHandler = newValue } }
@@ -321,7 +327,8 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
                         speakerId: nil,
                         startTime: nil,
                         endTime: nil,
-                        isCorrection: false
+                        isCorrection: false,
+                        isLowConfidence: true
                     ))
                 }
             }
@@ -355,7 +362,8 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
                         speakerId: utterance.speakerId,
                         startTime: utterance.startTime,
                         endTime: utterance.endTime,
-                        isCorrection: isCorrection
+                        isCorrection: isCorrection,
+                        isLowConfidence: false
                     ))
                 }
             }
@@ -535,7 +543,7 @@ private struct DoubaoFullClientRequest: Encodable {
     let request: Request
 }
 
-struct STTTranscriptUpdate {
+struct STTTranscriptUpdate: Hashable {
     let text: String
     let isFinal: Bool
     let speakerTag: String?
@@ -546,4 +554,27 @@ struct STTTranscriptUpdate {
     /// or text was revised by the second-pass or clustering algorithm). The receiver should
     /// replace the existing chunk matching (source, startTime, endTime) rather than append.
     let isCorrection: Bool
+    /// Text-only fallback responses do not have stable utterance timing and should not
+    /// participate in canonical replacement heuristics.
+    let isLowConfidence: Bool
+
+    init(
+        text: String,
+        isFinal: Bool,
+        speakerTag: String?,
+        speakerId: Int?,
+        startTime: Int?,
+        endTime: Int?,
+        isCorrection: Bool,
+        isLowConfidence: Bool = false
+    ) {
+        self.text = text
+        self.isFinal = isFinal
+        self.speakerTag = speakerTag
+        self.speakerId = speakerId
+        self.startTime = startTime
+        self.endTime = endTime
+        self.isCorrection = isCorrection
+        self.isLowConfidence = isLowConfidence
+    }
 }

@@ -1,6 +1,7 @@
 import Foundation
 
 protocol STTProvider: AnyObject {
+    var capabilities: STTProviderCapabilities { get }
     var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)? { get set }
     var onError: ((String) -> Void)? { get set }
 
@@ -16,9 +17,25 @@ protocol STTProvider: AnyObject {
 }
 
 extension STTProvider {
+    var capabilities: STTProviderCapabilities {
+        .basic
+    }
+
     func awaitPendingFinalization(timeout: TimeInterval) async {
         try? await Task.sleep(for: .seconds(timeout))
     }
+}
+
+struct STTProviderCapabilities: Hashable {
+    let supportsStableUtteranceTiming: Bool
+    let supportsCorrections: Bool
+    let supportsFinalizationFlush: Bool
+
+    static let basic = STTProviderCapabilities(
+        supportsStableUtteranceTiming: false,
+        supportsCorrections: false,
+        supportsFinalizationFlush: false
+    )
 }
 
 protocol STTProviderFactory {
@@ -39,4 +56,3 @@ protocol LLMProvider {
 
     func testConnection(config: LLMProviderConfig) async throws
 }
-

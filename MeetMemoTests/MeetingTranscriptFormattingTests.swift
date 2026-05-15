@@ -40,6 +40,57 @@ final class MeetingTranscriptFormattingTests: XCTestCase {
         )
     }
 
+    func testDisplayGroupingSplitsSameSpeakerAfterLongGap() {
+        let meeting = Meeting(
+            title: "Gap grouping",
+            transcriptChunks: [
+                TranscriptChunk(
+                    source: .mic,
+                    text: "第一段",
+                    isFinal: true,
+                    speakerTag: "A",
+                    startTime: 1_000,
+                    endTime: 2_000
+                ),
+                TranscriptChunk(
+                    source: .mic,
+                    text: "第二段",
+                    isFinal: true,
+                    speakerTag: "A",
+                    startTime: 5_500,
+                    endTime: 6_000
+                )
+            ]
+        )
+
+        XCTAssertEqual(meeting.transcriptDisplayChunks.map(\.text), ["第一段", "第二段"])
+    }
+
+    func testDisplayGroupingDoesNotMergeLowConfidenceWithCanonicalUtterance() {
+        let meeting = Meeting(transcriptChunks: [
+            TranscriptChunk(
+                source: .mic,
+                text: "低置信草稿",
+                isFinal: true,
+                speakerTag: "A",
+                startTime: 1_000,
+                endTime: 1_000,
+                isLowConfidence: true
+            ),
+            TranscriptChunk(
+                source: .mic,
+                text: "正式结果",
+                isFinal: true,
+                speakerTag: "A",
+                startTime: 1_100,
+                endTime: 2_000
+            )
+        ])
+
+        XCTAssertEqual(meeting.transcriptDisplayChunks.map(\.text), ["低置信草稿", "正式结果"])
+        XCTAssertEqual(meeting.transcriptDisplayChunks.map(\.isLowConfidence), [true, false])
+    }
+
     func testTranscriptDisplayChunksAreSortedByTimeline() {
         let meeting = Meeting(transcriptChunks: [
             TranscriptChunk(
@@ -71,8 +122,8 @@ final class MeetingTranscriptFormattingTests: XCTestCase {
         XCTAssertEqual(
             meeting.transcriptDisplayChunks.map(\.text),
             [
+                "开头迟到的内容",
                 """
-                开头迟到的内容
                 中间迟到的内容
                 后面的内容
                 """

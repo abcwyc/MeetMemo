@@ -8,6 +8,7 @@ class RecordingSessionManager: ObservableObject {
     static let shared = RecordingSessionManager()
     
     @Published var isRecording = false
+    @Published var isRecoveringSTT = false
     /// 点击结束录制后、await STT final flush 完成前的中间态。镜像自 AudioManager。
     @Published var isStoppingRecording = false
     @Published var activeMeetingId: UUID?
@@ -33,6 +34,12 @@ class RecordingSessionManager: ObservableObject {
         audioManager.$isStoppingRecording
             .sink { [weak self] value in
                 self?.isStoppingRecording = value
+            }
+            .store(in: &cancellables)
+
+        audioManager.$isRecoveringSTT
+            .sink { [weak self] value in
+                self?.isRecoveringSTT = value
             }
             .store(in: &cancellables)
 

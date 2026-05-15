@@ -43,6 +43,22 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
     let speakerId: Int?
     let startTime: Int?
     let endTime: Int?
+    let isLowConfidence: Bool
+    let arrivalUptimeMilliseconds: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case timestamp
+        case source
+        case text
+        case isFinal
+        case speakerTag
+        case speakerId
+        case startTime
+        case endTime
+        case isLowConfidence
+        case arrivalUptimeMilliseconds
+    }
     
     init(
         id: UUID = UUID(),
@@ -53,7 +69,9 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
         speakerTag: String? = nil,
         speakerId: Int? = nil,
         startTime: Int? = nil,
-        endTime: Int? = nil
+        endTime: Int? = nil,
+        isLowConfidence: Bool = false,
+        arrivalUptimeMilliseconds: Int = Int(ProcessInfo.processInfo.systemUptime * 1000)
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -64,6 +82,55 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
         self.speakerId = speakerId
         self.startTime = startTime
         self.endTime = endTime
+        self.isLowConfidence = isLowConfidence
+        self.arrivalUptimeMilliseconds = arrivalUptimeMilliseconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        source = try container.decode(AudioSource.self, forKey: .source)
+        text = try container.decode(String.self, forKey: .text)
+        isFinal = try container.decode(Bool.self, forKey: .isFinal)
+        speakerTag = try container.decodeIfPresent(String.self, forKey: .speakerTag)
+        speakerId = try container.decodeIfPresent(Int.self, forKey: .speakerId)
+        startTime = try container.decodeIfPresent(Int.self, forKey: .startTime)
+        endTime = try container.decodeIfPresent(Int.self, forKey: .endTime)
+        isLowConfidence = try container.decodeIfPresent(Bool.self, forKey: .isLowConfidence) ?? false
+        // Legacy chunks have no monotonic arrival time. Fall back to 0 so the 90s incremental
+        // window in TranscriptUpdateAccumulator considers them well past expiry and never
+        // tries to delete them under the text-similarity heuristic.
+        arrivalUptimeMilliseconds = try container.decodeIfPresent(Int.self, forKey: .arrivalUptimeMilliseconds)
+            ?? 0
+    }
+
+    static func == (lhs: TranscriptChunk, rhs: TranscriptChunk) -> Bool {
+        lhs.id == rhs.id
+            && lhs.timestamp == rhs.timestamp
+            && lhs.source == rhs.source
+            && lhs.text == rhs.text
+            && lhs.isFinal == rhs.isFinal
+            && lhs.speakerTag == rhs.speakerTag
+            && lhs.speakerId == rhs.speakerId
+            && lhs.startTime == rhs.startTime
+            && lhs.endTime == rhs.endTime
+            && lhs.isLowConfidence == rhs.isLowConfidence
+    }
+
+    // `arrivalUptimeMilliseconds` is debug/heuristic metadata, intentionally excluded from
+    // identity so two chunks differing only by arrival time still hash-equal.
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+        hasher.combine(timestamp)
+        hasher.combine(source)
+        hasher.combine(text)
+        hasher.combine(isFinal)
+        hasher.combine(speakerTag)
+        hasher.combine(speakerId)
+        hasher.combine(startTime)
+        hasher.combine(endTime)
+        hasher.combine(isLowConfidence)
     }
 
     var speakerIdentityKey: String? {
@@ -126,6 +193,7 @@ struct TranscriptDisplayChunk: Identifiable, Hashable {
     let sourceLabel: String
     let text: String
     let isFinal: Bool
+    let isLowConfidence: Bool
     let speakerLabel: String?
     let timeLabel: String
 }
@@ -864,6 +932,7 @@ struct Meeting: Codable, Identifiable, Hashable {
                 speakerLabel: displaySpeakerLabel,
                 textParts: [trimmedText],
                 isFinal: chunk.isFinal,
+                isLowConfidence: chunk.isLowConfidence,
                 startTime: chunk.startTime,
                 endTime: chunk.endTime
             )
@@ -1136,6 +1205,7 @@ struct MeetingSummary: Codable, Identifiable, Hashable {
 }
 
 private struct TranscriptDisplayGroup {
+    private static let maximumMergeGapMilliseconds = 2_000
     let id: UUID
     let timestamp: Date
     let source: AudioSource
@@ -1144,12 +1214,14 @@ private struct TranscriptDisplayGroup {
     let speakerLabel: String?
     var textParts: [String]
     var isFinal: Bool
+    var isLowConfidence: Bool
     var startTime: Int?
     var endTime: Int?
 
     mutating func append(chunk: TranscriptChunk, text: String) {
         textParts.append(text)
         isFinal = isFinal && chunk.isFinal
+        isLowConfidence = isLowConfidence || chunk.isLowConfidence
         startTime = Self.mergedStartTime(with: chunk.startTime, current: startTime)
         endTime = Self.mergedEndTime(with: chunk.endTime, current: endTime)
     }
@@ -1159,7 +1231,19 @@ private struct TranscriptDisplayGroup {
             return false
         }
 
-        return currentKey == chunkKey && source == chunk.source
+        guard currentKey == chunkKey && source == chunk.source else {
+            return false
+        }
+
+        guard isLowConfidence == chunk.isLowConfidence else {
+            return false
+        }
+
+        guard let currentEnd = endTime, let nextStart = chunk.startTime else {
+            return true
+        }
+
+        return max(0, nextStart - currentEnd) <= Self.maximumMergeGapMilliseconds
     }
 
     func makeDisplayChunk() -> TranscriptDisplayChunk {
@@ -1170,6 +1254,7 @@ private struct TranscriptDisplayGroup {
             sourceLabel: sourceLabel,
             text: textParts.joined(separator: "\n"),
             isFinal: isFinal,
+            isLowConfidence: isLowConfidence,
             speakerLabel: speakerLabel,
             timeLabel: Self.formattedTimeLabel(
                 startTime: startTime,

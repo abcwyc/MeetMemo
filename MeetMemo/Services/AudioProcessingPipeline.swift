@@ -18,6 +18,7 @@ final class AudioProcessingPipeline: @unchecked Sendable {
     private var pendingBuffers = 0
     private var droppedBuffers = 0
     private var isStopped = false
+    private var generation = 0
 
     init?(
         source: AudioSource,
@@ -42,21 +43,21 @@ final class AudioProcessingPipeline: @unchecked Sendable {
     }
 
     func enqueue(_ buffer: AVAudioPCMBuffer) {
-        let didReserveSlot: Bool = stateLock.withLock {
-            guard !isStopped else { return false }
+        let reservedGeneration: Int? = stateLock.withLock {
+            guard !isStopped else { return nil }
             guard pendingBuffers < maxPendingBuffers else {
                 droppedBuffers += 1
                 if droppedBuffers == 1 || droppedBuffers % 50 == 0 {
                     print("⚠️ Dropped \(droppedBuffers) \(source.rawValue) audio buffers because the processing queue is backlogged.")
                 }
-                return false
+                return nil
             }
 
             pendingBuffers += 1
-            return true
+            return generation
         }
 
-        guard didReserveSlot else { return }
+        guard let reservedGeneration else { return }
         guard let copiedBuffer = Self.copyBuffer(buffer, format: inputFormat) else {
             releasePendingBuffer()
             return
@@ -68,7 +69,9 @@ final class AudioProcessingPipeline: @unchecked Sendable {
                 self.releasePendingBuffer()
             }
 
-            guard !self.stateLock.withLock({ self.isStopped }) else { return }
+            guard self.stateLock.withLock({
+                !self.isStopped && self.generation == reservedGeneration
+            }) else { return }
             self.process(copiedBuffer)
         }
     }
@@ -76,6 +79,15 @@ final class AudioProcessingPipeline: @unchecked Sendable {
     func stop() {
         stateLock.withLock {
             isStopped = true
+            pendingBuffers = 0
+        }
+    }
+
+    /// Drops buffers that were captured before a provider reconnect boundary.
+    /// They belong to the previous STT timeline and must not be sent into the new stream.
+    func discardPendingAudio() {
+        stateLock.withLock {
+            generation &+= 1
             pendingBuffers = 0
         }
     }

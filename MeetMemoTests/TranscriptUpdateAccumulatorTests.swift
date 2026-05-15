@@ -232,6 +232,110 @@ final class TranscriptUpdateAccumulatorTests: XCTestCase {
         ])
     }
 
+    func testIncrementalLookingFinalsWithDistinctRangesArePreserved() {
+        var accumulator = TranscriptUpdateAccumulator()
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "然后我会讲一下这里面项目的一些技术深度",
+                isFinal: true,
+                speakerTag: "B",
+                speakerId: 2,
+                startTime: 1_000,
+                endTime: 4_000,
+                isCorrection: false
+            ),
+            source: .mic
+        )
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "然后我会讲一下这里面项目的一些技术深度，然后和一些基础建设相关的贡献",
+                isFinal: true,
+                speakerTag: "B",
+                speakerId: 2,
+                startTime: 4_000,
+                endTime: 8_000,
+                isCorrection: false
+            ),
+            source: .mic
+        )
+
+        XCTAssertEqual(accumulator.chunks.map(\.text), [
+            "然后我会讲一下这里面项目的一些技术深度",
+            "然后我会讲一下这里面项目的一些技术深度，然后和一些基础建设相关的贡献"
+        ])
+    }
+
+    func testIncrementalLookingInterimsWithDistinctRangesArePreserved() {
+        var accumulator = TranscriptUpdateAccumulator()
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "我们先看一下这个问题",
+                isFinal: false,
+                speakerTag: "A",
+                speakerId: 1,
+                startTime: 1_000,
+                endTime: 3_000,
+                isCorrection: false
+            ),
+            source: .mic
+        )
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "我们先看一下这个问题，然后再看下一项",
+                isFinal: false,
+                speakerTag: "A",
+                speakerId: 1,
+                startTime: 4_000,
+                endTime: 7_000,
+                isCorrection: false
+            ),
+            source: .mic
+        )
+
+        XCTAssertEqual(accumulator.chunks.map(\.text), [
+            "我们先看一下这个问题",
+            "我们先看一下这个问题，然后再看下一项"
+        ])
+    }
+
+    func testLowConfidenceFallbackDoesNotDeleteTimedUtterance() {
+        var accumulator = TranscriptUpdateAccumulator()
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "我们先看一下这个问题",
+                isFinal: true,
+                speakerTag: "A",
+                speakerId: 1,
+                startTime: 1_000,
+                endTime: 3_000,
+                isCorrection: false
+            ),
+            source: .mic
+        )
+
+        accumulator.apply(
+            STTTranscriptUpdate(
+                text: "我们先看一下这个问题，然后补充一点",
+                isFinal: true,
+                speakerTag: nil,
+                speakerId: nil,
+                startTime: nil,
+                endTime: nil,
+                isCorrection: false,
+                isLowConfidence: true
+            ),
+            source: .mic
+        )
+
+        XCTAssertEqual(accumulator.chunks.count, 2)
+        XCTAssertTrue(accumulator.chunks.contains(where: \.isLowConfidence))
+    }
+
     func testCorrectionUpdatesExistingFinalInPlace() {
         var accumulator = TranscriptUpdateAccumulator()
 
