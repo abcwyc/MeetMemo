@@ -170,8 +170,19 @@ struct TranscriptUpdateAccumulator {
                 && !$0.isFinal
                 && (Self.hasExactConcreteRangeMatch($0, update)
                     || Self.intervalsOverlap($0, update)
-                    || Self.chunkStartFallsInUpdateRange($0, update))
+                    || Self.chunkStartFallsInUpdateRange($0, update)
+                    || Self.sameSingleTimestampMatch($0, update))
         }
+    }
+
+    /// Two single-timestamp interims (startTime set, endTime nil) from the same source
+    /// with the same startTime are the same recognition window — the newer one supersedes.
+    private static func sameSingleTimestampMatch(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
+        guard let chunkStart = chunk.startTime, chunk.endTime == nil,
+              let updateStart = update.startTime, update.endTime == nil else {
+            return false
+        }
+        return chunkStart == updateStart
     }
 
     /// Requires both sides to have explicit (startTime, endTime). Nil-on-nil is not a match:
@@ -264,10 +275,13 @@ struct TranscriptUpdateAccumulator {
     }
 
     private static func areIncrementalVersions(_ lhs: String, _ rhs: String) -> Bool {
-        guard lhs.count >= 4, rhs.count >= 4 else { return false }
+        guard !lhs.isEmpty, !rhs.isEmpty else { return false }
+        // Exact prefix match is unambiguous regardless of length — check before the
+        // 4-char heuristic guard so short tokens like "花小" → "花小猪什么问题..." are handled.
         if lhs.hasPrefix(rhs) || rhs.hasPrefix(lhs) {
             return true
         }
+        guard lhs.count >= 4, rhs.count >= 4 else { return false }
 
         let shorter = lhs.count <= rhs.count ? lhs : rhs
         let longer = lhs.count <= rhs.count ? rhs : lhs
