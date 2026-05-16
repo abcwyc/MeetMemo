@@ -107,6 +107,13 @@ struct TranscriptUpdateAccumulator {
         removeMatchingInterims(for: resolvedUpdate, source: source)
         removeSupersededIncrementalChunks(for: resolvedUpdate, source: source)
 
+        // Discard single-timestamp interims whose startTime is already covered by an existing
+        // final. Doubao's full-result mode can emit an interim in the same response as the
+        // final that supersedes it; the interim arrives after the final is already committed.
+        if Self.isCoveredByExistingFinal(resolvedUpdate, source: source, in: chunks) {
+            return
+        }
+
         let interimKey = key(for: source, startTime: resolvedUpdate.startTime, endTime: resolvedUpdate.endTime)
         interimStates[interimKey] = InterimTranscriptState(
             text: resolvedUpdate.text,
@@ -189,6 +196,23 @@ struct TranscriptUpdateAccumulator {
             return false
         }
         return chunkStart >= updateStart && chunkStart <= updateEnd
+    }
+
+    /// Returns true when a single-timestamp interim (startTime set, endTime nil) would be
+    /// inserted at a position already covered by a committed final from the same source.
+    /// Doubao full-result responses can include both the final and a stale interim within
+    /// the same payload; processing them in order would otherwise leave the interim orphaned.
+    private static func isCoveredByExistingFinal(
+        _ update: STTTranscriptUpdate,
+        source: AudioSource,
+        in chunks: [TranscriptChunk]
+    ) -> Bool {
+        guard let updateStart = update.startTime, update.endTime == nil else { return false }
+        return chunks.contains { chunk in
+            guard chunk.source == source, chunk.isFinal else { return false }
+            guard let chunkStart = chunk.startTime, let chunkEnd = chunk.endTime else { return false }
+            return updateStart >= chunkStart && updateStart <= chunkEnd
+        }
     }
 
     private mutating func removeSupersededIncrementalChunks(for update: STTTranscriptUpdate, source: AudioSource) {
