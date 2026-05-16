@@ -25,7 +25,16 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
     private let utteranceTrackerLock = NSLock()
     private let callbackLock = NSLock()
 
-    private var session: URLSession?
+    /// Long-lived URLSession reused for every WebSocket connect/disconnect within this
+    /// provider's lifetime. Reusing avoids per-connect allocation and the lingering
+    /// instance pile-up that `URLSession(configuration:).webSocketTask(...)` could otherwise
+    /// produce on rapid rotation. The session is invalidated on `deinit`.
+    private let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.waitsForConnectivity = true
+        config.timeoutIntervalForRequest = 30
+        return URLSession(configuration: config)
+    }()
     private var socketTask: URLSessionWebSocketTask?
     private var currentConnectID: String?
     private var isDisconnecting = false
@@ -53,12 +62,10 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
 
         let connectID = UUID().uuidString
         let request = buildRequest(config: config, connectID: connectID)
-        let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: request)
         task.maximumMessageSize = maximumWebSocketMessageSize
 
         stateLock.withLock {
-            self.session = session
             self.socketTask = task
             self.currentConnectID = connectID
             self.isDisconnecting = false
@@ -133,7 +140,6 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
             droppedAudioFrameCount = 0
             let t = socketTask
             socketTask = nil
-            session = nil
             currentConnectID = nil
             return t
         }
@@ -141,7 +147,13 @@ final class DoubaoSTTProvider: STTProvider, @unchecked Sendable {
         utteranceTrackerLock.withLock {
             utteranceTracker.reset()
         }
+        // Only cancel the per-connect WebSocket task; the long-lived session is reused for
+        // subsequent reconnects and is invalidated in `deinit`.
         task?.cancel(with: .normalClosure, reason: nil)
+    }
+
+    deinit {
+        session.finishTasksAndInvalidate()
     }
 
     func testConnection(config: STTProviderConfig, timeout: TimeInterval = 5) async throws {
@@ -458,18 +470,29 @@ struct UtteranceDiffTracker {
     /// Maps (startTime, endTime) → last known snapshot
     private var seen: [String: UtteranceSnapshot] = [:]
 
-    private static func key(for utterance: DoubaoUtterance) -> String {
-        let start = utterance.startTime ?? -1
-        let end = utterance.endTime ?? -1
-        return "\(start):\(end)"
+    private static func key(for utterance: DoubaoUtterance, ordinal: Int) -> String {
+        if let start = utterance.startTime, let end = utterance.endTime {
+            return "range:\(start):\(end)"
+        }
+
+        if let start = utterance.startTime {
+            return "start:\(start)"
+        }
+
+        if let end = utterance.endTime {
+            return "end:\(end)"
+        }
+
+        let speakerKey = utterance.speakerTag ?? utterance.speakerId.map(String.init) ?? "unknown"
+        return "untimed:\(speakerKey):\(ordinal)"
     }
 
     mutating func diff(_ utterances: [DoubaoUtterance]) -> [Change] {
         var changes: [Change] = []
         var currentKeys: Set<String> = []
 
-        for utterance in utterances {
-            let k = Self.key(for: utterance)
+        for (ordinal, utterance) in utterances.enumerated() {
+            let k = Self.key(for: utterance, ordinal: ordinal)
             currentKeys.insert(k)
 
             let snapshot = UtteranceSnapshot(
@@ -481,7 +504,15 @@ struct UtteranceDiffTracker {
 
             if let prev = seen[k] {
                 if prev != snapshot {
-                    changes.append(.updated(utterance))
+                    // Untimed utterances share an ordinal-only key. The server may reuse
+                    // that slot for a different utterance, so a snapshot change does NOT
+                    // imply a correction of the same underlying chunk — emit it as a new
+                    // chunk to avoid mis-replacing an earlier final by (nil, nil) timing.
+                    if utterance.startTime == nil && utterance.endTime == nil {
+                        changes.append(.new(utterance))
+                    } else {
+                        changes.append(.updated(utterance))
+                    }
                     seen[k] = snapshot
                 }
             } else {

@@ -60,31 +60,21 @@ class AudioManager: NSObject, ObservableObject {
     /// 用于保护 STT provider 原子切换的锁
     private let sttProviderLock = NSLock()
 
-    private final class STTSessionTimeOffset {
-        var milliseconds: Int
-        var isActive: Bool
-
-        init(milliseconds: Int, isActive: Bool) {
-            self.milliseconds = milliseconds
-            self.isActive = isActive
-        }
-    }
-
     private var transcriptAccumulator = TranscriptUpdateAccumulator()
     private var rawTranscriptEvents = RawTranscriptEventRingBuffer(capacity: 20_000)
     private var cancellables = Set<AnyCancellable>()
+    /// `NotificationCenter.addObserver(forName:object:queue:using:)` returns an opaque token
+    /// that must be passed back to `removeObserver`. We need to drop and re-register this
+    /// each time `audioEngine` is replaced, because the observer is filtered by sender.
+    private var audioEngineConfigObserver: NSObjectProtocol?
+    private var willSleepObserver: NSObjectProtocol?
+    private var didWakeObserver: NSObjectProtocol?
 
     private override init() {
         self.sttProviderFactory = DoubaoSTTProviderFactory()
         super.init()
-        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange,
-                                               object: audioEngine,
-                                               queue: .main) { [weak self] _ in
-            guard let self else { return }
-            Task { @MainActor in
-                self.handleAudioEngineConfigurationChange()
-            }
-        }
+        registerAudioEngineConfigObserver()
+        registerSystemPowerObservers()
 
         audioProcessController.activate()
 
@@ -101,7 +91,61 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        let center = NotificationCenter.default
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        if let audioEngineConfigObserver {
+            center.removeObserver(audioEngineConfigObserver)
+        }
+        if let willSleepObserver {
+            workspaceCenter.removeObserver(willSleepObserver)
+        }
+        if let didWakeObserver {
+            workspaceCenter.removeObserver(didWakeObserver)
+        }
+    }
+
+    private func registerAudioEngineConfigObserver() {
+        if let audioEngineConfigObserver {
+            NotificationCenter.default.removeObserver(audioEngineConfigObserver)
+        }
+        audioEngineConfigObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: audioEngine,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleAudioEngineConfigurationChange()
+            }
+        }
+    }
+
+    /// macOS posts `willSleepNotification` *before* sleep takes effect. We finalize the
+    /// recording proactively so the user gets a clean final transcript instead of having
+    /// the WebSocket / mic engine die mid-stream while the lid closes. We do not auto-resume
+    /// on wake: the system audio + mic state after a sleep is unpredictable enough that the
+    /// safer default is to surface a clear stop and let the user start a new session.
+    private func registerSystemPowerObservers() {
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        willSleepObserver = workspaceCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.isRecording, !self.isStoppingRecording else { return }
+                print("💤 System will sleep — finalizing recording before suspend.")
+                self.errorMessage = "系统即将进入睡眠，已自动结束录音。"
+                self.stopRecording()
+            }
+        }
+        didWakeObserver = workspaceCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            print("☀️ System woke up. Recording was stopped at sleep; user must start again manually.")
+        }
     }
 
     func startRecording() {
@@ -179,7 +223,18 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     private func restartMicrophone() {
-        guard isRecording, !isStoppingRecording, micRetryCount < maxMicRetries else { return }
+        guard isRecording, !isStoppingRecording else { return }
+
+        guard micRetryCount < maxMicRetries else {
+            // Out of retries: avoid leaving `isRecoveringSTT` stuck on with no error surfaced.
+            // Surface the failure and stop, so the UI exits the "recovering" state.
+            let message = "Microphone failed to recover after \(maxMicRetries) attempts."
+            print("⛔️ \(message) Stopping recording.")
+            errorMessage = message
+            isRecoveringSTT = false
+            stopRecording()
+            return
+        }
 
         print("🔄 Restarting microphone capture (attempt \(micRetryCount + 1))")
         micRetryCount += 1
@@ -291,6 +346,7 @@ class AudioManager: NSObject, ObservableObject {
         print("🔄 Audio engine reset")
 
         audioEngine = AVAudioEngine()
+        registerAudioEngineConfigObserver()
         print("✨ Fresh audio engine created")
     }
 
@@ -651,7 +707,7 @@ class AudioManager: NSObject, ObservableObject {
         let provider = try await makeConnectedSTTProvider(
             for: source,
             sessionToken: providerSessionID,
-            timeOffset: STTSessionTimeOffset(milliseconds: offsetMilliseconds, isActive: true)
+            offsetMilliseconds: offsetMilliseconds
         )
         guard isActiveSession(providerSessionID) else {
             provider.disconnect()
@@ -671,7 +727,7 @@ class AudioManager: NSObject, ObservableObject {
     private func makeConnectedSTTProvider(
         for source: AudioSource,
         sessionToken: UUID,
-        timeOffset: STTSessionTimeOffset
+        offsetMilliseconds: Int
     ) async throws -> STTProvider {
         let config = APIKeyValidator.shared.currentSTTConfig()
         guard config.isConfigured else {
@@ -682,18 +738,18 @@ class AudioManager: NSObject, ObservableObject {
 
         provider.onTranscriptUpdate = { [weak self] update in
             DispatchQueue.main.async {
-                guard let self, self.sessionID == sessionToken, timeOffset.isActive else { return }
+                guard let self, self.sessionID == sessionToken else { return }
                 self.rawTranscriptEvents.append(
                     RawTranscriptEvent(
                         sessionID: sessionToken,
                         source: source,
-                        providerOffsetMilliseconds: timeOffset.milliseconds,
+                        providerOffsetMilliseconds: offsetMilliseconds,
                         update: update,
                         receivedAt: Date()
                     )
                 )
                 self.handleTranscriptUpdate(
-                    Self.offsetTranscriptUpdate(update, by: timeOffset.milliseconds),
+                    Self.offsetTranscriptUpdate(update, by: offsetMilliseconds),
                     source: source
                 )
             }
@@ -774,11 +830,10 @@ class AudioManager: NSObject, ObservableObject {
 
         do {
             // 1. 先建立新连接
-            let timeOffset = STTSessionTimeOffset(milliseconds: elapsedRecordingMilliseconds(), isActive: true)
             let newProvider = try await makeConnectedSTTProvider(
                 for: source,
                 sessionToken: sessionToken,
-                timeOffset: timeOffset
+                offsetMilliseconds: elapsedRecordingMilliseconds()
             )
             guard isRecording, !isStoppingRecording, sessionID == sessionToken else {
                 newProvider.disconnect()
@@ -823,7 +878,7 @@ class AudioManager: NSObject, ObservableObject {
                 let restoredProvider = try await makeConnectedSTTProvider(
                     for: source,
                     sessionToken: sessionToken,
-                    timeOffset: STTSessionTimeOffset(milliseconds: elapsedRecordingMilliseconds(), isActive: true)
+                    offsetMilliseconds: elapsedRecordingMilliseconds()
                 )
                 sttProviderLock.withLock {
                     guard isActiveSession(sessionToken) else {
@@ -1062,19 +1117,47 @@ class AudioManager: NSObject, ObservableObject {
     private func isRecoverableSTTError(_ message: String) -> Bool {
         let normalized = message.lowercased()
 
-        return normalized.contains("read result timeout")
-            || normalized.contains("server processing timeout")
-            || normalized.contains("execution timeout")
-            || normalized.contains("stream_volume_cal_tob")
-            || normalized.contains("the stream is done")
-            || normalized.contains("big asr send failed")
-            || normalized.contains("session expired")
-            || normalized.contains("socket is not connected")
-            || normalized.contains("connection lost")
-            || normalized.contains("request timeout")
-            || normalized.contains("fail to parse big asr response")
-            || normalized.contains("big asr response code 1021")
-            || normalized.contains("识别处理超时")
+        // Doubao-side transient errors
+        let providerPatterns = [
+            "read result timeout",
+            "server processing timeout",
+            "execution timeout",
+            "stream_volume_cal_tob",
+            "the stream is done",
+            "big asr send failed",
+            "session expired",
+            "fail to parse big asr response",
+            "big asr response code 1021",
+            "识别处理超时"
+        ]
+        // Generic transport-level transient errors (URLError descriptions, POSIX, etc.).
+        // ErrorHandler maps URLError into user-facing strings like "Request timed out" and
+        // "Cannot reach the service" — both of which should retry, not abort the recording.
+        let transportPatterns = [
+            "socket is not connected",
+            "connection lost",
+            "network connection lost",
+            "request timeout",
+            "request timed out",
+            "timed out",
+            "no internet",
+            "cannot reach",
+            "cannot connect to the service",
+            "cannot find host",
+            "secure connection failed",
+            "network is down",
+            "network is unreachable",
+            "the network connection was lost",
+            "software caused connection abort",
+            "网络"
+        ]
+        for pattern in providerPatterns where normalized.contains(pattern) {
+            return true
+        }
+        for pattern in transportPatterns where normalized.contains(pattern) {
+            return true
+        }
+        return false
     }
 
     private func recoverSTTProvider(for source: AudioSource) async {

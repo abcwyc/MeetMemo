@@ -146,22 +146,16 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
 }
 
 extension Array where Element == TranscriptChunk {
-    func sortedByTranscriptTimeline() -> [TranscriptChunk] {
-        sorted { lhs, rhs in
-            switch (lhs.startTime, rhs.startTime) {
-            case let (lhsStart?, rhsStart?) where lhsStart != rhsStart:
-                return lhsStart < rhsStart
-            case (.some, .some):
-                switch (lhs.endTime, rhs.endTime) {
-                case let (lhsEnd?, rhsEnd?) where lhsEnd != rhsEnd:
-                    return lhsEnd < rhsEnd
-                case (.some, nil):
-                    return true
-                case (nil, .some):
-                    return false
-                default:
-                    return lhs.timestamp < rhs.timestamp
-                }
+    /// Strict comparator used by both the immutable and mutating sort variants below.
+    /// Returns `true` when `lhs` should precede `rhs` on the meeting timeline.
+    static func transcriptTimelineComesBefore(_ lhs: TranscriptChunk, _ rhs: TranscriptChunk) -> Bool {
+        switch (lhs.timelineSortStart, rhs.timelineSortStart) {
+        case let (lhsStart?, rhsStart?) where lhsStart != rhsStart:
+            return lhsStart < rhsStart
+        case (.some, .some):
+            switch (lhs.timelineSortEnd, rhs.timelineSortEnd) {
+            case let (lhsEnd?, rhsEnd?) where lhsEnd != rhsEnd:
+                return lhsEnd < rhsEnd
             case (.some, nil):
                 return true
             case (nil, .some):
@@ -169,7 +163,35 @@ extension Array where Element == TranscriptChunk {
             default:
                 return lhs.timestamp < rhs.timestamp
             }
+        case (.some, nil):
+            return true
+        case (nil, .some):
+            return false
+        default:
+            return lhs.timestamp < rhs.timestamp
         }
+    }
+
+    func sortedByTranscriptTimeline() -> [TranscriptChunk] {
+        sorted(by: Array.transcriptTimelineComesBefore)
+    }
+
+    /// In-place sort. Swift's Timsort runs in O(N) on already-sorted input and avoids the
+    /// per-call allocation that `sortedByTranscriptTimeline()` would otherwise incur, so
+    /// hot streaming paths should prefer this variant.
+    mutating func sortByTranscriptTimeline() {
+        sort(by: Array.transcriptTimelineComesBefore)
+    }
+
+    /// O(N) check used to skip sorting when the caller already maintains order.
+    func isSortedByTranscriptTimeline() -> Bool {
+        guard count > 1 else { return true }
+        for i in 1..<count {
+            if Array.transcriptTimelineComesBefore(self[i], self[i - 1]) {
+                return false
+            }
+        }
+        return true
     }
 
     func mergingTranscriptCorrections(
@@ -183,6 +205,16 @@ extension Array where Element == TranscriptChunk {
         guard !missingFinalChunks.isEmpty else { return self }
 
         return (self + missingFinalChunks).sortedByTranscriptTimeline()
+    }
+}
+
+private extension TranscriptChunk {
+    var timelineSortStart: Int? {
+        startTime ?? endTime
+    }
+
+    var timelineSortEnd: Int? {
+        endTime ?? startTime
     }
 }
 
@@ -907,7 +939,13 @@ struct Meeting: Codable, Identifiable, Hashable {
         var groupedChunks: [TranscriptDisplayChunk] = []
         var currentGroup: TranscriptDisplayGroup?
 
-        for chunk in transcriptChunks.sortedByTranscriptTimeline() {
+        // The accumulator already maintains chunks in timeline order during a live recording,
+        // so we can skip an O(N log N) re-sort (and the array allocation) when possible.
+        let orderedChunks: [TranscriptChunk] = transcriptChunks.isSortedByTranscriptTimeline()
+            ? transcriptChunks
+            : transcriptChunks.sortedByTranscriptTimeline()
+
+        for chunk in orderedChunks {
             let trimmedText = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedText.isEmpty else { continue }
 
@@ -1240,9 +1278,7 @@ private struct TranscriptDisplayGroup {
             return false
         }
 
-        guard let currentEnd = endTime, let nextStart = chunk.startTime else {
-            return true
-        }
+        guard let currentEnd = endTime, let nextStart = chunk.startTime else { return false }
 
         return max(0, nextStart - currentEnd) <= Self.maximumMergeGapMilliseconds
     }

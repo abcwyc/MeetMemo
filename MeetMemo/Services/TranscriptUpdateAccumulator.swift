@@ -38,6 +38,7 @@ struct TranscriptUpdateAccumulator {
     mutating func removeAllInterimState() {
         interimStates.removeAll()
         latestInterimKeyBySource.removeAll()
+        chunks.removeAll { !$0.isFinal }
     }
 
     mutating func apply(_ update: STTTranscriptUpdate, source: AudioSource) {
@@ -197,7 +198,11 @@ struct TranscriptUpdateAccumulator {
             guard Self.speakersAreCompatible(chunk, update) else { return false }
 
             let chunkText = Self.normalizedText(chunk.text)
-            guard chunkText != updateText else { return false }
+            if chunkText == updateText {
+                // Same text: only keep if ranges are concretely non-overlapping (distinct utterances).
+                // Otherwise treat as duplicate and remove the older entry.
+                return !Self.hasConcreteNonOverlappingRanges(chunk, update)
+            }
             guard Self.areIncrementalVersions(chunkText, updateText) else { return false }
 
             // Distinct utterances can legitimately share a long opening.
@@ -270,7 +275,15 @@ struct TranscriptUpdateAccumulator {
             return false
         }
 
-        return max(chunkStart, updateStart) < min(chunkEnd, updateEnd)
+        // Point-time chunks (start == end) come from low-confidence text-only fallbacks
+        // anchored to the global elapsed timestamp. Treat them as overlapping if the point
+        // falls within the other interval, so newer finals can supersede stale interims.
+        let lo = max(chunkStart, updateStart)
+        let hi = min(chunkEnd, updateEnd)
+        if chunkStart == chunkEnd || updateStart == updateEnd {
+            return lo <= hi
+        }
+        return lo < hi
     }
 
     private static func hasConcreteNonOverlappingRanges(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
@@ -289,10 +302,11 @@ struct TranscriptUpdateAccumulator {
     }
 
     private mutating func sortChunksByTimeline() {
-        // 只有在需要时才排序，避免不必要的性能开销
+        // 只有在需要时才排序，避免不必要的性能开销。
+        // 使用 in-place sort 避免每次 apply 分配新数组——Swift Timsort 对已序输入是 O(N)。
         guard !isSorted else { return }
 
-        chunks = chunks.sortedByTranscriptTimeline()
+        chunks.sortByTranscriptTimeline()
         isSorted = true
     }
 }

@@ -139,4 +139,56 @@ final class MeetingTranscriptFormattingTests: XCTestCase {
             ]
         )
     }
+
+    func testEndOnlyChunkSortsByItsKnownTimelinePosition() {
+        let meeting = Meeting(transcriptChunks: [
+            TranscriptChunk(
+                source: .mic,
+                text: "后面的内容",
+                isFinal: true,
+                speakerTag: "speaker-2",
+                startTime: 3_000,
+                endTime: 5_000
+            ),
+            TranscriptChunk(
+                source: .mic,
+                text: "开头只有结束时间",
+                isFinal: true,
+                speakerTag: "speaker-1",
+                startTime: nil,
+                endTime: 2_000
+            )
+        ])
+
+        XCTAssertEqual(
+            meeting.transcriptDisplayChunks.map(\.text),
+            ["开头只有结束时间", "后面的内容"]
+        )
+    }
+
+    func testDisplayGroupingDoesNotMergeChunkWithMissingStartTime() {
+        let meeting = Meeting(transcriptChunks: [
+            TranscriptChunk(
+                source: .mic,
+                text: "第一段",
+                isFinal: true,
+                speakerTag: "speaker-1",
+                startTime: 1_000,
+                endTime: 2_000
+            ),
+            TranscriptChunk(
+                source: .mic,
+                text: "只有结束时间",
+                isFinal: true,
+                speakerTag: "speaker-1",
+                startTime: nil,
+                endTime: 2_500
+            )
+        ])
+
+        XCTAssertEqual(
+            meeting.transcriptDisplayChunks.map(\.text),
+            ["第一段", "只有结束时间"]
+        )
+    }
 }

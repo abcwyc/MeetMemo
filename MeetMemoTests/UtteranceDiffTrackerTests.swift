@@ -39,6 +39,26 @@ final class UtteranceDiffTrackerTests: XCTestCase {
         XCTAssertEqual(utterances.first?.endTime, 980)
     }
 
+    func testUntimedUtterancesUseOrdinalIdentityWithoutColliding() throws {
+        var tracker = UtteranceDiffTracker()
+
+        let first = try decodeUtterances("""
+        [
+          {"text":"first draft","definite":false,"speaker_id":"1"},
+          {"text":"second draft","definite":false,"speaker_id":"1"}
+        ]
+        """)
+        XCTAssertEqual(tracker.diff(first).count, 2)
+
+        let updated = try decodeUtterances("""
+        [
+          {"text":"first final","definite":true,"speaker_id":"1"},
+          {"text":"second final","definite":true,"speaker_id":"1"}
+        ]
+        """)
+        XCTAssertEqual(tracker.diff(updated).count, 2)
+    }
+
     private func decodeUtterances(_ json: String) throws -> [DoubaoUtterance] {
         try JSONDecoder().decode([DoubaoUtterance].self, from: Data(json.utf8))
     }

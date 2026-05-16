@@ -48,7 +48,10 @@ struct DoubaoFrame {
 
     static func encodeAudioData(pcmData: Data, sequence: Int32, isLast: Bool) throws -> Data {
         let compressedAudio = try gzipCompress(pcmData)
-        let sequenceValue = isLast ? -abs(sequence) : abs(sequence)
+        // `abs(Int32.min)` traps. Saturating-add wrap-around in the caller is unreachable
+        // in practice (>2.1B frames per session), but clamp here to keep encoding total.
+        let magnitude: Int32 = sequence == .min ? .max : abs(sequence)
+        let sequenceValue = isLast ? -magnitude : magnitude
 
         var frame = buildHeader(
             messageType: .audioOnlyRequest,
