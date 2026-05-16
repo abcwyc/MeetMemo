@@ -61,6 +61,7 @@ struct TranscriptUpdateAccumulator {
                 arrivalUptimeMilliseconds: chunks[finalIndex].arrivalUptimeMilliseconds
             )
             removeMatchingInterims(for: resolvedUpdate, source: source)
+            removeCrossSourceEchoes(for: resolvedUpdate, source: source)
             sortChunksByTimeline()
             return
         }
@@ -96,6 +97,7 @@ struct TranscriptUpdateAccumulator {
                     isLowConfidence: resolvedUpdate.isLowConfidence
                 ))
             }
+            removeCrossSourceEchoes(for: resolvedUpdate, source: source)
             sortChunksByTimeline()
             return
         }
@@ -170,7 +172,8 @@ struct TranscriptUpdateAccumulator {
             $0.source == source
                 && !$0.isFinal
                 && (Self.hasExactConcreteRangeMatch($0, update)
-                    || Self.intervalsOverlap($0, update))
+                    || Self.intervalsOverlap($0, update)
+                    || Self.chunkStartFallsInUpdateRange($0, update))
         }
     }
 
@@ -185,6 +188,34 @@ struct TranscriptUpdateAccumulator {
             return false
         }
         return chunkStart == updateStart && chunkEnd == updateEnd
+    }
+
+    /// Interim chunk has only startTime (no endTime, shows as single timestamp in UI).
+    /// Remove it when its startTime falls within the final's concrete [start, end] range.
+    private static func chunkStartFallsInUpdateRange(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
+        guard let chunkStart = chunk.startTime,
+              chunk.endTime == nil,
+              let updateStart = update.startTime,
+              let updateEnd = update.endTime else {
+            return false
+        }
+        return chunkStart >= updateStart && chunkStart <= updateEnd
+    }
+
+    /// When a system-audio final arrives, removes mic final chunks that are near-duplicates
+    /// with overlapping time windows. Mic capturing speaker output acoustically (room echo)
+    /// is the common cause; system audio is the authoritative digital copy.
+    private mutating func removeCrossSourceEchoes(for update: STTTranscriptUpdate, source: AudioSource) {
+        guard source == .system else { return }
+        let updateText = Self.normalizedText(update.text)
+        guard updateText.count >= 12 else { return }
+
+        chunks.removeAll { chunk in
+            guard chunk.source == .mic, chunk.isFinal else { return false }
+            let chunkText = Self.normalizedText(chunk.text)
+            guard Self.areIncrementalVersions(chunkText, updateText) else { return false }
+            return Self.intervalsOverlap(chunk, update)
+        }
     }
 
     private mutating func removeSupersededIncrementalChunks(for update: STTTranscriptUpdate, source: AudioSource) {
