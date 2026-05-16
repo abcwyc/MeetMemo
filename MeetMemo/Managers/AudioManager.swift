@@ -265,10 +265,6 @@ class AudioManager: NSObject, ObservableObject {
         guard isActiveSession(sessionToken) else { return false }
 
         do {
-            // 用 connect 时刻的 elapsed 作为该路时间基准，避免 mic 与 system 因顺序 connect 而错位。
-            _ = try await connectSTTProvider(for: .mic, offsetMilliseconds: elapsedRecordingMilliseconds())
-            guard isActiveSession(sessionToken) else { return false }
-
             let inputNode = audioEngine.inputNode
             let recordingFormat = inputNode.outputFormat(forBus: 0)
 
@@ -280,6 +276,22 @@ class AudioManager: NSObject, ObservableObject {
                 restartMicrophone()
                 return false
             }
+
+            // Start the audio engine before awaiting the STT connection so the UI
+            // shows recording state immediately. Tap is installed after STT connects;
+            // the few hundred ms of audio captured before that is discarded (pipeline nil).
+            audioEngine.prepare()
+            try audioEngine.start()
+            guard isActiveSession(sessionToken) else {
+                cleanupAudioEngine()
+                return false
+            }
+            markRecordingActive(sessionToken: sessionToken)
+
+            // Connect STT after the engine is running. Use elapsed time at connect
+            // moment as the timeline offset so mic and system audio stay aligned.
+            _ = try await connectSTTProvider(for: .mic, offsetMilliseconds: elapsedRecordingMilliseconds())
+            guard isActiveSession(sessionToken) else { return false }
 
             guard let pipeline = makeAudioPipeline(
                 source: .mic,
@@ -308,15 +320,8 @@ class AudioManager: NSObject, ObservableObject {
                 self.micAudioPipeline?.enqueue(buffer)
             }
 
-            audioEngine.prepare()
-            try audioEngine.start()
-            guard isActiveSession(sessionToken) else {
-                cleanupAudioEngine()
-                return false
-            }
             print("✅ Microphone tap started successfully")
             micRetryCount = 0
-            markRecordingActive(sessionToken: sessionToken)
             return true
         } catch {
             guard isActiveSession(sessionToken) else { return false }
