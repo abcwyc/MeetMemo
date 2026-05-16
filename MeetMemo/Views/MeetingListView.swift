@@ -520,6 +520,7 @@ struct MeetingRowView: View {
 // MARK: - Transcript Chunk Row
 
 struct TranscriptChunkRowView: View {
+    @EnvironmentObject var langMgr: LanguageManager
     let chunk: TranscriptDisplayChunk
 
     var body: some View {
@@ -533,7 +534,7 @@ struct TranscriptChunkRowView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(chunk.sourceLabel)
+                    Text(displaySourceLabel)
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundColor(chunk.source == .mic ? .blue : .orange)
@@ -543,6 +544,20 @@ struct TranscriptChunkRowView: View {
                             .font(.subheadline)
                             .fontWeight(.semibold)
                             .foregroundColor(.primary)
+                    }
+
+                    if !chunk.isFinal {
+                        transcriptStatusLabel(
+                            langMgr.t("识别中", "Listening"),
+                            foregroundColor: .blue,
+                            backgroundColor: .blue.opacity(0.10)
+                        )
+                    } else if chunk.isLowConfidence {
+                        transcriptStatusLabel(
+                            langMgr.t("低置信", "Low confidence"),
+                            foregroundColor: .orange,
+                            backgroundColor: .orange.opacity(0.12)
+                        )
                     }
 
                     Spacer(minLength: 8)
@@ -562,6 +577,29 @@ struct TranscriptChunkRowView: View {
         }
         .padding(.vertical, 4)
         .opacity(chunk.isFinal ? 1.0 : 0.9)
+    }
+
+    private func transcriptStatusLabel(
+        _ title: String,
+        foregroundColor: Color,
+        backgroundColor: Color
+    ) -> some View {
+        Text(title)
+            .font(.caption2)
+            .foregroundColor(foregroundColor)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(backgroundColor)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
+    private var displaySourceLabel: String {
+        switch chunk.source {
+        case .mic:
+            return langMgr.t("麦克风", "mic")
+        case .system:
+            return langMgr.t("系统音频", "online")
+        }
     }
 }
 
@@ -1379,20 +1417,19 @@ struct MeetingDetailContentView: View {
     @ViewBuilder
     private var meetingSummaryCard: some View {
         if !viewModel.meeting.oneLiner.isEmpty {
-            HStack {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.secondary)
+                    .font(.caption)
                 Text(viewModel.meeting.oneLiner)
-                    .font(.callout.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .italic()
                 Spacer()
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.gray.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Color.gray.opacity(0.12), lineWidth: 1)
-            )
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             .padding(.bottom, 8)
         }
     }
@@ -1844,6 +1881,7 @@ private struct TranscriptListView: View {
     @EnvironmentObject var langMgr: LanguageManager
     let displayChunks: [TranscriptDisplayChunk]
     private let bottomAnchorID = "transcript-bottom-anchor"
+    @State private var isAtBottom = true
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -1861,6 +1899,8 @@ private struct TranscriptListView: View {
                         Color.clear
                             .frame(height: 1)
                             .id(bottomAnchorID)
+                            .onAppear { isAtBottom = true }
+                            .onDisappear { isAtBottom = false }
                     }
                     .padding()
                 }
@@ -1869,7 +1909,9 @@ private struct TranscriptListView: View {
                 scrollToBottom(proxy)
             }
             .onChange(of: displayChunks) { _, _ in
-                scrollToBottom(proxy)
+                if isAtBottom {
+                    scrollToBottom(proxy)
+                }
             }
         }
         .frame(maxHeight: .infinity)
