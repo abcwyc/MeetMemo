@@ -13,19 +13,12 @@ struct TranscriptUpdateAccumulator {
     private var interimStates: [String: InterimTranscriptState] = [:]
     private var latestInterimKeyBySource: [AudioSource: String] = [:]
 
-    /// 记录是否已经有序，避免不必要的排序
-    private var isSorted: Bool = true
-
     init(chunks: [TranscriptChunk] = []) {
-        // 初始化时先排序
-        self.chunks = chunks.sortedByTranscriptTimeline()
-        isSorted = true
+        self.chunks = chunks
     }
 
     mutating func reset(chunks: [TranscriptChunk] = []) {
-        // 重置时先排序
-        self.chunks = chunks.sortedByTranscriptTimeline()
-        isSorted = true
+        self.chunks = chunks
         interimStates.removeAll()
         latestInterimKeyBySource.removeAll()
     }
@@ -43,7 +36,6 @@ struct TranscriptUpdateAccumulator {
 
     mutating func apply(_ update: STTTranscriptUpdate, source: AudioSource) {
         let resolvedUpdate = resolved(update, source: source)
-        isSorted = false // 任何修改都会导致数组可能无序
 
         if update.isCorrection,
            let finalIndex = matchingChunkIndex(for: resolvedUpdate, source: source, isFinal: true) {
@@ -61,7 +53,6 @@ struct TranscriptUpdateAccumulator {
                 arrivalUptimeMilliseconds: chunks[finalIndex].arrivalUptimeMilliseconds
             )
             removeMatchingInterims(for: resolvedUpdate, source: source)
-            removeCrossSourceEchoes(for: resolvedUpdate, source: source)
             sortChunksByTimeline()
             return
         }
@@ -97,7 +88,6 @@ struct TranscriptUpdateAccumulator {
                     isLowConfidence: resolvedUpdate.isLowConfidence
                 ))
             }
-            removeCrossSourceEchoes(for: resolvedUpdate, source: source)
             sortChunksByTimeline()
             return
         }
@@ -177,9 +167,8 @@ struct TranscriptUpdateAccumulator {
         }
     }
 
-    /// Two updates only count as the "same" interim window when both sides have explicit
-    /// (startTime, endTime) and they are equal. Nil-on-nil must not be treated as a match,
-    /// or any timing-less low-confidence update could silently wipe earlier interim drafts.
+    /// Requires both sides to have explicit (startTime, endTime). Nil-on-nil is not a match:
+    /// a timing-less low-confidence update must not silently wipe earlier interim drafts.
     private static func hasExactConcreteRangeMatch(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
         guard let chunkStart = chunk.startTime,
               let chunkEnd = chunk.endTime,
@@ -202,26 +191,10 @@ struct TranscriptUpdateAccumulator {
         return chunkStart >= updateStart && chunkStart <= updateEnd
     }
 
-    /// When a system-audio final arrives, removes mic final chunks that are near-duplicates
-    /// with overlapping time windows. Mic capturing speaker output acoustically (room echo)
-    /// is the common cause; system audio is the authoritative digital copy.
-    private mutating func removeCrossSourceEchoes(for update: STTTranscriptUpdate, source: AudioSource) {
-        guard source == .system else { return }
-        let updateText = Self.normalizedText(update.text)
-        guard updateText.count >= 12 else { return }
-
-        chunks.removeAll { chunk in
-            guard chunk.source == .mic, chunk.isFinal else { return false }
-            let chunkText = Self.normalizedText(chunk.text)
-            guard Self.areIncrementalVersions(chunkText, updateText) else { return false }
-            return Self.intervalsOverlap(chunk, update)
-        }
-    }
-
     private mutating func removeSupersededIncrementalChunks(for update: STTTranscriptUpdate, source: AudioSource) {
         let updateText = Self.normalizedText(update.text)
         guard updateText.count >= 4 else { return }
-        let nowUptimeMilliseconds = Int(ProcessInfo.processInfo.systemUptime * 1000)
+        let now = Date()
 
         chunks.removeAll { chunk in
             guard chunk.source == source else { return false }
@@ -229,15 +202,11 @@ struct TranscriptUpdateAccumulator {
             guard Self.speakersAreCompatible(chunk, update) else { return false }
 
             let chunkText = Self.normalizedText(chunk.text)
-            if chunkText == updateText {
-                // Same text: only keep if ranges are concretely non-overlapping (distinct utterances).
-                // Otherwise treat as duplicate and remove the older entry.
-                return !Self.hasConcreteNonOverlappingRanges(chunk, update)
-            }
+            guard chunkText != updateText else { return false }
             guard Self.areIncrementalVersions(chunkText, updateText) else { return false }
 
-            // Distinct utterances can legitimately share a long opening.
-            // Once both sides have concrete, non-overlapping ranges, preserve them.
+            // Two utterances with distinct, non-overlapping concrete ranges are separate
+            // speech segments — don't let the 90-second window collapse them.
             if Self.hasConcreteNonOverlappingRanges(chunk, update) {
                 return false
             }
@@ -246,7 +215,7 @@ struct TranscriptUpdateAccumulator {
                 return true
             }
 
-            if abs(nowUptimeMilliseconds - chunk.arrivalUptimeMilliseconds) <= 90_000 {
+            if abs(now.timeIntervalSince(chunk.timestamp)) <= 90 {
                 return true
             }
 
@@ -259,6 +228,17 @@ struct TranscriptUpdateAccumulator {
         }
     }
 
+    private static func hasConcreteNonOverlappingRanges(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
+        guard let chunkStart = chunk.startTime,
+              let chunkEnd = chunk.endTime,
+              let updateStart = update.startTime,
+              let updateEnd = update.endTime else {
+            return false
+        }
+        guard chunkStart < chunkEnd, updateStart < updateEnd else { return false }
+        return !intervalsOverlap(chunk, update)
+    }
+
     private static func areIncrementalVersions(_ lhs: String, _ rhs: String) -> Bool {
         guard lhs.count >= 4, rhs.count >= 4 else { return false }
         if lhs.hasPrefix(rhs) || rhs.hasPrefix(lhs) {
@@ -268,8 +248,7 @@ struct TranscriptUpdateAccumulator {
         let shorter = lhs.count <= rhs.count ? lhs : rhs
         let longer = lhs.count <= rhs.count ? rhs : lhs
         let commonPrefix = zip(shorter, longer).prefix { $0 == $1 }.count
-        let requiredPrefix = max(12, Int(ceil(Double(shorter.count) * 0.8)))
-        return commonPrefix >= min(shorter.count, requiredPrefix)
+        return commonPrefix >= min(shorter.count, 12)
     }
 
     private static func speakersAreCompatible(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
@@ -306,9 +285,7 @@ struct TranscriptUpdateAccumulator {
             return false
         }
 
-        // Point-time chunks (start == end) come from low-confidence text-only fallbacks
-        // anchored to the global elapsed timestamp. Treat them as overlapping if the point
-        // falls within the other interval, so newer finals can supersede stale interims.
+        // Point-time chunks (start == end) use <= so boundary matches are treated as overlap.
         let lo = max(chunkStart, updateStart)
         let hi = min(chunkEnd, updateEnd)
         if chunkStart == chunkEnd || updateStart == updateEnd {
@@ -317,27 +294,18 @@ struct TranscriptUpdateAccumulator {
         return lo < hi
     }
 
-    private static func hasConcreteNonOverlappingRanges(_ chunk: TranscriptChunk, _ update: STTTranscriptUpdate) -> Bool {
-        guard let chunkStart = chunk.startTime,
-              let chunkEnd = chunk.endTime,
-              let updateStart = update.startTime,
-              let updateEnd = update.endTime else {
-            return false
-        }
-
-        guard chunkStart < chunkEnd, updateStart < updateEnd else {
-            return false
-        }
-
-        return !intervalsOverlap(chunk, update)
-    }
-
     private mutating func sortChunksByTimeline() {
-        // 只有在需要时才排序，避免不必要的性能开销。
-        // 使用 in-place sort 避免每次 apply 分配新数组——Swift Timsort 对已序输入是 O(N)。
-        guard !isSorted else { return }
-
-        chunks.sortByTranscriptTimeline()
-        isSorted = true
+        chunks.sort { lhs, rhs in
+            switch (lhs.startTime, rhs.startTime) {
+            case let (lhsStart?, rhsStart?) where lhsStart != rhsStart:
+                return lhsStart < rhsStart
+            case (.some, nil):
+                return true
+            case (nil, .some):
+                return false
+            default:
+                return lhs.timestamp < rhs.timestamp
+            }
+        }
     }
 }
