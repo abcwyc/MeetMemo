@@ -10,7 +10,9 @@ final class AudioFileTranscriber {
 
     private let sttProviderFactory: STTProviderFactory
 
-    private init(sttProviderFactory: STTProviderFactory = DoubaoSTTProviderFactory()) {
+    private init(sttProviderFactory: STTProviderFactory = SpeechAnalyzerSTTProviderFactory(
+        locale: Locale(identifier: UserDefaultsManager.shared.sttLocaleIdentifier)
+    )) {
         self.sttProviderFactory = sttProviderFactory
     }
 
@@ -18,14 +20,6 @@ final class AudioFileTranscriber {
         url: URL,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AudioFileTranscriptionResult {
-        let validationResult = await APIKeyValidator.shared.validateSTTConfig(APIKeyValidator.shared.currentSTTConfig())
-        switch validationResult {
-        case .success:
-            break
-        case .failure(let error):
-            throw error
-        }
-
         let state = AudioFileTranscriptionState()
         let provider = sttProviderFactory.makeProvider()
 
@@ -185,21 +179,17 @@ final class AudioFileTranscriber {
 }
 
 private actor AudioFileTranscriptionState {
-    private var transcriptAccumulator = TranscriptUpdateAccumulator()
+    private var chunks: [TranscriptChunk] = []
+    private var activeInterimId: UUID?
     private var errorMessageValue: String?
     private var updateCountValue = 0
     private var isFinalizing = false
 
-    var errorMessage: String? {
-        errorMessageValue
-    }
-
-    var updateCount: Int {
-        updateCountValue
-    }
+    var errorMessage: String? { errorMessageValue }
+    var updateCount: Int { updateCountValue }
 
     func finalChunks() -> [TranscriptChunk] {
-        transcriptAccumulator.chunks.filter { $0.isFinal }
+        chunks.filter { $0.isFinal }
     }
 
     func beginFinalizing() {
@@ -207,16 +197,45 @@ private actor AudioFileTranscriptionState {
     }
 
     func recordError(_ message: String, isTransportError: Bool) {
-        if isFinalizing && isTransportError && !transcriptAccumulator.chunks.isEmpty {
-            return
-        }
-
+        if isFinalizing && isTransportError && !chunks.isEmpty { return }
         errorMessageValue = message
     }
 
     func apply(_ update: STTTranscriptUpdate, source: AudioSource) {
         updateCountValue += 1
-        transcriptAccumulator.apply(update, source: source)
+        if update.isFinal {
+            if let id = activeInterimId {
+                chunks.removeAll { $0.id == id }
+                activeInterimId = nil
+            }
+            chunks.append(TranscriptChunk(
+                source: source,
+                text: update.text,
+                isFinal: true,
+                speakerTag: update.speakerTag,
+                speakerId: update.speakerId,
+                startTime: update.startTime,
+                endTime: update.endTime
+            ))
+        } else {
+            let id = activeInterimId ?? UUID()
+            let chunk = TranscriptChunk(
+                id: id,
+                source: source,
+                text: update.text,
+                isFinal: false,
+                speakerTag: update.speakerTag,
+                speakerId: update.speakerId,
+                startTime: update.startTime,
+                endTime: update.endTime
+            )
+            if let idx = chunks.firstIndex(where: { $0.id == id }) {
+                chunks[idx] = chunk
+            } else {
+                chunks.append(chunk)
+                activeInterimId = id
+            }
+        }
     }
 }
 

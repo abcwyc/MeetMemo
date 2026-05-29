@@ -28,15 +28,13 @@ class AudioManager: NSObject, ObservableObject {
     private var micAudioPipeline: AudioProcessingPipeline?
     private var systemAudioPipeline: AudioProcessingPipeline?
     private var startRecordingTask: Task<Void, Never>?
-    private var sttRotationTask: Task<Void, Never>?
     private var micRestartTask: Task<Void, Never>?
-    private var rotatingSTTSources: Set<AudioSource> = []
-    private let sttRotationInterval: UInt64 = 25 * 60 * 1_000_000_000
-    /// stop / rotate 时等待 STT 最终结果的上限。安静期由 provider 内部判定；这里只是兜底。
-    private let finalFlushTimeout: TimeInterval = 5.0
-    private var recordingStartedAtUptime: TimeInterval?
+    private let finalFlushTimeout: TimeInterval = 2.0
     private var recordingBaseOffsetMilliseconds = 0
     private var recordingStateMachine = AudioRecordingStateMachine()
+
+    /// Tracks the active interim chunk id per source for replace-on-update semantics.
+    private var activeInterimChunkId: [AudioSource: UUID] = [:]
 
     // Unique identifier for the current recording session
     private var sessionID = UUID()
@@ -52,16 +50,6 @@ class AudioManager: NSObject, ObservableObject {
     private var micRetryCount = 0
     private let maxMicRetries = 3
 
-    /// 各路 STT 的暂时错误重试计数，成功一次就重置。
-    private var sttRecoveryAttempts: [AudioSource: Int] = [:]
-    private var sttRecoveryTasks: [AudioSource: Task<Void, Never>] = [:]
-    private let maxSTTRecoveryAttempts = 4
-
-    /// 用于保护 STT provider 原子切换的锁
-    private let sttProviderLock = NSLock()
-
-    private var transcriptAccumulator = TranscriptUpdateAccumulator()
-    private var rawTranscriptEvents = RawTranscriptEventRingBuffer(capacity: 20_000)
     private var cancellables = Set<AnyCancellable>()
     /// `NotificationCenter.addObserver(forName:object:queue:using:)` returns an opaque token
     /// that must be passed back to `removeObserver`. We need to drop and re-register this
@@ -71,7 +59,9 @@ class AudioManager: NSObject, ObservableObject {
     private var didWakeObserver: NSObjectProtocol?
 
     private override init() {
-        self.sttProviderFactory = DoubaoSTTProviderFactory()
+        self.sttProviderFactory = SpeechAnalyzerSTTProviderFactory(
+            locale: Locale(identifier: UserDefaultsManager.shared.sttLocaleIdentifier)
+        )
         super.init()
         registerAudioEngineConfigObserver()
         registerSystemPowerObservers()
@@ -122,9 +112,7 @@ class AudioManager: NSObject, ObservableObject {
 
     /// macOS posts `willSleepNotification` *before* sleep takes effect. We finalize the
     /// recording proactively so the user gets a clean final transcript instead of having
-    /// the WebSocket / mic engine die mid-stream while the lid closes. We do not auto-resume
-    /// on wake: the system audio + mic state after a sleep is unpredictable enough that the
-    /// safer default is to surface a clear stop and let the user start a new session.
+    /// the engine die mid-stream while the lid closes. We do not auto-resume on wake.
     private func registerSystemPowerObservers() {
         let workspaceCenter = NSWorkspace.shared.notificationCenter
         willSleepObserver = workspaceCenter.addObserver(
@@ -156,26 +144,17 @@ class AudioManager: NSObject, ObservableObject {
         let startedSessionID = sessionID
         recordingStateMachine.start(sessionID: startedSessionID)
         errorMessage = nil
-        recordingStartedAtUptime = ProcessInfo.processInfo.systemUptime
         transcriptChunks = transcriptChunks.filter(\.isFinal)
         recordingBaseOffsetMilliseconds = Self.maximumTranscriptEndTime(in: transcriptChunks)
-        transcriptAccumulator.reset(chunks: transcriptChunks)
-        rawTranscriptEvents.removeAll()
-        sttRecoveryAttempts.removeAll()
-        sttRecoveryTasks.values.forEach { $0.cancel() }
-        sttRecoveryTasks.removeAll()
+        activeInterimChunkId.removeAll()
 
         startRecordingTask?.cancel()
         startRecordingTask = Task { [weak self] in
             guard let self else { return }
             guard !Task.isCancelled else { return }
             let micStarted = await self.startMicrophoneTap(sessionToken: startedSessionID)
-            if micStarted, !Task.isCancelled {
+            if micStarted, !Task.isCancelled, UserDefaultsManager.shared.enableSystemAudioSTT {
                 await self.startSystemAudioTap(isInitialStart: true, sessionToken: startedSessionID)
-            }
-            guard !Task.isCancelled else { return }
-            if self.isRecording, self.sessionID == startedSessionID, !self.isStoppingRecording {
-                self.startSTTRotationTimer(for: startedSessionID)
             }
         }
     }
@@ -185,21 +164,14 @@ class AudioManager: NSObject, ObservableObject {
     private func abortRecording() {
         print("Internal cleanup...")
 
-        stopSTTRotationTimer()
         stopStartRecordingTask()
         stopMicRestartTask()
-        // 取消系统音频恢复任务与所有 STT 退避重连任务
-        systemAudioRecoveryTask?.cancel()
-        systemAudioRecoveryTask = nil
-        sttRecoveryTasks.values.forEach { $0.cancel() }
-        sttRecoveryTasks.removeAll()
         stopAudioPipelines()
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
         isStoppingRecording = true
         sessionID = UUID()
         isRecording = false
-        recordingStartedAtUptime = nil
         recordingBaseOffsetMilliseconds = 0
         AudioLevelManager.shared.updateRecordingState(false)
 
@@ -214,7 +186,6 @@ class AudioManager: NSObject, ObservableObject {
 
         cleanupAudioEngine()
         disconnectSTTProviders()
-        transcriptAccumulator.removeAllInterimState()
         recordingStateMachine.reset()
         isRecoveringSTT = false
         isStoppingRecording = false
@@ -226,8 +197,6 @@ class AudioManager: NSObject, ObservableObject {
         guard isRecording, !isStoppingRecording else { return }
 
         guard micRetryCount < maxMicRetries else {
-            // Out of retries: avoid leaving `isRecoveringSTT` stuck on with no error surfaced.
-            // Surface the failure and stop, so the UI exits the "recovering" state.
             let message = "Microphone failed to recover after \(maxMicRetries) attempts."
             print("⛔️ \(message) Stopping recording.")
             errorMessage = message
@@ -241,7 +210,6 @@ class AudioManager: NSObject, ObservableObject {
         let restartSessionID = sessionID
 
         cleanupAudioEngine()
-        // markRecordingActive will clear this once the mic tap is back online.
         isRecoveringSTT = true
 
         micRestartTask?.cancel()
@@ -288,9 +256,7 @@ class AudioManager: NSObject, ObservableObject {
             }
             markRecordingActive(sessionToken: sessionToken)
 
-            // Connect STT after the engine is running. Use elapsed time at connect
-            // moment as the timeline offset so mic and system audio stay aligned.
-            _ = try await connectSTTProvider(for: .mic, offsetMilliseconds: elapsedRecordingMilliseconds())
+            _ = try await connectSTTProvider(for: .mic)
             guard isActiveSession(sessionToken) else { return false }
 
             guard let pipeline = makeAudioPipeline(
@@ -377,8 +343,7 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         do {
-            // 用 connect 时刻的 elapsed 作为该路时间基准，与 mic 共享 wall-clock 锚点。
-            _ = try await connectSTTProvider(for: .system, offsetMilliseconds: elapsedRecordingMilliseconds())
+            _ = try await connectSTTProvider(for: .system)
             guard isActiveSession(activeSessionToken) else { return }
 
             let allProcessObjectIDs = audioProcessController.processes.map { $0.objectID }
@@ -430,14 +395,8 @@ class AudioManager: NSObject, ObservableObject {
             guard isActiveSession(activeSessionToken) else { return }
             let errorMsg = ErrorHandler.shared.handleError(error)
             print("❌ Failed to connect system STT provider: \(errorMsg)")
-            if ErrorHandler.shared.isConcurrencyQuotaErrorMessage(errorMsg), isRecording {
-                disableSystemAudioAfterConcurrencyLimit(message: errorMsg)
-                return
-            }
-            errorMessage = errorMsg
-            if !isRestart {
-                abortRecording()
-            }
+            // System audio STT failure: degrade to mic-only without aborting recording.
+            errorMessage = "系统音频转录不可用，已自动切换为仅麦克风模式。"
         }
     }
 
@@ -567,17 +526,10 @@ class AudioManager: NSObject, ObservableObject {
             return
         }
 
-        stopSTTRotationTimer()
         stopStartRecordingTask()
         stopMicRestartTask()
-        systemAudioRecoveryTask?.cancel()
-        systemAudioRecoveryTask = nil
-        sttRecoveryTasks.values.forEach { $0.cancel() }
-        sttRecoveryTasks.removeAll()
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
-        // 标记为"处理中"——isRecording 仍为 true，UI 可据此显示 spinner，
-        // 不影响内部 isRecording 检查（任何 stop-aware 路径仍读 isStoppingRecording）。
         isStoppingRecording = true
         print("Stopping recording...")
 
@@ -623,12 +575,10 @@ class AudioManager: NSObject, ObservableObject {
             }
 
             self.disconnectSTTProviders()
-            self.transcriptAccumulator.removeAllInterimState()
             self.recordingStateMachine.reset()
             self.isRecording = self.recordingStateMachine.state.isRecordingVisible
             self.isRecoveringSTT = false
             self.isStoppingRecording = false
-            self.recordingStartedAtUptime = nil
             self.recordingBaseOffsetMilliseconds = 0
             AudioLevelManager.shared.updateRecordingState(false)
             print("Recording stopped")
@@ -664,7 +614,6 @@ class AudioManager: NSObject, ObservableObject {
         recordingStateMachine.markRecording(sessionID: sessionToken)
         isRecording = recordingStateMachine.state.isRecordingVisible
         isRecoveringSTT = false
-        // Reset mic retry counter so long sessions survive a second engine failure.
         micRetryCount = 0
         AudioLevelManager.shared.updateRecordingState(isRecording)
     }
@@ -703,17 +652,13 @@ class AudioManager: NSObject, ObservableObject {
         startRecordingTask = nil
     }
 
-    private func connectSTTProvider(for source: AudioSource, offsetMilliseconds: Int) async throws -> STTProvider {
+    private func connectSTTProvider(for source: AudioSource) async throws -> STTProvider {
         if let existing = provider(for: source) {
             return existing
         }
 
         let providerSessionID = sessionID
-        let provider = try await makeConnectedSTTProvider(
-            for: source,
-            sessionToken: providerSessionID,
-            offsetMilliseconds: offsetMilliseconds
-        )
+        let provider = try await makeConnectedSTTProvider(for: source, sessionToken: providerSessionID)
         guard isActiveSession(providerSessionID) else {
             provider.disconnect()
             throw URLError(.cancelled)
@@ -729,34 +674,15 @@ class AudioManager: NSObject, ObservableObject {
         return provider
     }
 
-    private func makeConnectedSTTProvider(
-        for source: AudioSource,
-        sessionToken: UUID,
-        offsetMilliseconds: Int
-    ) async throws -> STTProvider {
+    private func makeConnectedSTTProvider(for source: AudioSource, sessionToken: UUID) async throws -> STTProvider {
         let config = APIKeyValidator.shared.currentSTTConfig()
-        guard config.isConfigured else {
-            throw ProviderValidationError.missingSTTConfig
-        }
-
         let provider = sttProviderFactory.makeProvider()
+        let baseOffset = recordingBaseOffsetMilliseconds
 
         provider.onTranscriptUpdate = { [weak self] update in
             DispatchQueue.main.async {
                 guard let self, self.sessionID == sessionToken else { return }
-                self.rawTranscriptEvents.append(
-                    RawTranscriptEvent(
-                        sessionID: sessionToken,
-                        source: source,
-                        providerOffsetMilliseconds: offsetMilliseconds,
-                        update: update,
-                        receivedAt: Date()
-                    )
-                )
-                self.handleTranscriptUpdate(
-                    Self.offsetTranscriptUpdate(update, by: offsetMilliseconds),
-                    source: source
-                )
+                self.handleTranscriptUpdate(update, source: source, baseOffset: baseOffset)
             }
         }
 
@@ -775,163 +701,9 @@ class AudioManager: NSObject, ObservableObject {
         return provider
     }
 
-    private func startSTTRotationTimer(for sessionToken: UUID) {
-        sttRotationTask?.cancel()
-        let interval = sttRotationInterval
-        sttRotationTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: interval)
-                guard !Task.isCancelled else { break }
-                guard let self else { break }
-                await self.rotateSTTProvidersIfNeeded(sessionToken: sessionToken)
-            }
-        }
-    }
-
-    private func stopSTTRotationTimer() {
-        sttRotationTask?.cancel()
-        sttRotationTask = nil
-        rotatingSTTSources.removeAll()
-    }
-
     private func stopMicRestartTask() {
         micRestartTask?.cancel()
         micRestartTask = nil
-    }
-
-    private func rotateSTTProvidersIfNeeded(sessionToken: UUID) async {
-        guard isRecording, !isStoppingRecording, sessionID == sessionToken else { return }
-
-        if micSTT != nil {
-            await rotateSTTProvider(for: .mic, sessionToken: sessionToken)
-        }
-
-        if systemSTT != nil {
-            await rotateSTTProvider(for: .system, sessionToken: sessionToken)
-        }
-    }
-
-    private func rotateSTTProvider(for source: AudioSource, sessionToken: UUID) async {
-        guard isRecording,
-              !isStoppingRecording,
-              sessionID == sessionToken,
-              !rotatingSTTSources.contains(source) else {
-            return
-        }
-
-        // 在锁外先获取旧 provider 的引用
-        var oldProvider: STTProvider?
-        sttProviderLock.withLock {
-            oldProvider = provider(for: source)
-        }
-        guard let unwrappedOldProvider = oldProvider else {
-            return
-        }
-
-        rotatingSTTSources.insert(source)
-        defer { rotatingSTTSources.remove(source) }
-
-        print("🔁 Rotating STT provider for \(source)...")
-
-        do {
-            // 1. 先建立新连接
-            let newProvider = try await makeConnectedSTTProvider(
-                for: source,
-                sessionToken: sessionToken,
-                offsetMilliseconds: elapsedRecordingMilliseconds()
-            )
-            guard isRecording, !isStoppingRecording, sessionID == sessionToken else {
-                newProvider.disconnect()
-                return
-            }
-
-            // 2. 原子切换: 先设置新 provider，再处理旧 provider
-            sttProviderLock.withLock {
-                // 再次检查会话有效性
-                guard isActiveSession(sessionToken) else {
-                    newProvider.disconnect()
-                    return
-                }
-                // 原子替换
-                switch source {
-                case .mic:
-                    micSTT = newProvider
-                case .system:
-                    systemSTT = newProvider
-                }
-            }
-
-            // 3. 清理旧连接
-            unwrappedOldProvider.sendLastAudio()
-            scheduleDisconnectAfterFinalFlush(unwrappedOldProvider)
-
-            transcriptAccumulator.removeInterimState(for: source)
-            errorMessage = nil
-            print("✅ Rotated STT provider for \(source)")
-        } catch {
-            let errorMsg = ErrorHandler.shared.handleError(error)
-            print("❌ Failed to rotate STT provider for \(source): \(errorMsg)")
-
-            if source == .system, ErrorHandler.shared.isConcurrencyQuotaErrorMessage(errorMsg) {
-                disableSystemAudioAfterConcurrencyLimit(message: errorMsg)
-                return
-            }
-
-            // 恢复失败时，不要立即停止整个录音
-            isRecoveringSTT = true
-            do {
-                let restoredProvider = try await makeConnectedSTTProvider(
-                    for: source,
-                    sessionToken: sessionToken,
-                    offsetMilliseconds: elapsedRecordingMilliseconds()
-                )
-                sttProviderLock.withLock {
-                    guard isActiveSession(sessionToken) else {
-                        restoredProvider.disconnect()
-                        return
-                    }
-                    switch source {
-                    case .mic:
-                        micSTT = restoredProvider
-                    case .system:
-                        systemSTT = restoredProvider
-                    }
-                }
-                isRecoveringSTT = false
-            } catch {
-                let restoreError = ErrorHandler.shared.handleError(error)
-                print("❌ Failed to restore \(source) STT provider after rotation failure: \(restoreError)")
-                errorMessage = restoreError
-                if source == .mic, isRecording {
-                    stopRecording()
-                }
-            }
-        }
-    }
-
-    private func elapsedRecordingMilliseconds() -> Int {
-        guard let recordingStartedAtUptime else { return recordingBaseOffsetMilliseconds }
-        let elapsed = ProcessInfo.processInfo.systemUptime - recordingStartedAtUptime
-        return recordingBaseOffsetMilliseconds + max(0, Int(elapsed * 1000))
-    }
-
-    nonisolated static func maximumTranscriptEndTime(in chunks: [TranscriptChunk]) -> Int {
-        chunks.compactMap { $0.endTime ?? $0.startTime }.max() ?? 0
-    }
-
-    nonisolated static func offsetTranscriptUpdate(_ update: STTTranscriptUpdate, by offsetMilliseconds: Int) -> STTTranscriptUpdate {
-        guard offsetMilliseconds > 0 else { return update }
-
-        return STTTranscriptUpdate(
-            text: update.text,
-            isFinal: update.isFinal,
-            speakerTag: update.speakerTag,
-            speakerId: update.speakerId,
-            startTime: update.startTime.map { $0 + offsetMilliseconds },
-            endTime: update.endTime.map { $0 + offsetMilliseconds },
-            isCorrection: update.isCorrection,
-            isLowConfidence: update.isLowConfidence
-        )
     }
 
     private func provider(for source: AudioSource) -> STTProvider? {
@@ -951,258 +723,77 @@ class AudioManager: NSObject, ObservableObject {
         sessionID == token && recordingStateMachine.state.isActiveSession(token)
     }
 
-    private func handleTranscriptUpdate(_ update: STTTranscriptUpdate, source: AudioSource) {
-        let timelineUpdate = Self.positionedLowConfidenceUpdate(
-            update,
-            fallbackMilliseconds: elapsedRecordingMilliseconds()
-        )
-        transcriptAccumulator.apply(timelineUpdate, source: source)
-        transcriptChunks = transcriptAccumulator.chunks
-    }
-
-    func debugRawTranscriptEvents(sessionID: UUID? = nil) -> [RawTranscriptEvent] {
-        let events = rawTranscriptEvents.events
-        guard let sessionID else { return events }
-        return events.filter { $0.sessionID == sessionID }
-    }
-
-    /// When a provider emits a low-confidence text-only fallback, it carries no timing.
-    /// Without a startTime such chunks would land at the tail of the sorted transcript.
-    /// Anchor them to the current global elapsed time so they appear where they actually arrived.
-    nonisolated static func positionedLowConfidenceUpdate(
-        _ update: STTTranscriptUpdate,
-        fallbackMilliseconds: Int
-    ) -> STTTranscriptUpdate {
-        guard update.isLowConfidence,
-              update.startTime == nil,
-              update.endTime == nil else {
-            return update
+    private func handleTranscriptUpdate(_ update: STTTranscriptUpdate, source: AudioSource, baseOffset: Int) {
+        let adjusted: STTTranscriptUpdate
+        if baseOffset > 0 {
+            adjusted = STTTranscriptUpdate(
+                text: update.text,
+                isFinal: update.isFinal,
+                speakerTag: update.speakerTag,
+                speakerId: update.speakerId,
+                startTime: update.startTime.map { $0 + baseOffset },
+                endTime: update.endTime.map { $0 + baseOffset }
+            )
+        } else {
+            adjusted = update
         }
 
-        return STTTranscriptUpdate(
-            text: update.text,
-            isFinal: update.isFinal,
-            speakerTag: update.speakerTag,
-            speakerId: update.speakerId,
-            startTime: fallbackMilliseconds,
-            endTime: fallbackMilliseconds,
-            isCorrection: update.isCorrection,
-            isLowConfidence: update.isLowConfidence
-        )
+        if adjusted.isFinal {
+            if let id = activeInterimChunkId[source] {
+                transcriptChunks.removeAll { $0.id == id }
+                activeInterimChunkId[source] = nil
+            }
+            transcriptChunks.append(TranscriptChunk(
+                source: source,
+                text: adjusted.text,
+                isFinal: true,
+                speakerTag: adjusted.speakerTag,
+                speakerId: adjusted.speakerId,
+                startTime: adjusted.startTime,
+                endTime: adjusted.endTime
+            ))
+        } else {
+            let id = activeInterimChunkId[source] ?? UUID()
+            let chunk = TranscriptChunk(
+                id: id,
+                source: source,
+                text: adjusted.text,
+                isFinal: false,
+                speakerTag: adjusted.speakerTag,
+                speakerId: adjusted.speakerId,
+                startTime: adjusted.startTime,
+                endTime: adjusted.endTime
+            )
+            if let idx = transcriptChunks.firstIndex(where: { $0.id == id }) {
+                transcriptChunks[idx] = chunk
+            } else {
+                transcriptChunks.append(chunk)
+                activeInterimChunkId[source] = id
+            }
+        }
     }
 
     private func handleSTTProviderError(_ message: String, source: AudioSource) {
         print("❌ STT provider error (\(source)): \(message)")
-        if isStoppingRecording {
-            print("ℹ️ Ignored STT error while stopping \(source) provider.")
-            return
-        }
+        if isStoppingRecording { return }
 
-        // 永久错误：鉴权/凭证类，重连无意义，立即停止
-        if ErrorHandler.shared.isPermanentAuthErrorMessage(message) {
-            print("⛔️ Permanent STT auth error, stopping recording: \(message)")
-            errorMessage = message
-            if isRecording { stopRecording() }
-            return
-        }
-
-        // 配额错误：系统流走降级，麦克风流仍停止
-        if ErrorHandler.shared.isConcurrencyQuotaErrorMessage(message) {
-            if source == .system, isRecording {
-                disableSystemAudioAfterConcurrencyLimit(message: message)
-                return
-            }
-            errorMessage = message
-            if isRecording { stopRecording() }
-            return
-        }
-
-        // 暂时错误：指数退避重连，超过上限后停止
-        if isRecoverableSTTError(message) {
-            scheduleSTTRecovery(for: source, lastErrorMessage: message)
-            return
-        }
-
-        // 未分类错误：保守按永久错误处理
-        errorMessage = message
-        if isRecording { stopRecording() }
-    }
-
-    private func scheduleSTTRecovery(for source: AudioSource, lastErrorMessage: String) {
-        let nextAttempt = (sttRecoveryAttempts[source] ?? 0) + 1
-        guard nextAttempt <= maxSTTRecoveryAttempts else {
-            print("⛔️ \(source) STT exceeded max recovery attempts (\(maxSTTRecoveryAttempts)). Stopping recording.")
-            errorMessage = lastErrorMessage
-            if isRecording { stopRecording() }
-            return
-        }
-
-        sttRecoveryAttempts[source] = nextAttempt
-        // 指数退避：第 1 次 0.5s，之后 1s/2s/4s
-        let backoffSeconds: TimeInterval = pow(2.0, Double(nextAttempt - 1)) * 0.5
-        let recoverySessionID = sessionID
-
-        sttRecoveryTasks[source]?.cancel()
-        sttRecoveryTasks[source] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(backoffSeconds))
-            guard !Task.isCancelled else { return }
-            guard let self else { return }
-            guard self.isActiveSession(recoverySessionID),
-                  self.isRecording,
-                  !self.isStoppingRecording else { return }
-            print("♻️ Attempt #\(nextAttempt) recovering \(source) STT after \(backoffSeconds)s backoff")
-            await self.recoverSTTProvider(for: source)
-        }
-    }
-
-    /// 系统音频恢复任务
-    private var systemAudioRecoveryTask: Task<Void, Never>?
-    private let systemAudioRecoveryDelay: TimeInterval = 60  // 1分钟后尝试恢复
-
-    private func disableSystemAudioAfterConcurrencyLimit(message: String) {
-        print("ℹ️ Disabling system audio because STT concurrency quota was exceeded.")
-        systemSTT?.disconnect()
-        systemSTT = nil
-
-        if isTapActive {
-            systemAudioPipeline?.stop()
-            systemAudioPipeline = nil
-            processTap?.invalidate()
-            processTap = nil
-            isTapActive = false
-        }
-
-        systemAudioLevel = 0
-        AudioLevelManager.shared.updateSystemLevel(0)
-        errorMessage = "\(message) 已自动切换为仅录制麦克风。"
-
-        // 安排系统音频恢复任务
-        scheduleSystemAudioRecovery()
-    }
-
-    private func scheduleSystemAudioRecovery() {
-        systemAudioRecoveryTask?.cancel()
-        systemAudioRecoveryTask = nil
-
-        guard isRecording, !isStoppingRecording else {
-            print("ℹ️ 已停止录音，跳过安排系统音频恢复")
-            return
-        }
-
-        // 在调度时即刻锚定 sessionID，避免延迟期间被 stop 的新 UUID 错配
-        let recoverySessionID = sessionID
-
-        systemAudioRecoveryTask = Task { [weak self] in
-            guard let self else { return }
-
-            do {
-                print("⏳ 系统音频将在 \(self.systemAudioRecoveryDelay) 秒后尝试恢复")
-                try await Task.sleep(for: .seconds(self.systemAudioRecoveryDelay))
-
-                guard !Task.isCancelled else { return }
-                guard self.isActiveSession(recoverySessionID),
-                      self.isRecording,
-                      !self.isStoppingRecording else {
-                    print("ℹ️ 恢复时录音已停止或会话已切换，取消系统音频恢复")
-                    return
-                }
-
-                print("🔄 尝试恢复系统音频")
-                await self.startSystemAudioTap(isRestart: true, sessionToken: recoverySessionID)
-            } catch {
-                if Task.isCancelled {
-                    print("ℹ️ 系统音频恢复任务被取消")
-                    return
-                }
-                print("❌ 系统音频恢复失败: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func isRecoverableSTTError(_ message: String) -> Bool {
-        let normalized = message.lowercased()
-
-        // Doubao-side transient errors
-        let providerPatterns = [
-            "read result timeout",
-            "server processing timeout",
-            "execution timeout",
-            "stream_volume_cal_tob",
-            "the stream is done",
-            "big asr send failed",
-            "session expired",
-            "fail to parse big asr response",
-            "big asr response code 1021",
-            "识别处理超时"
-        ]
-        // Generic transport-level transient errors (URLError descriptions, POSIX, etc.).
-        // ErrorHandler maps URLError into user-facing strings like "Request timed out" and
-        // "Cannot reach the service" — both of which should retry, not abort the recording.
-        let transportPatterns = [
-            "socket is not connected",
-            "connection lost",
-            "network connection lost",
-            "request timeout",
-            "request timed out",
-            "timed out",
-            "no internet",
-            "cannot reach",
-            "cannot connect to the service",
-            "cannot find host",
-            "secure connection failed",
-            "network is down",
-            "network is unreachable",
-            "the network connection was lost",
-            "software caused connection abort",
-            "网络"
-        ]
-        for pattern in providerPatterns where normalized.contains(pattern) {
-            return true
-        }
-        for pattern in transportPatterns where normalized.contains(pattern) {
-            return true
-        }
-        return false
-    }
-
-    private func recoverSTTProvider(for source: AudioSource) async {
-        guard isRecording, !isStoppingRecording else { return }
-
-        print("♻️ Reconnecting STT provider for \(source)...")
-        let recoverySessionID = sessionID
-        recordingStateMachine.markRecovering(sessionID: recoverySessionID)
-        isRecoveringSTT = true
-        discardPendingAudio(for: source)
-
-        switch source {
-        case .mic:
-            micSTT?.disconnect()
-            micSTT = nil
-        case .system:
+        if source == .system {
+            print("⚠️ System audio STT failed, degrading to mic-only: \(message)")
             systemSTT?.disconnect()
             systemSTT = nil
-        }
-
-        do {
-            _ = try await connectSTTProvider(for: source, offsetMilliseconds: elapsedRecordingMilliseconds())
-            recordingStateMachine.markRecording(sessionID: recoverySessionID)
-            sttRecoveryAttempts[source] = 0
-            errorMessage = nil
-            isRecoveringSTT = false
-            print("✅ Reconnected STT provider for \(source)")
-        } catch {
-            let errorMsg = ErrorHandler.shared.handleError(error)
-            print("❌ Failed to reconnect STT provider for \(source): \(errorMsg)")
-
-            // 重连失败仍按错误分类处理（可能升级为永久 / 配额 / 继续退避）
-            if ErrorHandler.shared.isPermanentAuthErrorMessage(errorMsg)
-                || ErrorHandler.shared.isConcurrencyQuotaErrorMessage(errorMsg) {
-                errorMessage = errorMsg
-                if isRecording { stopRecording() }
-                return
+            if isTapActive {
+                systemAudioPipeline?.stop()
+                systemAudioPipeline = nil
+                processTap?.invalidate()
+                processTap = nil
+                isTapActive = false
             }
-
-            scheduleSTTRecovery(for: source, lastErrorMessage: errorMsg)
+            systemAudioLevel = 0
+            AudioLevelManager.shared.updateSystemLevel(0)
+            errorMessage = "系统音频转录不可用，已自动切换为仅麦克风模式。"
+        } else {
+            errorMessage = message
+            if isRecording { stopRecording() }
         }
     }
 
@@ -1227,7 +818,7 @@ class AudioManager: NSObject, ObservableObject {
         systemSTT?.disconnect()
         micSTT = nil
         systemSTT = nil
-        transcriptAccumulator.removeAllInterimState()
+        activeInterimChunkId.removeAll()
     }
 
     private func scheduleDisconnectAfterFinalFlush(_ provider: STTProvider) {
@@ -1236,6 +827,10 @@ class AudioManager: NSObject, ObservableObject {
             await provider.awaitPendingFinalization(timeout: timeout)
             provider.disconnect()
         }
+    }
+
+    nonisolated static func maximumTranscriptEndTime(in chunks: [TranscriptChunk]) -> Int {
+        chunks.compactMap { $0.endTime ?? $0.startTime }.max() ?? 0
     }
 
     private func handleAudioEngineConfigurationChange() {

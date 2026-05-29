@@ -1,11 +1,11 @@
 import Foundation
 
-struct STTProviderConfig: Codable, Hashable {
-    var appId: String
-    var accessToken: String
+struct STTProviderConfig: Hashable {
+    var locale: Locale
 
-    var isConfigured: Bool {
-        !appId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    var isConfigured: Bool { true }
+
+    init(locale: Locale = Locale(identifier: "zh-CN")) {
+        self.locale = locale
     }
 }

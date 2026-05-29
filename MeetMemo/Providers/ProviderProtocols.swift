@@ -11,15 +11,12 @@ protocol STTProvider: AnyObject {
     func disconnect()
     func testConnection(config: STTProviderConfig, timeout: TimeInterval) async throws
 
-    /// 等待 sendLastAudio 之后服务端发回最终结果，或到达超时。
-    /// 默认实现以 `timeout` 为上限阻塞，避免破坏未感知该接口的旧 provider。
+    /// Waits for the provider to emit all final results after `sendLastAudio`, up to `timeout`.
     func awaitPendingFinalization(timeout: TimeInterval) async
 }
 
 extension STTProvider {
-    var capabilities: STTProviderCapabilities {
-        .basic
-    }
+    var capabilities: STTProviderCapabilities { .basic }
 
     func awaitPendingFinalization(timeout: TimeInterval) async {
         try? await Task.sleep(for: .seconds(timeout))
@@ -40,12 +37,6 @@ struct STTProviderCapabilities: Hashable {
 
 protocol STTProviderFactory {
     func makeProvider() -> STTProvider
-}
-
-struct DoubaoSTTProviderFactory: STTProviderFactory {
-    func makeProvider() -> STTProvider {
-        DoubaoSTTProvider()
-    }
 }
 
 protocol LLMProvider {

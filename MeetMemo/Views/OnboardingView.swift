@@ -4,8 +4,6 @@ import AVFoundation
 struct OnboardingView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var langMgr: LanguageManager
-    @State private var sttAppId = ""
-    @State private var sttAccessToken = ""
     @State private var llmApiKey = ""
     @State private var llmBaseURL = ""
     @State private var llmModel = ""
@@ -54,58 +52,9 @@ struct OnboardingView: View {
                                     .font(.title2)
                                     .fontWeight(.semibold)
 
-                                Text(langMgr.t("请填写语音识别服务与 LLM 配置。", "Please fill in the speech recognition service and LLM configuration."))
+                                Text(langMgr.t("请填写 LLM 配置以启用笔记生成功能。", "Please fill in the LLM configuration to enable notes generation."))
                                     .font(.body)
                                     .foregroundColor(.secondary)
-                            }
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack {
-                                    Text(langMgr.t("语音识别服务", "Speech Recognition"))
-                                        .font(.headline)
-                                        .foregroundColor(.primary)
-
-                                    Spacer()
-
-                                    Button {
-                                        syncProviderFieldsToSettings()
-                                        settingsViewModel.testSTTConnection()
-                                    } label: {
-                                        if settingsViewModel.isTestingSTT {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                        } else {
-                                            Text(langMgr.t("测试连接", "Test Connection"))
-                                        }
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .controlSize(.small)
-                                    .disabled(settingsViewModel.isTestingSTT)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-
-                                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                    Text(langMgr.t(
-                                        "豆包流式语音识别，在火山引擎控制台获取 APP ID 和 Access Token。",
-                                        "Doubao streaming speech recognition. Get APP ID and Access Token from the Volcano Engine console."
-                                    ))
-                                    .foregroundColor(.secondary)
-
-                                    Link(
-                                        langMgr.t("配置教程", "Setup Guide"),
-                                        destination: URL(string: "https://file.348580.xyz/2026/04/eb299b186e0b531ffebceb9141eaf2fb.html")!
-                                    )
-                                    .buttonStyle(.link)
-                                }
-                                .font(.caption)
-
-                                TextField("APP ID", text: $sttAppId)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: .infinity)
-
-                                SecureField("Access Token", text: $sttAccessToken)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: .infinity)
                             }
 
                             VStack(alignment: .leading, spacing: 8) {
@@ -192,8 +141,6 @@ struct OnboardingView: View {
         .onAppear {
             checkPermissions()
             settingsViewModel.loadProviderConfig()
-            sttAppId = settingsViewModel.settings.sttAppId
-            sttAccessToken = settingsViewModel.settings.sttAccessToken
             llmApiKey = settingsViewModel.settings.llmApiKey
             llmBaseURL = settingsViewModel.settings.llmBaseURL
             llmModel = settingsViewModel.settings.llmModel
@@ -216,16 +163,12 @@ struct OnboardingView: View {
     private var canProceed: Bool {
         micPermissionGranted &&
         systemAudioPermissionGranted &&
-        !sttAppId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func syncProviderFieldsToSettings() {
-        settingsViewModel.settings.sttAppId = sttAppId
-        settingsViewModel.settings.sttAccessToken = sttAccessToken
         settingsViewModel.settings.llmApiKey = llmApiKey
         settingsViewModel.settings.llmBaseURL = llmBaseURL
         settingsViewModel.settings.llmModel = llmModel

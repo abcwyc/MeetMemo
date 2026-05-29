@@ -134,51 +134,16 @@ struct SettingsView: View {
     private var modelSettings: some View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(langMgr.t("语音识别服务", "Speech Recognition"))
-                        .font(.headline)
-                        .foregroundColor(.primary)
+                Text(langMgr.t("语音识别", "Speech Recognition"))
+                    .font(.headline)
+                    .foregroundColor(.primary)
 
-                    Spacer()
-
-                    Button {
-                        viewModel.testSTTConnection()
-                    } label: {
-                        if viewModel.isTestingSTT {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Text(langMgr.t("测试连接", "Test Connection"))
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(viewModel.isTestingSTT)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(langMgr.t(
-                        "豆包流式语音识别，在火山引擎控制台获取 APP ID 和 Access Token。",
-                        "Doubao streaming speech recognition. Get APP ID and Access Token from the Volcano Engine console."
-                    ))
-                    .foregroundColor(.secondary)
-
-                    Link(
-                        langMgr.t("配置教程", "Setup Guide"),
-                        destination: URL(string: "https://file.348580.xyz/2026/04/eb299b186e0b531ffebceb9141eaf2fb.html")!
-                    )
-                    .buttonStyle(.link)
-                }
+                Text(langMgr.t(
+                    "使用 macOS 内置语音识别，完全本地运行，无需 API Key 或网络连接。",
+                    "Uses macOS on-device speech recognition. Fully local — no API key or network required."
+                ))
                 .font(.caption)
-
-                TextField("APP ID", text: $viewModel.settings.sttAppId)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
-
-                SecureField("Access Token", text: $viewModel.settings.sttAccessToken)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
+                .foregroundColor(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 8) {

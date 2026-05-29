@@ -44,7 +44,6 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
     let startTime: Int?
     let endTime: Int?
     let isLowConfidence: Bool
-    let arrivalUptimeMilliseconds: Int
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -57,7 +56,6 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
         case startTime
         case endTime
         case isLowConfidence
-        case arrivalUptimeMilliseconds
     }
     
     init(
@@ -70,8 +68,7 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
         speakerId: Int? = nil,
         startTime: Int? = nil,
         endTime: Int? = nil,
-        isLowConfidence: Bool = false,
-        arrivalUptimeMilliseconds: Int = Int(ProcessInfo.processInfo.systemUptime * 1000)
+        isLowConfidence: Bool = false
     ) {
         self.id = id
         self.timestamp = timestamp
@@ -83,7 +80,6 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
         self.startTime = startTime
         self.endTime = endTime
         self.isLowConfidence = isLowConfidence
-        self.arrivalUptimeMilliseconds = arrivalUptimeMilliseconds
     }
 
     init(from decoder: Decoder) throws {
@@ -98,11 +94,6 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
         startTime = try container.decodeIfPresent(Int.self, forKey: .startTime)
         endTime = try container.decodeIfPresent(Int.self, forKey: .endTime)
         isLowConfidence = try container.decodeIfPresent(Bool.self, forKey: .isLowConfidence) ?? false
-        // Legacy chunks have no monotonic arrival time. Fall back to 0 so the 90s incremental
-        // window in TranscriptUpdateAccumulator considers them well past expiry and never
-        // tries to delete them under the text-similarity heuristic.
-        arrivalUptimeMilliseconds = try container.decodeIfPresent(Int.self, forKey: .arrivalUptimeMilliseconds)
-            ?? 0
     }
 
     static func == (lhs: TranscriptChunk, rhs: TranscriptChunk) -> Bool {
@@ -118,8 +109,6 @@ struct TranscriptChunk: Codable, Identifiable, Hashable {
             && lhs.isLowConfidence == rhs.isLowConfidence
     }
 
-    // `arrivalUptimeMilliseconds` is debug/heuristic metadata, intentionally excluded from
-    // identity so two chunks differing only by arrival time still hash-equal.
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
         hasher.combine(timestamp)

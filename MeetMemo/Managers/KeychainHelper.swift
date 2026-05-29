@@ -19,8 +19,6 @@ class KeychainHelper {
     private let serviceName = "youcai.meetmemo"
     private let providerConfigKey = "providerConfig"
     private let legacyProviderKeys = [
-        "sttAppId",
-        "sttAccessToken",
         "llmApiKey",
         "llmBaseURL",
         "llmModel"
@@ -83,27 +81,6 @@ class KeychainHelper {
     /// - Returns: True if the save was successful, false otherwise
     func saveAPIKey(_ apiKey: String) -> Bool {
         return save(apiKey, forKey: "openAIKey")
-    }
-
-    // MARK: - STT Provider
-    func getSTTAppId() -> String? {
-        getProviderConfig()?.sttAppId
-    }
-
-    func saveSTTAppId(_ value: String) -> Bool {
-        var settings = getProviderConfig() ?? Settings()
-        settings.sttAppId = value
-        return saveProviderConfig(settings)
-    }
-
-    func getSTTAccessToken() -> String? {
-        getProviderConfig()?.sttAccessToken
-    }
-
-    func saveSTTAccessToken(_ value: String) -> Bool {
-        var settings = getProviderConfig() ?? Settings()
-        settings.sttAccessToken = value
-        return saveProviderConfig(settings)
     }
 
     // MARK: - LLM Provider
@@ -232,8 +209,6 @@ class KeychainHelper {
         }
 
         return Settings(
-            sttAppId: values["sttAppId"] ?? "",
-            sttAccessToken: values["sttAccessToken"] ?? "",
             llmApiKey: values["llmApiKey"] ?? "",
             llmBaseURL: values["llmBaseURL"] ?? "",
             llmModel: values["llmModel"] ?? ""

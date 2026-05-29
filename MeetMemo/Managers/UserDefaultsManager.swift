@@ -28,6 +28,8 @@ class UserDefaultsManager {
         static let appAppearance = "appAppearance"
         static let speakerParticipantNames = "speakerParticipantNames"
         static let notesOutputFormat = "notesOutputFormat"
+        static let sttLocaleIdentifier = "sttLocaleIdentifier"
+        static let enableSystemAudioSTT = "enableSystemAudioSTT"
     }
     
     // MARK: - User Blurb
@@ -137,6 +139,21 @@ class UserDefaultsManager {
             return NotesOutputFormat(rawValue: raw) ?? .markdown
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.notesOutputFormat) }
+    }
+
+    // MARK: - STT Locale
+    var sttLocaleIdentifier: String {
+        get { userDefaults.string(forKey: Keys.sttLocaleIdentifier) ?? "zh-CN" }
+        set { userDefaults.set(newValue, forKey: Keys.sttLocaleIdentifier) }
+    }
+
+    // MARK: - Dual STT (mic + system audio)
+    var enableSystemAudioSTT: Bool {
+        get {
+            if userDefaults.object(forKey: Keys.enableSystemAudioSTT) == nil { return true }
+            return userDefaults.bool(forKey: Keys.enableSystemAudioSTT)
+        }
+        set { userDefaults.set(newValue, forKey: Keys.enableSystemAudioSTT) }
     }
 
     private func normalizedNames(_ names: [String]) -> [String] {

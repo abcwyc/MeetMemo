@@ -4,7 +4,6 @@ import SwiftUI
 class SettingsViewModel: ObservableObject {
     @Published var settings = Settings()
     @Published var activeAlert: AlertMessage?
-    @Published var isTestingSTT = false
     @Published var isTestingLLM = false
     @Published var templates: [NoteTemplate] = []
     
@@ -42,8 +41,6 @@ class SettingsViewModel: ObservableObject {
             )
         }
 
-        settings.sttAppId = providerConfig.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.sttAccessToken = providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmApiKey = providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
 
         settings.llmBaseURL = providerConfig.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -96,8 +93,6 @@ class SettingsViewModel: ObservableObject {
             return
         }
 
-        settings.sttAppId = settings.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines)
-        settings.sttAccessToken = settings.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmApiKey = settings.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmBaseURL = settings.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmModel = settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -115,46 +110,6 @@ class SettingsViewModel: ObservableObject {
                     title: lang.t("设置保存失败", "Settings Save Failed"),
                     message: lang.t("保存设置时出错", "Error saving settings")
                 )
-            }
-        }
-    }
-
-    func testSTTConnection() {
-        let lang = LanguageManager.shared
-        let config = currentEditableSTTConfig()
-
-        guard config.isConfigured else {
-            presentTestResult(
-                title: lang.t("语音识别测试失败", "Speech Recognition Test Failed"),
-                message: ErrorMessage.noAPIKey
-            )
-            return
-        }
-
-        isTestingSTT = true
-
-        Task {
-            await MainActor.run {
-                self.isTestingSTT = true
-            }
-
-            do {
-                try await DoubaoSTTProvider().testConnection(config: config)
-                await MainActor.run {
-                    self.presentTestResult(
-                        title: lang.t("语音识别测试成功", "Speech Recognition Test Succeeded"),
-                        message: lang.t("APP ID 和 Access Token 可以连通服务器。", "APP ID and Access Token connected to the server successfully.")
-                    )
-                }
-            } catch {
-                let message = ErrorHandler.shared.handleError(error)
-                await MainActor.run {
-                    self.presentTestResult(title: lang.t("语音识别测试失败", "Speech Recognition Test Failed"), message: message)
-                }
-            }
-
-            await MainActor.run {
-                self.isTestingSTT = false
             }
         }
     }
@@ -224,25 +179,15 @@ class SettingsViewModel: ObservableObject {
 
         let legacyKey = KeychainHelper.shared.getAPIKeyWithoutAuthentication()?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
-        let hasNewSTTConfig =
-            !providerConfig.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            !providerConfig.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasNewLLMConfig =
             !providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        if !legacyKey.isEmpty && (!hasNewSTTConfig || !hasNewLLMConfig) {
+        if !legacyKey.isEmpty && !hasNewLLMConfig {
             settings.hasCompletedOnboarding = false
         }
 
         UserDefaultsManager.shared.hasMigratedToV2Providers = true
-    }
-
-    private func currentEditableSTTConfig() -> STTProviderConfig {
-        STTProviderConfig(
-            appId: settings.sttAppId.trimmingCharacters(in: .whitespacesAndNewlines),
-            accessToken: settings.sttAccessToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
     }
 
     private func currentEditableLLMConfig() -> LLMProviderConfig {

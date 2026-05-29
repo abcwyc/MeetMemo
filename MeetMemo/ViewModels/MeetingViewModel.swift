@@ -528,27 +528,9 @@ class MeetingViewModel: ObservableObject {
     }
     
     func startRecording() {
-        // Validate transcription provider configuration before starting recording
-        isValidatingKey = true
-        isStartingRecording = true
-        Task {
-            let validationResult = await APIKeyValidator.shared.validateSTTConfig(APIKeyValidator.shared.currentSTTConfig())
-            defer { isValidatingKey = false }
-
-            switch validationResult {
-            case .success():
-                // Transcription config is valid, proceed with recording
-                hasStartedRecordingSession = true
-                toolbarHasStartedRecordingSession = true
-                recordingSessionManager.startRecording(for: meeting.id, existingChunks: meeting.transcriptChunks)
-            case .failure(let error):
-                // Show error message
-                errorMessage = error.localizedDescription
-                // Cancel starting if validation failed
-                isStartingRecording = false
-                print("❌ STT validation failed: \(error.localizedDescription)")
-            }
-        }
+        hasStartedRecordingSession = true
+        toolbarHasStartedRecordingSession = true
+        recordingSessionManager.startRecording(for: meeting.id, existingChunks: meeting.transcriptChunks)
     }
     
     func stopRecording() {

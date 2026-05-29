@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>MeetMemo needs access to your microphone to record meeting audio for transcription.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>MeetMemo uses on-device speech recognition to transcribe meeting audio. Audio never leaves your device.</string>
 	<key>NSAudioCaptureUsageDescription</key>
 	<string>This app needs access to capture system audio for transcription.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

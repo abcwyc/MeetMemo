@@ -1,33 +1,31 @@
 import Foundation
 
 struct Settings: Codable {
-    var sttAppId: String = ""
-    var sttAccessToken: String = ""
     var llmApiKey: String = ""
     var llmBaseURL: String = ""
     var llmModel: String = ""
-    
+
     // Computed properties that access UserDefaults
     var userBlurb: String {
         get { UserDefaultsManager.shared.userBlurb }
         set { UserDefaultsManager.shared.userBlurb = newValue }
     }
-    
+
     var systemPrompt: String {
         get { UserDefaultsManager.shared.systemPrompt }
         set { UserDefaultsManager.shared.systemPrompt = newValue }
     }
-    
+
     var selectedTemplateId: UUID? {
         get { UserDefaultsManager.shared.selectedTemplateId }
         set { UserDefaultsManager.shared.selectedTemplateId = newValue }
     }
-    
+
     var hasCompletedOnboarding: Bool {
         get { UserDefaultsManager.shared.hasCompletedOnboarding }
         set { UserDefaultsManager.shared.hasCompletedOnboarding = newValue }
     }
-    
+
     var hasAcceptedTerms: Bool {
         get { UserDefaultsManager.shared.hasAcceptedTerms }
         set { UserDefaultsManager.shared.hasAcceptedTerms = newValue }
@@ -48,6 +46,16 @@ struct Settings: Codable {
         set { UserDefaultsManager.shared.notesOutputFormat = newValue }
     }
 
+    var sttLocaleIdentifier: String {
+        get { UserDefaultsManager.shared.sttLocaleIdentifier }
+        set { UserDefaultsManager.shared.sttLocaleIdentifier = newValue }
+    }
+
+    var enableSystemAudioSTT: Bool {
+        get { UserDefaultsManager.shared.enableSystemAudioSTT }
+        set { UserDefaultsManager.shared.enableSystemAudioSTT = newValue }
+    }
+
     // System prompt default loading
     static func defaultSystemPrompt() -> String {
         guard let path = Bundle.main.path(forResource: "DefaultSystemPrompt", ofType: "txt"),
@@ -56,8 +64,7 @@ struct Settings: Codable {
         }
         return content
     }
-    
-    // Add a computed property for the full prompt
+
     var fullSystemPrompt: String {
         let defaultPrompt = Settings.defaultSystemPrompt()
         if userBlurb.isEmpty {
@@ -65,8 +72,7 @@ struct Settings: Codable {
         }
         return "\(defaultPrompt)\n\n用户补充背景：\(userBlurb)"
     }
-    
-    // Template processing method
+
     static func processTemplate(_ template: String, with variables: [String: String]) -> String {
         var result = template
         for (key, value) in variables {
@@ -74,24 +80,18 @@ struct Settings: Codable {
         }
         return result
     }
-    
+
     init(
-        sttAppId: String = "",
-        sttAccessToken: String = "",
         llmApiKey: String = "",
         llmBaseURL: String = "",
         llmModel: String = ""
     ) {
-        self.sttAppId = sttAppId
-        self.sttAccessToken = sttAccessToken
         self.llmApiKey = llmApiKey
         self.llmBaseURL = llmBaseURL
         self.llmModel = llmModel
     }
-    
+
     private enum CodingKeys: String, CodingKey {
-        case sttAppId
-        case sttAccessToken
         case llmApiKey
         case llmBaseURL
         case llmModel
