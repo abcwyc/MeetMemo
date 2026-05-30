@@ -28,19 +28,18 @@ final class AudioProcessingPipelineTests: XCTestCase {
 
         let receivedAudio = expectation(description: "pipeline emits converted audio")
         let receivedLevel = expectation(description: "pipeline emits an audio level")
-        var emittedData = Data()
-        var emittedLevel: Float = 0
+        let output = CapturedPipelineOutput()
 
         let pipeline = try XCTUnwrap(AudioProcessingPipeline(
             source: .mic,
             inputFormat: inputFormat,
             targetFormat: outputFormat,
             onAudioData: { data, _ in
-                emittedData = data
+                output.setData(data)
                 receivedAudio.fulfill()
             },
             onAudioLevel: { level, _ in
-                emittedLevel = level
+                output.setLevel(level)
                 receivedLevel.fulfill()
             }
         ))
@@ -48,8 +47,8 @@ final class AudioProcessingPipelineTests: XCTestCase {
         pipeline.enqueue(inputBuffer)
 
         wait(for: [receivedAudio, receivedLevel], timeout: 1)
-        XCTAssertEqual(emittedData.count, 8)
-        XCTAssertGreaterThan(emittedLevel, 0)
+        XCTAssertEqual(output.data.count, 8)
+        XCTAssertGreaterThan(output.level, 0)
     }
 
     func testBackloggedPipelineDropsBeforeProcessing() throws {
@@ -78,5 +77,31 @@ final class AudioProcessingPipelineTests: XCTestCase {
         pipeline.enqueue(inputBuffer)
 
         wait(for: [unexpectedAudio], timeout: 0.2)
+    }
+}
+
+private final class CapturedPipelineOutput: @unchecked Sendable {
+    private let lock = NSLock()
+    private var capturedData = Data()
+    private var capturedLevel: Float = 0
+
+    var data: Data {
+        lock.withLock { capturedData }
+    }
+
+    var level: Float {
+        lock.withLock { capturedLevel }
+    }
+
+    func setData(_ data: Data) {
+        lock.withLock {
+            capturedData = data
+        }
+    }
+
+    func setLevel(_ level: Float) {
+        lock.withLock {
+            capturedLevel = level
+        }
     }
 }

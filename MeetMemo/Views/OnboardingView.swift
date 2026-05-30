@@ -4,6 +4,7 @@ import AVFoundation
 struct OnboardingView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var langMgr: LanguageManager
+    @ObservedObject private var speechInstaller = SpeechModelInstaller.shared
     @State private var llmApiKey = ""
     @State private var llmBaseURL = ""
     @State private var llmModel = ""
@@ -34,6 +35,15 @@ struct OnboardingView: View {
                                 )
 
                                 PermissionRow(
+                                    title: langMgr.t("语音识别权限", "Speech Recognition"),
+                                    description: langMgr.t("允许 macOS 本地语音识别处理会议音频", "Allows macOS on-device speech recognition to process meeting audio"),
+                                    isGranted: speechInstaller.isSpeechAuthorized,
+                                    grantedLabel: speechInstaller.speechAuthorizationLabel,
+                                    enableLabel: langMgr.t("授权", "Enable"),
+                                    action: requestSpeechPermission
+                                )
+
+                                PermissionRow(
                                     title: langMgr.t("系统录音权限", "System Audio Recording"),
                                     description: langMgr.t("用于转录会议中他人说的话", "Required to transcribe what others say in meetings"),
                                     isGranted: systemAudioPermissionGranted,
@@ -42,6 +52,41 @@ struct OnboardingView: View {
                                     action: requestSystemAudioPermission
                                 )
                             }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(langMgr.t("语音识别模型", "Speech Recognition Model"))
+                                .font(.title2)
+                                .fontWeight(.semibold)
+
+                            HStack(spacing: 10) {
+                                Image(systemName: speechInstaller.isModelReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                                    .foregroundColor(speechInstaller.isModelReady ? .green : .secondary)
+                                Text(speechModelStatusText)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Button {
+                                    Task { await speechInstaller.installModelIfNeeded() }
+                                } label: {
+                                    if speechInstaller.isInstalling {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Text(speechInstaller.isModelReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("安装模型", "Install Model"))
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(speechInstaller.isInstalling)
+                            }
+                            .padding()
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                            )
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -144,12 +189,15 @@ struct OnboardingView: View {
             llmApiKey = settingsViewModel.settings.llmApiKey
             llmBaseURL = settingsViewModel.settings.llmBaseURL
             llmModel = settingsViewModel.settings.llmModel
+            Task { await speechInstaller.checkModelAvailability() }
         }
         .onChange(of: audioRecordingPermission.status) { oldValue, newValue in
             systemAudioPermissionGranted = (newValue == .authorized)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             checkPermissions()
+            speechInstaller.refreshSpeechAuthorizationStatus()
+            Task { await speechInstaller.checkModelAvailability() }
         }
         .alert(item: $settingsViewModel.activeAlert) { alert in
             Alert(
@@ -162,6 +210,8 @@ struct OnboardingView: View {
 
     private var canProceed: Bool {
         micPermissionGranted &&
+        speechInstaller.isSpeechAuthorized &&
+        speechInstaller.isModelReady &&
         systemAudioPermissionGranted &&
         !llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -196,6 +246,21 @@ struct OnboardingView: View {
         }
     }
 
+    private func requestSpeechPermission() {
+        Task { @MainActor in
+            let status = await speechInstaller.requestSpeechAuthorization()
+            if status != .authorized {
+                settingsViewModel.activeAlert = AlertMessage(
+                    title: langMgr.t("需要权限", "Permission Required"),
+                    message: langMgr.t(
+                        "转录会议需要语音识别权限，请在「系统设置 > 隐私与安全性 > 语音识别」中开启。",
+                        "Speech recognition access is required for transcription. Enable it in System Settings > Privacy & Security > Speech Recognition."
+                    )
+                )
+            }
+        }
+    }
+
     private func requestSystemAudioPermission() {
         audioRecordingPermission.request()
 
@@ -210,6 +275,27 @@ struct OnboardingView: View {
                 )
             }
         }
+    }
+
+    private var speechModelStatusText: String {
+        if speechInstaller.isInstalling {
+            if let progress = speechInstaller.installProgress {
+                return langMgr.t(
+                    "正在安装语音识别模型 \(Int(progress * 100))%",
+                    "Installing speech recognition model \(Int(progress * 100))%"
+                )
+            }
+            return langMgr.t("正在安装语音识别模型", "Installing speech recognition model")
+        }
+
+        if speechInstaller.isModelReady {
+            return langMgr.t("语音识别模型已就绪", "Speech recognition model is ready")
+        }
+
+        return speechInstaller.installError ?? langMgr.t(
+            "首次使用前需要安装 macOS 语音识别模型。",
+            "Install the macOS speech recognition model before first use."
+        )
     }
 }
 

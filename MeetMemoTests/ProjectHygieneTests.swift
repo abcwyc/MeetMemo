@@ -37,8 +37,8 @@ final class ProjectHygieneTests: XCTestCase {
         let transcriber = try read("MeetMemo/Services/AudioFileTranscriber.swift", from: root)
         let viewModel = try read("MeetMemo/ViewModels/MeetingListViewModel.swift", from: root)
 
-        XCTAssertTrue(transcriber.contains("provider.sendLastAudio()"))
-        XCTAssertTrue(transcriber.contains("await provider.awaitPendingFinalization(timeout: 12)"))
+        XCTAssertTrue(transcriber.contains("analyzer.analyzeSequence(from: file)"))
+        XCTAssertTrue(transcriber.contains("analyzer.finalizeAndFinish(through: lastSample)"))
         XCTAssertTrue(viewModel.contains("try Task.checkCancellation()"))
     }
 

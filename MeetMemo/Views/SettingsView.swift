@@ -5,6 +5,7 @@ struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @EnvironmentObject var langMgr: LanguageManager
     @ObservedObject private var appearanceMgr = AppearanceManager.shared
+    @ObservedObject private var speechInstaller = SpeechModelInstaller.shared
     @Binding var navigationPath: NavigationPath
     @State private var selectedSection: SettingsSection = .general
     @State private var micPermissionGranted = false
@@ -49,12 +50,15 @@ struct SettingsView: View {
             viewModel.loadTemplates()
             viewModel.loadProviderConfig()
             checkPermissions()
+            Task { await speechInstaller.checkModelAvailability() }
         }
         .onChange(of: audioRecordingPermission.status) { _, newValue in
             systemAudioPermissionGranted = (newValue == .authorized)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             checkPermissions()
+            speechInstaller.refreshSpeechAuthorizationStatus()
+            Task { await speechInstaller.checkModelAvailability() }
         }
         .onDisappear {
             DispatchQueue.main.async {
@@ -85,6 +89,15 @@ struct SettingsView: View {
                         grantedLabel: langMgr.t("已授权", "Granted"),
                         enableLabel: langMgr.t("授权", "Enable"),
                         action: requestMicrophonePermission
+                    )
+
+                    PermissionRow(
+                        title: langMgr.t("语音识别权限", "Speech Recognition"),
+                        description: langMgr.t("允许 macOS 本地语音识别处理会议音频", "Allows macOS on-device speech recognition to process meeting audio"),
+                        isGranted: speechInstaller.isSpeechAuthorized,
+                        grantedLabel: speechInstaller.speechAuthorizationLabel,
+                        enableLabel: langMgr.t("授权", "Enable"),
+                        action: requestSpeechPermission
                     )
 
                     PermissionRow(
@@ -139,11 +152,45 @@ struct SettingsView: View {
                     .foregroundColor(.primary)
 
                 Text(langMgr.t(
-                    "使用 macOS 内置语音识别，完全本地运行，无需 API Key 或网络连接。",
-                    "Uses macOS on-device speech recognition. Fully local — no API key or network required."
+                    "使用 macOS 内置语音识别。转录在本地运行；首次使用可能需要下载系统语音模型。",
+                    "Uses macOS on-device speech recognition. Transcription runs locally; the first use may need to download a system speech model."
                 ))
                 .font(.caption)
                 .foregroundColor(.secondary)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text(langMgr.t("识别语言", "Recognition Language"))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(speechInstaller.resolvedLocaleIdentifier ?? UserDefaultsManager.shared.sttLocaleIdentifier)
+                            .font(.system(.body, design: .monospaced))
+                    }
+
+                    HStack(spacing: 10) {
+                        Image(systemName: speechInstaller.isModelReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                            .foregroundColor(speechInstaller.isModelReady ? .green : .secondary)
+                        Text(speechModelStatusText)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button {
+                            Task { await speechInstaller.installModelIfNeeded() }
+                        } label: {
+                            if speechInstaller.isInstalling {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(speechInstaller.isModelReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("安装模型", "Install Model"))
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(speechInstaller.isInstalling)
+                    }
+                }
+                .padding(12)
+                .background(Color.secondary.opacity(0.08))
+                .cornerRadius(8)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -321,6 +368,21 @@ struct SettingsView: View {
         }
     }
 
+    private func requestSpeechPermission() {
+        Task { @MainActor in
+            let status = await speechInstaller.requestSpeechAuthorization()
+            if status != .authorized {
+                viewModel.activeAlert = AlertMessage(
+                    title: langMgr.t("需要权限", "Permission Required"),
+                    message: langMgr.t(
+                        "转录会议需要语音识别权限，请在「系统设置 > 隐私与安全性 > 语音识别」中开启。",
+                        "Speech recognition access is required for transcription. Enable it in System Settings > Privacy & Security > Speech Recognition."
+                    )
+                )
+            }
+        }
+    }
+
     private func requestSystemAudioPermission() {
         audioRecordingPermission.request()
 
@@ -335,6 +397,27 @@ struct SettingsView: View {
                 )
             }
         }
+    }
+
+    private var speechModelStatusText: String {
+        if speechInstaller.isInstalling {
+            if let progress = speechInstaller.installProgress {
+                return langMgr.t(
+                    "正在安装语音识别模型 \(Int(progress * 100))%",
+                    "Installing speech recognition model \(Int(progress * 100))%"
+                )
+            }
+            return langMgr.t("正在安装语音识别模型", "Installing speech recognition model")
+        }
+
+        if speechInstaller.isModelReady {
+            return langMgr.t("语音识别模型已就绪", "Speech recognition model is ready")
+        }
+
+        return speechInstaller.installError ?? langMgr.t(
+            "语音识别模型尚未安装",
+            "Speech recognition model is not installed yet"
+        )
     }
 }
 

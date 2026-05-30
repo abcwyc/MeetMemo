@@ -11,6 +11,7 @@ final class AudioProcessingPipeline: @unchecked Sendable {
     private let converter: AVAudioConverter
     private let onAudioData: AudioDataHandler
     private let onAudioLevel: AudioLevelHandler
+    private let silenceThreshold: Float?
     private let queue: DispatchQueue
     private let stateLock = NSLock()
     private let maxPendingBuffers: Int
@@ -18,13 +19,13 @@ final class AudioProcessingPipeline: @unchecked Sendable {
     private var pendingBuffers = 0
     private var droppedBuffers = 0
     private var isStopped = false
-    private var generation = 0
 
     init?(
         source: AudioSource,
         inputFormat: AVAudioFormat,
         targetFormat: AVAudioFormat,
         maxPendingBuffers: Int = 96,
+        silenceThreshold: Float? = nil,
         onAudioData: @escaping AudioDataHandler,
         onAudioLevel: @escaping AudioLevelHandler
     ) {
@@ -38,26 +39,27 @@ final class AudioProcessingPipeline: @unchecked Sendable {
         self.converter = converter
         self.onAudioData = onAudioData
         self.onAudioLevel = onAudioLevel
+        self.silenceThreshold = silenceThreshold
         self.maxPendingBuffers = maxPendingBuffers
         self.queue = DispatchQueue(label: "io.meetmemo.audio.pipeline.\(source.rawValue)", qos: .userInitiated)
     }
 
     func enqueue(_ buffer: AVAudioPCMBuffer) {
-        let reservedGeneration: Int? = stateLock.withLock {
-            guard !isStopped else { return nil }
+        let didReserveBuffer: Bool = stateLock.withLock {
+            guard !isStopped else { return false }
             guard pendingBuffers < maxPendingBuffers else {
                 droppedBuffers += 1
                 if droppedBuffers == 1 || droppedBuffers % 50 == 0 {
                     print("⚠️ Dropped \(droppedBuffers) \(source.rawValue) audio buffers because the processing queue is backlogged.")
                 }
-                return nil
+                return false
             }
 
             pendingBuffers += 1
-            return generation
+            return true
         }
 
-        guard let reservedGeneration else { return }
+        guard didReserveBuffer else { return }
         guard let copiedBuffer = Self.copyBuffer(buffer, format: inputFormat) else {
             releasePendingBuffer()
             return
@@ -70,7 +72,7 @@ final class AudioProcessingPipeline: @unchecked Sendable {
             }
 
             guard self.stateLock.withLock({
-                !self.isStopped && self.generation == reservedGeneration
+                !self.isStopped
             }) else { return }
             self.process(copiedBuffer)
         }
@@ -83,18 +85,11 @@ final class AudioProcessingPipeline: @unchecked Sendable {
         }
     }
 
-    /// Drops buffers that were captured before a provider reconnect boundary.
-    /// They belong to the previous STT timeline and must not be sent into the new stream.
-    func discardPendingAudio() {
-        stateLock.withLock {
-            generation &+= 1
-            pendingBuffers = 0
-        }
-    }
-
     private func process(_ buffer: AVAudioPCMBuffer) {
         let rms = Self.rmsLevel(in: buffer)
         onAudioLevel(rms, source)
+
+        if let threshold = silenceThreshold, rms < threshold { return }
 
         let outputFrameCapacity = AVAudioFrameCount(
             max(1, Double(buffer.frameLength) * targetFormat.sampleRate / buffer.format.sampleRate)

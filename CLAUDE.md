@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MeetMemo (MeetMemo) is a free, open-source macOS AI meeting notetaker. It captures mic + system audio, streams to the configured STT provider for live transcription, and generates structured notes via the configured LLM provider.
+MeetMemo (MeetMemo) is a free, open-source macOS AI meeting notetaker. It captures mic + system audio, transcribes locally through macOS SpeechAnalyzer, and generates structured notes via the configured LLM provider.
 
 Primary project:
 - `MeetMemo/` — Native Swift/SwiftUI macOS app
@@ -36,19 +36,19 @@ Version management:
 **Models** (`MeetMemo/Models/`)
 - `Meeting.swift` — Core data model: transcript chunks + generated notes
 - `NoteTemplate.swift` — 7 built-in templates + custom templates
-- `Settings.swift` — Provider credentials, prompts, onboarding state
+- `Settings.swift` — LLM credentials, prompts, onboarding state
 
 **Managers** (singletons, `MeetMemo/Managers/`)
-- `AudioManager.swift` — Opens dual WebSocket connections through `STTProviderFactory`; the current implementation uses Doubao STT for mic + system audio
+- `AudioManager.swift` — Captures mic + optional system audio, streams both into local SpeechAnalyzer STT providers, and maintains the transcript timeline
 - `RecordingSessionManager.swift` — Coordinates active recording state across the app
 - `LocalStorageManager.swift` — JSON persistence under the app Documents directory (`Meetings/`, `MeetingSummaries/`, `Templates/`; sandboxed builds resolve this inside the app container); uses atomic writes (temp file → replace)
-- `KeychainHelper.swift` — Secure STT and LLM credential storage in macOS Keychain
+- `KeychainHelper.swift` — Secure LLM credential storage in macOS Keychain
 - `DataMigrationManager.swift` — Versioned migration support for JSON data
 
 **Services** (`MeetMemo/Services/`)
 - `NotesGenerator.swift` — Builds template-aware prompts and streams note content through the configured `LLMProvider`
 - `LLMClient.swift` — Routes Anthropic URLs to the Messages API and all other URLs to OpenAI-compatible chat completions
-- `APIKeyValidator.swift` — Validates STT and LLM configs before allowing recording
+- `APIKeyValidator.swift` — Validates LLM configs; SpeechAnalyzer readiness is handled by `SpeechModelInstaller`
 - `ErrorHandler.swift` — Centralized error handling
 
 **ProcessTap** (`MeetMemo/ProcessTap/`)
@@ -62,9 +62,9 @@ SwiftUI views wired to ViewModels. Entry point is `ContentView.swift`; app boots
 
 ### Key Data Flow
 
-1. **Recording start** → `RecordingSessionManager` → `AudioManager` opens two WebSocket streams via the STT provider factory (one mic, one system audio; currently Doubao) → transcript chunks arrive and are appended to the active `Meeting` with a 2-second debounce before saving
+1. **Recording start** → `RecordingSessionManager` → `SpeechModelInstaller` verifies speech permission + local model availability → `AudioManager` opens local SpeechAnalyzer-backed STT streams for mic and, when enabled, system audio → transcript chunks arrive and are appended to the active `Meeting` with a 2-second debounce before saving
 2. **Note generation** → `NotesGenerator` reads transcript + selected `NoteTemplate` → `LLMClient` selects Anthropic Messages or OpenAI-compatible chat completions from the configured base URL → streams markdown notes back to `RenderedNotesView`
-3. **Persistence** → all meetings/templates stored as JSON files in the app Documents directory; provider credentials in Keychain
+3. **Persistence** → all meetings/templates stored as JSON files in the app Documents directory; LLM credentials in Keychain
 
 ## Key Configuration
 

@@ -17,6 +17,12 @@ final class AudioRecordingStateMachineTests: XCTestCase {
         machine.markRecording(sessionID: sessionID)
         XCTAssertEqual(machine.state, .recording(sessionID))
         XCTAssertTrue(machine.state.isRecordingVisible)
+        XCTAssertFalse(machine.state.isRecovering)
+
+        machine.markRecovering(sessionID: sessionID)
+        XCTAssertEqual(machine.state, .recovering(sessionID))
+        XCTAssertTrue(machine.state.isRecordingVisible)
+        XCTAssertTrue(machine.state.isRecovering)
 
         machine.stop(sessionID: sessionID)
         XCTAssertEqual(machine.state, .stopping(sessionID))

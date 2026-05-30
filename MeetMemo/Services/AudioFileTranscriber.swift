@@ -1,5 +1,7 @@
 @preconcurrency import AVFoundation
+import CoreMedia
 import Foundation
+import Speech
 
 struct AudioFileTranscriptionResult {
     let chunks: [TranscriptChunk]
@@ -8,44 +10,55 @@ struct AudioFileTranscriptionResult {
 final class AudioFileTranscriber {
     static let shared = AudioFileTranscriber()
 
-    private let sttProviderFactory: STTProviderFactory
-
-    private init(sttProviderFactory: STTProviderFactory = SpeechAnalyzerSTTProviderFactory(
-        locale: Locale(identifier: UserDefaultsManager.shared.sttLocaleIdentifier)
-    )) {
-        self.sttProviderFactory = sttProviderFactory
-    }
+    private init() {}
 
     func transcribe(
         url: URL,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AudioFileTranscriptionResult {
+        let locale = try await SpeechModelInstaller.shared.ensureReadyForUse()
         let state = AudioFileTranscriptionState()
-        let provider = sttProviderFactory.makeProvider()
 
-        provider.onTranscriptUpdate = { update in
-            Task {
-                await state.apply(update, source: .mic)
+        let transcriber = SpeechModelInstaller.makeTranscriber(
+            locale: locale,
+            includeTimeRange: true,
+            includeVolatileResults: false
+        )
+        let analyzer = SpeechAnalyzer(modules: [transcriber])
+        let file = try AVAudioFile(forReading: url)
+        let durationMilliseconds = Self.durationMilliseconds(for: file)
+        progress?(0.05)
+
+        let resultsTask = Task {
+            for try await result in transcriber.results {
+                let text = String(result.text.characters)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { continue }
+                let timeRange = SpeechAnalyzerSTTProvider.millisecondRange(from: result.range)
+                if let endTime = timeRange?.end {
+                    progress?(Self.progress(forEndTime: endTime, durationMilliseconds: durationMilliseconds))
+                }
+                await state.appendFinalChunk(
+                    text: text,
+                    startTime: timeRange?.start,
+                    endTime: timeRange?.end
+                )
             }
         }
 
-        provider.onError = { message in
-            Task {
-                await state.recordError(message, isTransportError: Self.isSocketTransportError(message))
+        do {
+            if let lastSample = try await analyzer.analyzeSequence(from: file) {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
             }
+            try await resultsTask.value
+            progress?(1.0)
+        } catch {
+            resultsTask.cancel()
+            await analyzer.cancelAndFinishNow()
+            throw error
         }
-
-        try await provider.connect(config: APIKeyValidator.shared.currentSTTConfig())
-        defer {
-            provider.disconnect()
-        }
-
-        try await streamAudioFile(url, to: provider, state: state, progress: progress)
-        await state.beginFinalizing()
-        progress?(1.0)
-        provider.sendLastAudio()
-        await provider.awaitPendingFinalization(timeout: 12)
-        try await waitForFinalTranscript(state: state, timeout: 2)
 
         let chunks = await state.finalChunks()
         guard !chunks.isEmpty else {
@@ -55,187 +68,33 @@ final class AudioFileTranscriber {
         return AudioFileTranscriptionResult(chunks: chunks)
     }
 
-    private func streamAudioFile(
-        _ url: URL,
-        to provider: STTProvider,
-        state: AudioFileTranscriptionState,
-        progress: (@Sendable (Double) -> Void)?
-    ) async throws {
-        let file = try AVAudioFile(forReading: url)
-        let sourceFormat = file.processingFormat
-        progress?(0.0)
-
-        guard let targetFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: 16_000,
-            channels: 1,
-            interleaved: false
-        ) else {
-            throw AudioFileTranscriberError.unsupportedAudioFormat
-        }
-
-        guard let converter = AVAudioConverter(from: sourceFormat, to: targetFormat) else {
-            throw AudioFileTranscriberError.unsupportedAudioFormat
-        }
-
-        let chunkDuration: TimeInterval = 0.1
-        let readCapacity = AVAudioFrameCount(max(1, sourceFormat.sampleRate * chunkDuration))
-
-        while file.framePosition < file.length {
-            try Task.checkCancellation()
-            if let error = await state.errorMessage {
-                throw AudioFileTranscriberError.providerError(error)
-            }
-
-            let remainingFrames = AVAudioFrameCount(file.length - file.framePosition)
-            let framesToRead = min(readCapacity, remainingFrames)
-
-            guard let inputBuffer = AVAudioPCMBuffer(pcmFormat: sourceFormat, frameCapacity: framesToRead) else {
-                throw AudioFileTranscriberError.unsupportedAudioFormat
-            }
-
-            try file.read(into: inputBuffer, frameCount: framesToRead)
-            guard inputBuffer.frameLength > 0 else { continue }
-
-            let ratio = targetFormat.sampleRate / sourceFormat.sampleRate
-            let outputCapacity = AVAudioFrameCount(Double(inputBuffer.frameLength) * ratio) + 32
-
-            guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outputCapacity) else {
-                throw AudioFileTranscriberError.unsupportedAudioFormat
-            }
-
-            var didProvideInput = false
-            var conversionError: NSError?
-            let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
-                if didProvideInput {
-                    outStatus.pointee = .noDataNow
-                    return nil
-                }
-
-                didProvideInput = true
-                outStatus.pointee = .haveData
-                return inputBuffer
-            }
-
-            if let conversionError {
-                throw conversionError
-            }
-
-            guard status == .haveData || status == .inputRanDry || status == .endOfStream else {
-                continue
-            }
-
-            guard let channelData = outputBuffer.int16ChannelData?[0], outputBuffer.frameLength > 0 else {
-                continue
-            }
-
-            let frameCount = Int(outputBuffer.frameLength)
-            let data = Data(bytes: channelData, count: frameCount * MemoryLayout<Int16>.size)
-            provider.sendAudio(data)
-            progress?(min(0.98, Double(file.framePosition) / Double(max(file.length, 1))))
-
-            let audioDuration = Double(outputBuffer.frameLength) / targetFormat.sampleRate
-            try await Task.sleep(nanoseconds: UInt64(audioDuration * 1_000_000_000))
-        }
+    private static func durationMilliseconds(for file: AVAudioFile) -> Int {
+        let sampleRate = file.processingFormat.sampleRate
+        guard sampleRate > 0 else { return 1 }
+        return max(1, Int((Double(file.length) / sampleRate * 1000).rounded()))
     }
 
-    private func waitForFinalTranscript(
-        state: AudioFileTranscriptionState,
-        timeout: TimeInterval
-    ) async throws {
-        let start = Date()
-        var lastCount = await state.updateCount
-        var lastChange = Date()
-
-        while Date().timeIntervalSince(start) < timeout {
-            try Task.checkCancellation()
-
-            if let error = await state.errorMessage {
-                throw AudioFileTranscriberError.providerError(error)
-            }
-
-            try await Task.sleep(for: .milliseconds(300))
-
-            let currentCount = await state.updateCount
-            if currentCount != lastCount {
-                lastCount = currentCount
-                lastChange = Date()
-                continue
-            }
-
-            if Date().timeIntervalSince(lastChange) >= 1.8 {
-                break
-            }
-        }
-    }
-
-    private static func isSocketTransportError(_ message: String) -> Bool {
-        let normalized = message.lowercased()
-        return normalized.contains("socket is not connected")
-            || normalized.contains("socket is not open")
-            || normalized.contains("connection lost")
-            || normalized.contains("network connection was lost")
+    private static func progress(forEndTime endTime: Int, durationMilliseconds: Int) -> Double {
+        let fraction = min(1.0, max(0.0, Double(endTime) / Double(durationMilliseconds)))
+        return min(0.95, max(0.05, 0.05 + fraction * 0.90))
     }
 }
 
 private actor AudioFileTranscriptionState {
     private var chunks: [TranscriptChunk] = []
-    private var activeInterimId: UUID?
-    private var errorMessageValue: String?
-    private var updateCountValue = 0
-    private var isFinalizing = false
-
-    var errorMessage: String? { errorMessageValue }
-    var updateCount: Int { updateCountValue }
 
     func finalChunks() -> [TranscriptChunk] {
-        chunks.filter { $0.isFinal }
+        chunks
     }
 
-    func beginFinalizing() {
-        isFinalizing = true
-    }
-
-    func recordError(_ message: String, isTransportError: Bool) {
-        if isFinalizing && isTransportError && !chunks.isEmpty { return }
-        errorMessageValue = message
-    }
-
-    func apply(_ update: STTTranscriptUpdate, source: AudioSource) {
-        updateCountValue += 1
-        if update.isFinal {
-            if let id = activeInterimId {
-                chunks.removeAll { $0.id == id }
-                activeInterimId = nil
-            }
-            chunks.append(TranscriptChunk(
-                source: source,
-                text: update.text,
-                isFinal: true,
-                speakerTag: update.speakerTag,
-                speakerId: update.speakerId,
-                startTime: update.startTime,
-                endTime: update.endTime
-            ))
-        } else {
-            let id = activeInterimId ?? UUID()
-            let chunk = TranscriptChunk(
-                id: id,
-                source: source,
-                text: update.text,
-                isFinal: false,
-                speakerTag: update.speakerTag,
-                speakerId: update.speakerId,
-                startTime: update.startTime,
-                endTime: update.endTime
-            )
-            if let idx = chunks.firstIndex(where: { $0.id == id }) {
-                chunks[idx] = chunk
-            } else {
-                chunks.append(chunk)
-                activeInterimId = id
-            }
-        }
+    func appendFinalChunk(text: String, startTime: Int?, endTime: Int?) {
+        chunks.append(TranscriptChunk(
+            source: .mic,
+            text: text,
+            isFinal: true,
+            startTime: startTime,
+            endTime: endTime
+        ))
     }
 }
 

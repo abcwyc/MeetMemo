@@ -36,6 +36,12 @@ class ErrorHandler {
         if let providerError = categorizeProviderError(errorDescription) {
             return providerError
         }
+
+        if let localizedError = error as? LocalizedError,
+           let message = localizedError.errorDescription,
+           !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return message
+        }
         
         // Generic error fallback
         return "An unexpected error occurred: \(error.localizedDescription)"
@@ -286,32 +292,6 @@ class ErrorHandler {
             || normalized.contains("并发额度")
     }
 
-    func handleDoubaoError(code: Int, message: String? = nil) -> String {
-        let detail = normalizedErrorDetail(message)
-
-        if isConcurrencyQuotaDetail(detail) {
-            return ErrorMessage.sttConcurrencyQuotaExceeded
-        }
-
-        switch code {
-        case 45000001:
-            return ErrorMessage.badRequest
-        case 45000002:
-            return "空音频。请检查麦克风或系统音频输入。"
-        case 45000081:
-            return ErrorMessage.connectionTimeout
-        case 45000151:
-            return "音频格式不正确。请检查采样率、位深和声道设置。"
-        case 55000031:
-            return ErrorMessage.apiServerError
-        default:
-            let fallback = detail.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !fallback.isEmpty {
-                return fallback
-            }
-            return "转写服务返回错误（\(code)）。"
-        }
-    }
 }
 
 /// HTTP error type
@@ -327,10 +307,10 @@ struct HTTPError: Error {
 
 /// Common error messages
 enum ErrorMessage {
-    static let noAPIKey = "服务凭证未配置。请在设置中配置语音识别和 LLM 服务。"
+    static let noAPIKey = "LLM 服务凭证未配置。请在设置中配置 Base URL、API Key 和 Model Name。"
     static let noTemplate = "No template content found. Please select a valid template."
     static let noTranscript = "No transcript available. Please record some audio first."
-    static let connectionTimeout = "无法连接到转写服务。请检查网络和凭证。"
+    static let connectionTimeout = "服务连接超时。请稍后重试。"
     static let configurationFailed = "Failed to configure transcription session."
     static let invalidURL = "Base URL 不正确。请填写可访问的 LLM 服务根地址。"
     static let noModelsAvailable = "No models available with your API key. Please check your account status."
@@ -344,7 +324,7 @@ enum ErrorMessage {
     static let accessForbidden = "访问被拒绝。请检查凭证权限。"
     static let apiEndpointNotFound = "API 端点不存在。请检查服务地址。OpenAI 兼容服务需要填写基础地址，例如火山方舟 https://ark.cn-beijing.volces.com/api/v3，火山方舟 Coding Plan https://ark.cn-beijing.volces.com/api/coding/v3，Kimi 官方 https://api.moonshot.cn/v1。"
     static let rateLimited = "API 请求频率超限，请稍后再试。"
-    static let sttConcurrencyQuotaExceeded = "语音识别并发额度已达上限。请结束其他录音任务后稍后重试，或提升豆包语音识别服务的并发额度。"
+    static let sttConcurrencyQuotaExceeded = "服务并发额度已达上限。请结束其他任务后稍后重试。"
     static let apiServerError = "服务端错误，请稍后再试。"
     static let requestTimeout = "Request timeout. Please try again."
     static let requestTooLarge = "Request too large. Please try again."

@@ -1,4 +1,6 @@
 import AVFoundation
+import CoreMedia
+import Foundation
 import Speech
 
 final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
@@ -13,12 +15,12 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
     var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)?
     var onError: ((String) -> Void)?
 
-    private let locale: Locale
     private var transcriber: SpeechTranscriber?
     private var analyzer: SpeechAnalyzer?
     private var inputBuilder: AsyncStream<AnalyzerInput>.Continuation?
     private var analysisTask: Task<Void, Never>?
     private var resultsTask: Task<Void, Never>?
+    private var finalizationTask: Task<Bool, Never>?
     private var converter: AVAudioConverter?
     private var analyzerFormat: AVAudioFormat?
 
@@ -29,19 +31,14 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
         interleaved: false
     )!
 
-    init(locale: Locale = Locale(identifier: "zh-CN")) {
-        self.locale = locale
-        super.init()
-    }
-
     func connect(config: STTProviderConfig) async throws {
         disconnect()
 
-        let transcriber = SpeechTranscriber(
-            locale: config.locale,
-            transcriptionOptions: [],
-            reportingOptions: [.volatileResults],
-            attributeOptions: [.audioTimeRange]
+        let resolvedLocale = try await SpeechModelInstaller.shared.ensureReadyForUse(for: config.locale)
+        let transcriber = SpeechModelInstaller.makeTranscriber(
+            locale: resolvedLocale,
+            includeTimeRange: true,
+            includeVolatileResults: true
         )
         self.transcriber = transcriber
 
@@ -65,10 +62,13 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
                     guard let self else { return }
                     let text = String(result.text.characters)
                     guard !text.trimmingCharacters(in: .whitespaces).isEmpty else { continue }
+                    let timeRange = Self.millisecondRange(from: result.range)
 
                     let update = STTTranscriptUpdate(
                         text: text,
-                        isFinal: result.isFinal
+                        isFinal: result.isFinal,
+                        startTime: timeRange?.start,
+                        endTime: timeRange?.end
                     )
                     self.onTranscriptUpdate?(update)
                 }
@@ -105,6 +105,8 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
         analysisTask = nil
         resultsTask?.cancel()
         resultsTask = nil
+        finalizationTask?.cancel()
+        finalizationTask = nil
         transcriber = nil
         analyzer = nil
         converter = nil
@@ -112,28 +114,71 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
     }
 
     func testConnection(config: STTProviderConfig, timeout: TimeInterval) async throws {
-        let installed = await SpeechTranscriber.installedLocales
-        guard installed.contains(config.locale) else {
-            throw SpeechAnalyzerError.modelNotInstalled(config.locale)
-        }
+        _ = try await SpeechModelInstaller.shared.ensureReadyForUse(for: config.locale)
     }
 
-    func awaitPendingFinalization(timeout: TimeInterval) async {
-        // Flush any buffered audio and force final result emission
-        try? await withTimeout(seconds: timeout) {
-            try? await self.analyzer?.finalizeAndFinishThroughEndOfInput()
+    func awaitPendingFinalization(timeout: TimeInterval) async -> Bool {
+        inputBuilder?.finish()
+        inputBuilder = nil
+
+        let startedAt = Date()
+        let finalizeTask = makeFinalizationTask()
+        guard let finalizeTask else { return true }
+
+        guard let finalized = await Self.waitForTask(finalizeTask, timeout: timeout),
+              finalized else {
+            print("⚠️ SpeechAnalyzer finalization timed out after \(timeout)s.")
+            return false
         }
-        // Wait for the results loop to complete naturally after finalization
-        guard let resultsTask else { return }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await resultsTask.value }
-            group.addTask { try? await Task.sleep(for: .seconds(timeout)) }
-            _ = await group.next()
-            group.cancelAll()
+
+        guard let resultsTask else { return true }
+        let remaining = max(0.5, timeout - Date().timeIntervalSince(startedAt))
+        guard await Self.waitForTask(resultsTask, timeout: remaining) != nil else {
+            print("⚠️ SpeechAnalyzer result drain timed out after finalization.")
+            return false
         }
+
+        return true
     }
 
     // MARK: - Private helpers
+
+    private func makeFinalizationTask() -> Task<Bool, Never>? {
+        if let finalizationTask {
+            return finalizationTask
+        }
+
+        guard let analyzer else { return nil }
+        let task = Task { [weak self, analyzer] in
+            do {
+                try await analyzer.finalizeAndFinishThroughEndOfInput()
+                return true
+            } catch {
+                guard !Task.isCancelled else { return false }
+                self?.onError?(error.localizedDescription)
+                return false
+            }
+        }
+        finalizationTask = task
+        return task
+    }
+
+    private static func waitForTask<Success>(_ task: Task<Success, Never>, timeout: TimeInterval) async -> Success? {
+        await withTaskGroup(of: Success?.self) { group in
+            group.addTask {
+                .some(await task.value)
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+                task.cancel()  // unblock the awaiting child task so withTaskGroup can return
+                return nil
+            }
+
+            let result = await group.next() ?? nil
+            group.cancelAll()
+            return result
+        }
+    }
 
     private func makeOutputBuffer(from data: Data) -> AVAudioPCMBuffer? {
         let frameCount = AVAudioFrameCount(data.count / MemoryLayout<Int16>.size)
@@ -180,42 +225,24 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
 
         return outputBuffer
     }
+
+    static func millisecondRange(from range: CMTimeRange) -> (start: Int, end: Int)? {
+        guard let start = milliseconds(from: range.start),
+              let end = milliseconds(from: CMTimeRangeGetEnd(range)) else {
+            return nil
+        }
+        return (start, max(start, end))
+    }
+
+    private static func milliseconds(from time: CMTime) -> Int? {
+        let seconds = CMTimeGetSeconds(time)
+        guard seconds.isFinite, seconds >= 0 else { return nil }
+        return Int((seconds * 1000).rounded())
+    }
 }
 
 final class SpeechAnalyzerSTTProviderFactory: STTProviderFactory {
-    let locale: Locale
-
-    init(locale: Locale = Locale(identifier: "zh-CN")) {
-        self.locale = locale
-    }
-
     func makeProvider() -> STTProvider {
-        SpeechAnalyzerSTTProvider(locale: locale)
-    }
-}
-
-enum SpeechAnalyzerError: LocalizedError {
-    case modelNotInstalled(Locale)
-
-    var errorDescription: String? {
-        switch self {
-        case .modelNotInstalled(let locale):
-            return "语音识别模型未安装（\(locale.identifier)）。请在设置中检查语音识别状态后重试。"
-        }
-    }
-}
-
-// MARK: - Timeout helper
-
-private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await operation() }
-        group.addTask {
-            try await Task.sleep(for: .seconds(seconds))
-            throw CancellationError()
-        }
-        let result = try await group.next()!
-        group.cancelAll()
-        return result
+        SpeechAnalyzerSTTProvider()
     }
 }

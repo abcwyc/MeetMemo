@@ -6,7 +6,6 @@ enum AudioRecordingState: Equatable {
     case recording(UUID)
     case stopping(UUID)
     case recovering(UUID)
-    case failed(UUID?, String)
 
     var sessionID: UUID? {
         switch self {
@@ -16,8 +15,6 @@ enum AudioRecordingState: Equatable {
              .recording(let id),
              .stopping(let id),
              .recovering(let id):
-            return id
-        case .failed(let id, _):
             return id
         }
     }
@@ -30,6 +27,11 @@ enum AudioRecordingState: Equatable {
 
     var isStopping: Bool {
         if case .stopping = self { return true }
+        return false
+    }
+
+    var isRecovering: Bool {
+        if case .recovering = self { return true }
         return false
     }
 
@@ -57,10 +59,6 @@ struct AudioRecordingStateMachine {
 
     mutating func stop(sessionID: UUID) {
         state = .stopping(sessionID)
-    }
-
-    mutating func fail(sessionID: UUID?, message: String) {
-        state = .failed(sessionID, message)
     }
 
     mutating func reset() {

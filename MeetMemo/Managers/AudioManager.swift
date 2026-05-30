@@ -29,12 +29,17 @@ class AudioManager: NSObject, ObservableObject {
     private var systemAudioPipeline: AudioProcessingPipeline?
     private var startRecordingTask: Task<Void, Never>?
     private var micRestartTask: Task<Void, Never>?
-    private let finalFlushTimeout: TimeInterval = 2.0
+    private let finalFlushTimeout: TimeInterval = 8.0
+    private var recordingStartedAtUptime: TimeInterval?
     private var recordingBaseOffsetMilliseconds = 0
     private var recordingStateMachine = AudioRecordingStateMachine()
 
     /// Tracks the active interim chunk id per source for replace-on-update semantics.
     private var activeInterimChunkId: [AudioSource: UUID] = [:]
+    /// Wall-clock offset (ms) at the moment the first meaningful audio buffer arrives for each
+    /// source. This anchors CMTime=0 to the correct position on the recording timeline, which
+    /// is more accurate than capturing the offset at connectSTTProvider time.
+    private var firstAudioOffsets: [AudioSource: Int] = [:]
 
     // Unique identifier for the current recording session
     private var sessionID = UUID()
@@ -46,6 +51,7 @@ class AudioManager: NSObject, ObservableObject {
     private let tapQueue = DispatchQueue(label: "io.meetmemo.audiotap", qos: .userInitiated)
     private var isTapActive = false
     private var isRestartingSystemTap = false
+    private var isTearingDownRecording = false
 
     private var micRetryCount = 0
     private let maxMicRetries = 3
@@ -59,9 +65,7 @@ class AudioManager: NSObject, ObservableObject {
     private var didWakeObserver: NSObjectProtocol?
 
     private override init() {
-        self.sttProviderFactory = SpeechAnalyzerSTTProviderFactory(
-            locale: Locale(identifier: UserDefaultsManager.shared.sttLocaleIdentifier)
-        )
+        self.sttProviderFactory = SpeechAnalyzerSTTProviderFactory()
         super.init()
         registerAudioEngineConfigObserver()
         registerSystemPowerObservers()
@@ -94,6 +98,16 @@ class AudioManager: NSObject, ObservableObject {
         }
     }
 
+    private var isStoppingOrTearingDown: Bool {
+        isStoppingRecording || isTearingDownRecording
+    }
+
+    private func publishRecordingActivityState() {
+        isRecording = recordingStateMachine.state.isRecordingVisible
+        isRecoveringSTT = recordingStateMachine.state.isRecovering
+        AudioLevelManager.shared.updateRecordingState(isRecording)
+    }
+
     private func registerAudioEngineConfigObserver() {
         if let audioEngineConfigObserver {
             NotificationCenter.default.removeObserver(audioEngineConfigObserver)
@@ -121,7 +135,7 @@ class AudioManager: NSObject, ObservableObject {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.isRecording, !self.isStoppingRecording else { return }
+                guard let self, self.isRecording, !self.isStoppingOrTearingDown else { return }
                 print("💤 System will sleep — finalizing recording before suspend.")
                 self.errorMessage = "系统即将进入睡眠，已自动结束录音。"
                 self.stopRecording()
@@ -146,6 +160,7 @@ class AudioManager: NSObject, ObservableObject {
         errorMessage = nil
         transcriptChunks = transcriptChunks.filter(\.isFinal)
         recordingBaseOffsetMilliseconds = Self.maximumTranscriptEndTime(in: transcriptChunks)
+        recordingStartedAtUptime = ProcessInfo.processInfo.systemUptime
         activeInterimChunkId.removeAll()
 
         startRecordingTask?.cancel()
@@ -164,14 +179,17 @@ class AudioManager: NSObject, ObservableObject {
     private func abortRecording() {
         print("Internal cleanup...")
 
+        isTearingDownRecording = true
+        defer { isTearingDownRecording = false }
+
         stopStartRecordingTask()
         stopMicRestartTask()
         stopAudioPipelines()
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
-        isStoppingRecording = true
         sessionID = UUID()
         isRecording = false
+        recordingStartedAtUptime = nil
         recordingBaseOffsetMilliseconds = 0
         AudioLevelManager.shared.updateRecordingState(false)
 
@@ -184,6 +202,7 @@ class AudioManager: NSObject, ObservableObject {
             print("System audio tap invalidated")
         }
 
+        firstAudioOffsets.removeAll()
         cleanupAudioEngine()
         disconnectSTTProviders()
         recordingStateMachine.reset()
@@ -194,13 +213,12 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     private func restartMicrophone() {
-        guard isRecording, !isStoppingRecording else { return }
+        guard isRecording, !isStoppingOrTearingDown else { return }
 
         guard micRetryCount < maxMicRetries else {
             let message = "Microphone failed to recover after \(maxMicRetries) attempts."
             print("⛔️ \(message) Stopping recording.")
             errorMessage = message
-            isRecoveringSTT = false
             stopRecording()
             return
         }
@@ -210,7 +228,8 @@ class AudioManager: NSObject, ObservableObject {
         let restartSessionID = sessionID
 
         cleanupAudioEngine()
-        isRecoveringSTT = true
+        recordingStateMachine.markRecovering(sessionID: restartSessionID)
+        publishRecordingActivityState()
 
         micRestartTask?.cancel()
         micRestartTask = Task { [weak self] in
@@ -256,7 +275,7 @@ class AudioManager: NSObject, ObservableObject {
             }
             markRecordingActive(sessionToken: sessionToken)
 
-            _ = try await connectSTTProvider(for: .mic)
+            _ = try await connectSTTProvider(for: .mic, offsetMilliseconds: elapsedRecordingMilliseconds())
             guard isActiveSession(sessionToken) else { return false }
 
             guard let pipeline = makeAudioPipeline(
@@ -343,7 +362,7 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         do {
-            _ = try await connectSTTProvider(for: .system)
+            _ = try await connectSTTProvider(for: .system, offsetMilliseconds: elapsedRecordingMilliseconds())
             guard isActiveSession(activeSessionToken) else { return }
 
             let allProcessObjectIDs = audioProcessController.processes.map { $0.objectID }
@@ -356,14 +375,20 @@ class AudioManager: NSObject, ObservableObject {
             newTap.activate()
 
             if let tapError = newTap.errorMessage {
-                guard isActiveSession(activeSessionToken) else {
-                    newTap.invalidate()
-                    return
-                }
+                newTap.invalidate()
+                guard isActiveSession(activeSessionToken) else { return }
                 let errorMsg = "Failed to activate system audio tap: \(tapError)"
                 print("❌ \(errorMsg)")
-                errorMessage = errorMsg
-                if !isRestart { abortRecording() }
+                if isRestart {
+                    // Restart failure: silently degrade to mic-only, don't bother user
+                    systemSTT?.disconnect()
+                    systemSTT = nil
+                    isTapActive = false
+                    print("⚠️ System audio tap restart failed, continuing mic-only")
+                } else {
+                    errorMessage = errorMsg
+                    abortRecording()
+                }
                 return
             }
 
@@ -386,10 +411,16 @@ class AudioManager: NSObject, ObservableObject {
                 guard isActiveSession(activeSessionToken) else { return }
                 let errorMsg = "Failed to start system audio tap IO: \(error.localizedDescription)"
                 print("❌ \(errorMsg)")
-                errorMessage = errorMsg
                 newTap.invalidate()
                 isTapActive = false
-                if !isRestart { abortRecording() }
+                if isRestart {
+                    systemSTT?.disconnect()
+                    systemSTT = nil
+                    print("⚠️ System audio tap IO restart failed, continuing mic-only")
+                } else {
+                    errorMessage = errorMsg
+                    abortRecording()
+                }
             }
         } catch {
             guard isActiveSession(activeSessionToken) else { return }
@@ -421,7 +452,7 @@ class AudioManager: NSObject, ObservableObject {
     private func restartSystemAudioTap() async {
         print("🔄 Restarting system audio tap...")
 
-        guard isRecording, !isStoppingRecording else {
+        guard isRecording, !isStoppingOrTearingDown else {
             print("Recording was stopped, aborting tap restart.")
             return
         }
@@ -438,9 +469,9 @@ class AudioManager: NSObject, ObservableObject {
             print("System audio tap invalidated for restart.")
         }
 
-        try? await Task.sleep(for: .milliseconds(250))
+        try? await Task.sleep(for: .milliseconds(800))
 
-        guard isRecording, !isStoppingRecording else {
+        guard isRecording, !isStoppingOrTearingDown else {
             print("Recording was stopped during tap restart. Aborting.")
             return
         }
@@ -505,7 +536,7 @@ class AudioManager: NSObject, ObservableObject {
             guard let self else { return }
             print("Audio tap was invalidated.")
 
-            if !self.isRestartingSystemTap && !self.isStoppingRecording {
+            if !self.isRestartingSystemTap && !self.isStoppingOrTearingDown {
                 print("Tap invalidated unexpectedly. Restarting system audio tap.")
                 Task {
                     await self.restartSystemAudioTap()
@@ -560,13 +591,23 @@ class AudioManager: NSObject, ObservableObject {
                 return
             }
 
-            await withTaskGroup(of: Void.self) { group in
+            var didFinalize = true
+            await withTaskGroup(of: Bool.self) { group in
                 if let micProvider {
                     group.addTask { await micProvider.awaitPendingFinalization(timeout: timeout) }
                 }
                 if let systemProvider {
                     group.addTask { await systemProvider.awaitPendingFinalization(timeout: timeout) }
                 }
+                for await providerDidFinalize in group {
+                    didFinalize = didFinalize && providerDidFinalize
+                }
+            }
+
+            if !didFinalize {
+                let message = "语音识别收尾超时，最后几秒转录可能未完成。"
+                print("⚠️ \(message)")
+                self.errorMessage = message
             }
 
             guard self.sessionID == stoppedSessionID else {
@@ -579,6 +620,7 @@ class AudioManager: NSObject, ObservableObject {
             self.isRecording = self.recordingStateMachine.state.isRecordingVisible
             self.isRecoveringSTT = false
             self.isStoppingRecording = false
+            self.recordingStartedAtUptime = nil
             self.recordingBaseOffsetMilliseconds = 0
             AudioLevelManager.shared.updateRecordingState(false)
             print("Recording stopped")
@@ -596,6 +638,7 @@ class AudioManager: NSObject, ObservableObject {
             source: source,
             inputFormat: inputFormat,
             targetFormat: targetFormat,
+            silenceThreshold: source == .system ? 0.005 : nil,
             onAudioData: { [weak self] data, source in
                 Task { @MainActor [weak self] in
                     self?.sendAudioData(data, source: source, sessionToken: sessionToken)
@@ -612,10 +655,8 @@ class AudioManager: NSObject, ObservableObject {
     private func markRecordingActive(sessionToken: UUID) {
         guard isActiveSession(sessionToken) else { return }
         recordingStateMachine.markRecording(sessionID: sessionToken)
-        isRecording = recordingStateMachine.state.isRecordingVisible
-        isRecoveringSTT = false
+        publishRecordingActivityState()
         micRetryCount = 0
-        AudioLevelManager.shared.updateRecordingState(isRecording)
     }
 
     private func updateAudioLevel(_ level: Float, source: AudioSource, sessionToken: UUID) {
@@ -639,6 +680,9 @@ class AudioManager: NSObject, ObservableObject {
 
     private func sendAudioData(_ data: Data, source: AudioSource, sessionToken: UUID) {
         guard isActiveSession(sessionToken) else { return }
+        if firstAudioOffsets[source] == nil {
+            firstAudioOffsets[source] = elapsedRecordingMilliseconds()
+        }
         switch source {
         case .mic:
             micSTT?.sendAudio(data)
@@ -652,13 +696,17 @@ class AudioManager: NSObject, ObservableObject {
         startRecordingTask = nil
     }
 
-    private func connectSTTProvider(for source: AudioSource) async throws -> STTProvider {
+    private func connectSTTProvider(for source: AudioSource, offsetMilliseconds: Int) async throws -> STTProvider {
         if let existing = provider(for: source) {
             return existing
         }
 
         let providerSessionID = sessionID
-        let provider = try await makeConnectedSTTProvider(for: source, sessionToken: providerSessionID)
+        let provider = try await makeConnectedSTTProvider(
+            for: source,
+            sessionToken: providerSessionID,
+            offsetMilliseconds: offsetMilliseconds
+        )
         guard isActiveSession(providerSessionID) else {
             provider.disconnect()
             throw URLError(.cancelled)
@@ -674,15 +722,24 @@ class AudioManager: NSObject, ObservableObject {
         return provider
     }
 
-    private func makeConnectedSTTProvider(for source: AudioSource, sessionToken: UUID) async throws -> STTProvider {
+    private func makeConnectedSTTProvider(
+        for source: AudioSource,
+        sessionToken: UUID,
+        offsetMilliseconds: Int
+    ) async throws -> STTProvider {
         let config = APIKeyValidator.shared.currentSTTConfig()
         let provider = sttProviderFactory.makeProvider()
-        let baseOffset = recordingBaseOffsetMilliseconds
 
         provider.onTranscriptUpdate = { [weak self] update in
             DispatchQueue.main.async {
                 guard let self, self.sessionID == sessionToken else { return }
-                self.handleTranscriptUpdate(update, source: source, baseOffset: baseOffset)
+                // Use offset captured at first meaningful audio arrival; fall back to
+                // connect-time offset if no audio has arrived yet for this source.
+                let offset = self.firstAudioOffsets[source] ?? offsetMilliseconds
+                self.handleTranscriptUpdate(
+                    Self.offsetTranscriptUpdate(update, by: offset),
+                    source: source
+                )
             }
         }
 
@@ -723,46 +780,32 @@ class AudioManager: NSObject, ObservableObject {
         sessionID == token && recordingStateMachine.state.isActiveSession(token)
     }
 
-    private func handleTranscriptUpdate(_ update: STTTranscriptUpdate, source: AudioSource, baseOffset: Int) {
-        let adjusted: STTTranscriptUpdate
-        if baseOffset > 0 {
-            adjusted = STTTranscriptUpdate(
-                text: update.text,
-                isFinal: update.isFinal,
-                speakerTag: update.speakerTag,
-                speakerId: update.speakerId,
-                startTime: update.startTime.map { $0 + baseOffset },
-                endTime: update.endTime.map { $0 + baseOffset }
-            )
-        } else {
-            adjusted = update
-        }
-
-        if adjusted.isFinal {
+    private func handleTranscriptUpdate(_ update: STTTranscriptUpdate, source: AudioSource) {
+        if update.isFinal {
             if let id = activeInterimChunkId[source] {
                 transcriptChunks.removeAll { $0.id == id }
                 activeInterimChunkId[source] = nil
             }
             transcriptChunks.append(TranscriptChunk(
                 source: source,
-                text: adjusted.text,
+                text: update.text,
                 isFinal: true,
-                speakerTag: adjusted.speakerTag,
-                speakerId: adjusted.speakerId,
-                startTime: adjusted.startTime,
-                endTime: adjusted.endTime
+                speakerTag: update.speakerTag,
+                speakerId: update.speakerId,
+                startTime: update.startTime,
+                endTime: update.endTime
             ))
         } else {
             let id = activeInterimChunkId[source] ?? UUID()
             let chunk = TranscriptChunk(
                 id: id,
                 source: source,
-                text: adjusted.text,
+                text: update.text,
                 isFinal: false,
-                speakerTag: adjusted.speakerTag,
-                speakerId: adjusted.speakerId,
-                startTime: adjusted.startTime,
-                endTime: adjusted.endTime
+                speakerTag: update.speakerTag,
+                speakerId: update.speakerId,
+                startTime: update.startTime,
+                endTime: update.endTime
             )
             if let idx = transcriptChunks.firstIndex(where: { $0.id == id }) {
                 transcriptChunks[idx] = chunk
@@ -775,7 +818,7 @@ class AudioManager: NSObject, ObservableObject {
 
     private func handleSTTProviderError(_ message: String, source: AudioSource) {
         print("❌ STT provider error (\(source)): \(message)")
-        if isStoppingRecording { return }
+        if isStoppingOrTearingDown { return }
 
         if source == .system {
             print("⚠️ System audio STT failed, degrading to mic-only: \(message)")
@@ -802,15 +845,6 @@ class AudioManager: NSObject, ObservableObject {
         systemSTT?.sendLastAudio()
     }
 
-    private func discardPendingAudio(for source: AudioSource) {
-        switch source {
-        case .mic:
-            micAudioPipeline?.discardPendingAudio()
-        case .system:
-            systemAudioPipeline?.discardPendingAudio()
-        }
-    }
-
     /// All stop paths flush final audio via `sendFinalAudioToSTTProviders` and await
     /// `awaitPendingFinalization` before reaching here, so this only needs to tear down.
     private func disconnectSTTProviders() {
@@ -821,16 +855,27 @@ class AudioManager: NSObject, ObservableObject {
         activeInterimChunkId.removeAll()
     }
 
-    private func scheduleDisconnectAfterFinalFlush(_ provider: STTProvider) {
-        let timeout = finalFlushTimeout
-        Task.detached {
-            await provider.awaitPendingFinalization(timeout: timeout)
-            provider.disconnect()
-        }
-    }
-
     nonisolated static func maximumTranscriptEndTime(in chunks: [TranscriptChunk]) -> Int {
         chunks.compactMap { $0.endTime ?? $0.startTime }.max() ?? 0
+    }
+
+    private func elapsedRecordingMilliseconds() -> Int {
+        guard let recordingStartedAtUptime else { return recordingBaseOffsetMilliseconds }
+        let elapsed = ProcessInfo.processInfo.systemUptime - recordingStartedAtUptime
+        return recordingBaseOffsetMilliseconds + max(0, Int(elapsed * 1000))
+    }
+
+    nonisolated static func offsetTranscriptUpdate(_ update: STTTranscriptUpdate, by offsetMilliseconds: Int) -> STTTranscriptUpdate {
+        guard offsetMilliseconds > 0 else { return update }
+
+        return STTTranscriptUpdate(
+            text: update.text,
+            isFinal: update.isFinal,
+            speakerTag: update.speakerTag,
+            speakerId: update.speakerId,
+            startTime: update.startTime.map { $0 + offsetMilliseconds },
+            endTime: update.endTime.map { $0 + offsetMilliseconds }
+        )
     }
 
     private func handleAudioEngineConfigurationChange() {

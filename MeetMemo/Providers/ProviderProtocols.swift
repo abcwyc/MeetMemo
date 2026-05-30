@@ -12,14 +12,17 @@ protocol STTProvider: AnyObject {
     func testConnection(config: STTProviderConfig, timeout: TimeInterval) async throws
 
     /// Waits for the provider to emit all final results after `sendLastAudio`, up to `timeout`.
-    func awaitPendingFinalization(timeout: TimeInterval) async
+    @discardableResult
+    func awaitPendingFinalization(timeout: TimeInterval) async -> Bool
 }
 
 extension STTProvider {
     var capabilities: STTProviderCapabilities { .basic }
 
-    func awaitPendingFinalization(timeout: TimeInterval) async {
+    @discardableResult
+    func awaitPendingFinalization(timeout: TimeInterval) async -> Bool {
         try? await Task.sleep(for: .seconds(timeout))
+        return true
     }
 }
 

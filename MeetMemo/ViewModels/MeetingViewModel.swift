@@ -528,9 +528,22 @@ class MeetingViewModel: ObservableObject {
     }
     
     func startRecording() {
-        hasStartedRecordingSession = true
-        toolbarHasStartedRecordingSession = true
-        recordingSessionManager.startRecording(for: meeting.id, existingChunks: meeting.transcriptChunks)
+        guard !isStartingRecording else { return }
+        isStartingRecording = true
+        errorMessage = nil
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await SpeechModelInstaller.shared.ensureReadyForUse()
+                self.hasStartedRecordingSession = true
+                self.toolbarHasStartedRecordingSession = true
+                self.recordingSessionManager.startRecording(for: self.meeting.id, existingChunks: self.meeting.transcriptChunks)
+            } catch {
+                self.errorMessage = ErrorHandler.shared.handleError(error)
+                self.isStartingRecording = false
+            }
+        }
     }
     
     func stopRecording() {
