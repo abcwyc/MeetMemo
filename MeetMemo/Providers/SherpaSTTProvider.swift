@@ -35,9 +35,12 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         let provisionalSpeakerId: Int
     }
 
+    private static let fallbackDecodeSampleLimit = 16_000 * 30
+
     private var runtime: SherpaOnnxRuntime?
     private var ringBuffer: [Float] = []
     private var totalSamplesIngested: Int = 0
+    private var emittedSegmentCount = 0
     private var speakerCentroids: [(centroid: [Float], count: Int)] = []
     private var segmentLedger: [SegmentRecord] = []
     private let workQueue = DispatchQueue(label: "io.meetmemo.sherpa.stt", qos: .userInitiated)
@@ -79,6 +82,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         runtime = nil
         ringBuffer.removeAll(keepingCapacity: false)
         totalSamplesIngested = 0
+        emittedSegmentCount = 0
         speakerCentroids.removeAll()
         segmentLedger.removeAll()
     }
@@ -140,12 +144,27 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         }
 
         totalSamplesIngested += sampleCount
+        ringBuffer.append(contentsOf: floats)
+        if ringBuffer.count > Self.fallbackDecodeSampleLimit {
+            ringBuffer.removeFirst(ringBuffer.count - Self.fallbackDecodeSampleLimit)
+        }
+
         runtime.acceptWaveform(floats)
         drainCompletedSegments(runtime: runtime, force: false)
     }
 
     private func drainCompletedSegments(runtime: SherpaOnnxRuntime, force: Bool) {
+        let segmentsBeforeDrain = emittedSegmentCount
         while let segment = runtime.nextCompletedSegment(force: force) {
+            handle(segment: segment, runtime: runtime)
+        }
+        if force, emittedSegmentCount == segmentsBeforeDrain, !ringBuffer.isEmpty {
+            let endOffset = totalSamplesIngested
+            let startOffset = max(0, endOffset - ringBuffer.count)
+            let segment = runtime.decodeFallbackSegment(
+                samples: ringBuffer,
+                startSampleOffset: startOffset
+            )
             handle(segment: segment, runtime: runtime)
         }
     }
@@ -153,6 +172,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     private func handle(segment: SherpaOnnxRuntime.Segment, runtime: SherpaOnnxRuntime) {
         let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
+        emittedSegmentCount += 1
 
         let embedding = runtime.embedding(for: segment.samples)
         let speakerId = SpeakerClustering.assignOnline(

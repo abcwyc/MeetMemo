@@ -29,7 +29,7 @@ final class SherpaModelManager: ObservableObject {
             key: "sense_voice_model",
             fileName: "sense-voice-small.int8.onnx",
             urls: [
-                URL(string: "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx")!,
+                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/sense-voice-small.int8.onnx")!,
                 URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx")!,
             ],
             approximateBytes: 210 * 1024 * 1024,
@@ -39,7 +39,7 @@ final class SherpaModelManager: ObservableObject {
             key: "sense_voice_tokens",
             fileName: "tokens.txt",
             urls: [
-                URL(string: "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt")!,
+                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/tokens.txt")!,
                 URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt")!,
             ],
             approximateBytes: 320 * 1024,
@@ -49,8 +49,7 @@ final class SherpaModelManager: ObservableObject {
             key: "vad",
             fileName: "silero-vad.onnx",
             urls: [
-                URL(string: "https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx")!,
-                URL(string: "https://gh.llkk.cc/https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx")!,
+                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/silero-vad.onnx")!,
                 URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx")!,
             ],
             approximateBytes: 2 * 1024 * 1024,
@@ -60,8 +59,7 @@ final class SherpaModelManager: ObservableObject {
             key: "speaker_embedding",
             fileName: "3dspeaker-cam-plus.onnx",
             urls: [
-                URL(string: "https://gh-proxy.com/https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx")!,
-                URL(string: "https://gh.llkk.cc/https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx")!,
+                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/3dspeaker-cam-plus.onnx")!,
                 URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx")!,
             ],
             approximateBytes: 28 * 1024 * 1024,
@@ -70,15 +68,11 @@ final class SherpaModelManager: ObservableObject {
     ]
 
     let modelDirectory: URL
-    private var downloadTask: Task<Void, Never>?
-    private let session: URLSession
+    private var activeDownloadSession: URLSession?
 
     private init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         self.modelDirectory = base.appendingPathComponent("MeetMemo/sherpa-onnx", isDirectory: true)
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForResource = 60 * 60
-        self.session = URLSession(configuration: config)
         try? FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
         Task { await self.refreshReadiness() }
     }
@@ -171,7 +165,8 @@ final class SherpaModelManager: ObservableObject {
     }
 
     func cancelDownload() {
-        downloadTask?.cancel()
+        activeDownloadSession?.invalidateAndCancel()
+        activeDownloadSession = nil
     }
 
     // MARK: - Private
@@ -208,42 +203,34 @@ final class SherpaModelManager: ObservableObject {
         completedBaseBytes: Int64,
         totalBytes: Int64
     ) async throws {
-        let request = URLRequest(url: url)
-        let (asyncBytes, response) = try await session.bytes(for: request)
+        let temp = destination.appendingPathExtension("part")
+        try? FileManager.default.removeItem(at: temp)
+
+        let delegate = ModelDownloadDelegate(tempURL: temp) { [weak self] receivedBytes, expectedBytes in
+            let expected = max(expectedBytes, model.approximateBytes)
+            let fraction = (Double(completedBaseBytes) + Double(receivedBytes) * Double(model.approximateBytes) / Double(max(1, expected))) / Double(totalBytes)
+            Task { @MainActor in
+                self?.downloadProgress = min(0.99, max(0, fraction))
+            }
+        }
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForResource = 60 * 60
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: queue)
+        activeDownloadSession = session
+        defer {
+            if activeDownloadSession === session {
+                activeDownloadSession = nil
+            }
+            session.finishTasksAndInvalidate()
+        }
+
+        let response = try await delegate.download(from: url, using: session)
         guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
             throw SherpaModelError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
-
-        let expected = max(httpResponse.expectedContentLength, model.approximateBytes)
-        let temp = destination.appendingPathExtension("part")
-        FileManager.default.createFile(atPath: temp.path, contents: nil)
-        let handle = try FileHandle(forWritingTo: temp)
-        defer { try? handle.close() }
-
-        var buffer = Data()
-        buffer.reserveCapacity(64 * 1024)
-        var fileBytesReceived: Int64 = 0
-        var lastReportedFraction: Double = -1
-
-        for try await byte in asyncBytes {
-            buffer.append(byte)
-            if buffer.count >= 64 * 1024 {
-                try handle.write(contentsOf: buffer)
-                fileBytesReceived += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-
-                let fraction = (Double(completedBaseBytes) + Double(fileBytesReceived) * Double(model.approximateBytes) / Double(max(1, expected))) / Double(totalBytes)
-                if fraction - lastReportedFraction >= 0.005 {
-                    lastReportedFraction = fraction
-                    downloadProgress = min(0.99, max(0, fraction))
-                }
-            }
-        }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-            fileBytesReceived += Int64(buffer.count)
-        }
-        try? handle.close()
 
         if let expectedSha = model.sha256 {
             let actual = try Self.sha256Hex(of: temp)
@@ -269,6 +256,70 @@ final class SherpaModelManager: ObservableObject {
             hasher.update(data: chunk)
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let tempURL: URL
+    private let progressHandler: @Sendable (Int64, Int64) -> Void
+    private var continuation: CheckedContinuation<URLResponse?, Error>?
+    private var fileMoveError: Error?
+
+    init(
+        tempURL: URL,
+        progressHandler: @escaping @Sendable (Int64, Int64) -> Void
+    ) {
+        self.tempURL = tempURL
+        self.progressHandler = progressHandler
+    }
+
+    func download(from url: URL, using session: URLSession) async throws -> URLResponse? {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.continuation = continuation
+                session.downloadTask(with: url).resume()
+            }
+        } onCancel: {
+            session.invalidateAndCancel()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        progressHandler(totalBytesWritten, totalBytesExpectedToWrite)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        do {
+            try? FileManager.default.removeItem(at: tempURL)
+            try FileManager.default.moveItem(at: location, to: tempURL)
+        } catch {
+            fileMoveError = error
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        if let error {
+            continuation?.resume(throwing: error)
+        } else if let fileMoveError {
+            continuation?.resume(throwing: fileMoveError)
+        } else {
+            continuation?.resume(returning: task.response)
+        }
+        continuation = nil
     }
 }
 

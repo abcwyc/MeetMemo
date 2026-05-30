@@ -82,7 +82,7 @@ final class SherpaOnnxRuntime {
         // Silero VAD — 15s max segment caps the recognition latency floor.
         let sileroCfg = sherpaOnnxSileroVadModelConfig(
             model: vadPath,
-            threshold: 0.5,
+            threshold: 0.25,
             minSilenceDuration: 0.25,
             minSpeechDuration: 0.5,
             windowSize: 512,
@@ -138,6 +138,16 @@ final class SherpaOnnxRuntime {
         )
     }
 
+    func decodeFallbackSegment(samples: [Float], startSampleOffset: Int) -> Segment {
+        let result = recognizer.decode(samples: samples, sampleRate: 16_000)
+        return Segment(
+            samples: samples,
+            text: result.text,
+            startSampleOffset: startSampleOffset,
+            endSampleOffset: startSampleOffset + samples.count
+        )
+    }
+
     func embedding(for samples: [Float]) -> [Float] {
         let stream = embeddingExtractor.createStream()
         stream.acceptWaveform(samples: samples, sampleRate: 16_000)
@@ -154,6 +164,14 @@ final class SherpaOnnxRuntime {
     func acceptWaveform(_ samples: [Float]) { _ = samples }
     func flushVAD() {}
     func nextCompletedSegment(force: Bool) -> Segment? { _ = force; return nil }
+    func decodeFallbackSegment(samples: [Float], startSampleOffset: Int) -> Segment {
+        Segment(
+            samples: samples,
+            text: "",
+            startSampleOffset: startSampleOffset,
+            endSampleOffset: startSampleOffset + samples.count
+        )
+    }
     func embedding(for samples: [Float]) -> [Float] { _ = samples; return [] }
 #endif
 }
