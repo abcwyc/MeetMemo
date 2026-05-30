@@ -13,6 +13,7 @@ class RecordingSessionManager: ObservableObject {
     @Published var isStoppingRecording = false
     @Published var activeMeetingId: UUID?
     @Published var errorMessage: String?
+    @Published var warningMessage: String?
     @Published var activeRecordingTranscriptChunksUpdated: [TranscriptChunk] = []
     @Published var activeRecordingStartedAt: Date?
     
@@ -21,6 +22,7 @@ class RecordingSessionManager: ObservableObject {
     private let transcriptUpdateSubject = PassthroughSubject<[TranscriptChunk], Never>()
     private var isStoppingFromSessionManager = false
     private var hasObservedAudioRecordingStart = false
+    private var activeSessionToken: UUID?
 
     // Store transcript chunks for the active recording session
     private var activeRecordingTranscriptChunks: [TranscriptChunk] = []
@@ -81,11 +83,21 @@ class RecordingSessionManager: ObservableObject {
                 self.finishActiveSession(saveFinalTranscript: true)
             }
             .store(in: &cancellables)
+
+        audioManager.$warningMessage
+            .sink { [weak self] warningMessage in
+                self?.warningMessage = warningMessage
+            }
+            .store(in: &cancellables)
         
         // When transcript chunks change, store them for the active recording and send to debouncer
         audioManager.$transcriptChunks
             .sink { [weak self] newChunks in
-                guard let self = self, self.isRecording, self.activeMeetingId != nil else { return }
+                guard let self,
+                      self.activeMeetingId != nil,
+                      self.isRecording || self.isStoppingFromSessionManager else {
+                    return
+                }
                 self.activeRecordingTranscriptChunks = newChunks
                 self.activeRecordingTranscriptChunksUpdated = newChunks
 
@@ -115,17 +127,25 @@ class RecordingSessionManager: ObservableObject {
         audioManager.transcriptChunks = resumableChunks
 
         activeMeetingId = meetingId
+        activeSessionToken = UUID()
         activeRecordingStartedAt = Date()
         hasObservedAudioRecordingStart = false
         audioManager.startRecording()
     }
     
     func stopRecording() {
-        print("🛑 Stopping recording for meeting: \(activeMeetingId?.uuidString ?? "unknown")")
+        let stoppedMeetingId = activeMeetingId
+        let stoppedSessionToken = activeSessionToken
+        print("🛑 Stopping recording for meeting: \(stoppedMeetingId?.uuidString ?? "unknown")")
 
         isStoppingFromSessionManager = true
         audioManager.stopRecording { [weak self] in
             guard let self else { return }
+            guard self.activeMeetingId == stoppedMeetingId,
+                  self.activeSessionToken == stoppedSessionToken else {
+                self.isStoppingFromSessionManager = false
+                return
+            }
             self.finishActiveSession(saveFinalTranscript: true)
             self.isStoppingFromSessionManager = false
         }
@@ -137,6 +157,7 @@ class RecordingSessionManager: ObservableObject {
         }
 
         activeMeetingId = nil
+        activeSessionToken = nil
         activeRecordingStartedAt = nil
         activeRecordingTranscriptChunks = []
         hasObservedAudioRecordingStart = false
@@ -144,6 +165,10 @@ class RecordingSessionManager: ObservableObject {
     
     func isRecordingMeeting(_ meetingId: UUID) -> Bool {
         return isRecording && activeMeetingId == meetingId
+    }
+
+    func hasActiveSession(for meetingId: UUID) -> Bool {
+        activeMeetingId == meetingId
     }
     
     private func updateActiveMeetingTranscript(meetingId: UUID, chunks: [TranscriptChunk]) {

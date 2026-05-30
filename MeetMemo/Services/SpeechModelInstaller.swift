@@ -60,8 +60,13 @@ final class SpeechModelInstaller: ObservableObject {
     }
 
     func installModelIfNeeded() async {
-        await checkModelAvailability()
-        guard !isModelReady else { return }
+        let status = await requestSpeechAuthorization()
+        guard status == .authorized else {
+            isModelReady = false
+            installError = SpeechModelInstallerError.authorizationFailed(status).localizedDescription
+            return
+        }
+
         do {
             _ = try await installModelIfNeeded(for: primaryLocale)
         } catch {
@@ -70,6 +75,13 @@ final class SpeechModelInstaller: ObservableObject {
     }
 
     func installModel() async {
+        let status = await requestSpeechAuthorization()
+        guard status == .authorized else {
+            isModelReady = false
+            installError = SpeechModelInstallerError.authorizationFailed(status).localizedDescription
+            return
+        }
+
         do {
             _ = try await installModelIfNeeded(for: primaryLocale, force: true)
         } catch {

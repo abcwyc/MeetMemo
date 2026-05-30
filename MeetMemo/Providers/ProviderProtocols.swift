@@ -13,16 +13,27 @@ protocol STTProvider: AnyObject {
 
     /// Waits for the provider to emit all final results after `sendLastAudio`, up to `timeout`.
     @discardableResult
-    func awaitPendingFinalization(timeout: TimeInterval) async -> Bool
+    func awaitPendingFinalization(timeout: TimeInterval) async -> STTFinalizationStatus
 }
 
 extension STTProvider {
     var capabilities: STTProviderCapabilities { .basic }
 
     @discardableResult
-    func awaitPendingFinalization(timeout: TimeInterval) async -> Bool {
+    func awaitPendingFinalization(timeout: TimeInterval) async -> STTFinalizationStatus {
         try? await Task.sleep(for: .seconds(timeout))
-        return true
+        return .completed
+    }
+}
+
+enum STTFinalizationStatus: Hashable {
+    case completed
+    case finalizeTimedOut
+    case resultDrainTimedOut
+
+    var mayHaveMissedTailAudio: Bool {
+        if case .finalizeTimedOut = self { return true }
+        return false
     }
 }
 

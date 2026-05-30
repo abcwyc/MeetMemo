@@ -214,8 +214,8 @@ class MeetingViewModel: ObservableObject {
             .dropFirst()
             .sink { [weak self] updatedChunks in
                 guard let self = self else { return }
-                // Only update if this meeting is the active recording
-                if recordingSessionManager.isRecordingMeeting(self.meeting.id) {
+                // Keep applying late final STT updates during the short background stop flush.
+                if recordingSessionManager.hasActiveSession(for: self.meeting.id) {
                     self.meeting.transcriptChunks = updatedChunks
                     self.refreshTranscriptDisplayChunks()
                     self.refreshToolbarSnapshot()

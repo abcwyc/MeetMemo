@@ -117,28 +117,28 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
         _ = try await SpeechModelInstaller.shared.ensureReadyForUse(for: config.locale)
     }
 
-    func awaitPendingFinalization(timeout: TimeInterval) async -> Bool {
+    func awaitPendingFinalization(timeout: TimeInterval) async -> STTFinalizationStatus {
         inputBuilder?.finish()
         inputBuilder = nil
 
         let startedAt = Date()
         let finalizeTask = makeFinalizationTask()
-        guard let finalizeTask else { return true }
+        guard let finalizeTask else { return .completed }
 
         guard let finalized = await Self.waitForTask(finalizeTask, timeout: timeout),
               finalized else {
             print("⚠️ SpeechAnalyzer finalization timed out after \(timeout)s.")
-            return false
+            return .finalizeTimedOut
         }
 
-        guard let resultsTask else { return true }
+        guard let resultsTask else { return .completed }
         let remaining = max(0.5, timeout - Date().timeIntervalSince(startedAt))
         guard await Self.waitForTask(resultsTask, timeout: remaining) != nil else {
             print("⚠️ SpeechAnalyzer result drain timed out after finalization.")
-            return false
+            return .resultDrainTimedOut
         }
 
-        return true
+        return .completed
     }
 
     // MARK: - Private helpers

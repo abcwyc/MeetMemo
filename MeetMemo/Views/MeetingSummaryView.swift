@@ -30,6 +30,10 @@ struct MeetingSummaryView: View {
                     statusSection
                     headerSection
 
+                    if hasDigestFocus {
+                        digestOverviewSection
+                    }
+
                     if !meeting.discussions.isEmpty {
                         discussionsSection
                     }
@@ -67,6 +71,18 @@ struct MeetingSummaryView: View {
     }
 
     // MARK: - Header Section (Meeting Metadata)
+
+    private var hasDigestFocus: Bool {
+        !meeting.decisions.isEmpty ||
+        !meeting.followUpTasks.isEmpty ||
+        !meeting.risks.isEmpty ||
+        !meeting.openQuestions.isEmpty ||
+        !meeting.milestones.isEmpty
+    }
+
+    private var digestOverviewSection: some View {
+        AdaptiveDigestOverview(meeting: meeting, langMgr: langMgr)
+    }
 
     @ViewBuilder
     private var statusSection: some View {
@@ -361,6 +377,247 @@ private struct SummaryExtractingBanner: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .strokeBorder(Color.accentColor.opacity(0.16), lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - Adaptive Digest Overview
+
+private struct AdaptiveDigestOverview: View {
+    let meeting: Meeting
+    let langMgr: LanguageManager
+
+    private var focusItems: [DigestFocusItem] {
+        var items: [DigestFocusItem] = []
+
+        if let risk = meeting.risks.first(where: { $0.severity == "high" }) ?? meeting.risks.first {
+            items.append(DigestFocusItem(
+                icon: "exclamationmark.triangle.fill",
+                title: langMgr.t("优先处理风险", "Priority Risk"),
+                body: risk.title,
+                detail: risk.mitigation.isEmpty ? risk.owner : risk.mitigation,
+                tint: risk.severity == "high" ? .red : .orange
+            ))
+        }
+
+        if let task = preferredTask {
+            let detail = [task.owner, task.dueDate.map { $0.formatted(date: .abbreviated, time: .omitted) }]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+            items.append(DigestFocusItem(
+                icon: task.kind.icon,
+                title: langMgr.t("下一步行动", "Next Action"),
+                body: task.title,
+                detail: detail.isEmpty ? task.detail : detail,
+                tint: .blue
+            ))
+        }
+
+        if let decision = meeting.decisions.first {
+            items.append(DigestFocusItem(
+                icon: "checkmark.seal.fill",
+                title: langMgr.t("已形成决策", "Decision Made"),
+                body: decision.title,
+                detail: decision.owner.isEmpty ? decision.reason : decision.owner,
+                tint: .green
+            ))
+        }
+
+        if let question = meeting.openQuestions.first {
+            items.append(DigestFocusItem(
+                icon: "questionmark.circle.fill",
+                title: langMgr.t("待确认问题", "Open Question"),
+                body: question.question,
+                detail: question.nextStep.isEmpty ? question.owner : question.nextStep,
+                tint: .orange
+            ))
+        }
+
+        if let milestone = meeting.milestones.first {
+            items.append(DigestFocusItem(
+                icon: "flag.checkered",
+                title: langMgr.t("交付节点", "Milestone"),
+                body: milestone.title,
+                detail: milestone.targetDate.isEmpty ? milestone.milestoneDescription : milestone.targetDate,
+                tint: .purple
+            ))
+        }
+
+        return Array(items.prefix(4))
+    }
+
+    private var preferredTask: MeetingFollowUpTask? {
+        let kindOrder: [FollowUpTaskKind] = [.actionItem, .confirmation, .followUp, .manual]
+        return kindOrder.compactMap { kind in
+            meeting.followUpTasks.first { $0.kind == kind }
+        }.first ?? meeting.followUpTasks.first
+    }
+
+    private var metrics: [DigestMetric] {
+        [
+            DigestMetric(
+                title: langMgr.t("决策", "Decisions"),
+                value: meeting.decisions.count,
+                icon: "checkmark.seal",
+                tint: .green
+            ),
+            DigestMetric(
+                title: langMgr.t("待办", "Actions"),
+                value: meeting.followUpTasks.count,
+                icon: "checklist",
+                tint: .blue
+            ),
+            DigestMetric(
+                title: langMgr.t("风险", "Risks"),
+                value: meeting.risks.count,
+                icon: "exclamationmark.triangle",
+                tint: meeting.risks.contains { $0.severity == "high" } ? .red : .orange
+            ),
+            DigestMetric(
+                title: langMgr.t("未决", "Open"),
+                value: meeting.openQuestions.count,
+                icon: "questionmark.circle",
+                tint: .orange
+            )
+        ]
+        .filter { $0.value > 0 }
+    }
+
+    private var toneLine: String {
+        if meeting.risks.contains(where: { $0.severity == "high" }) {
+            return langMgr.t("存在高优先级风险，建议先处理风险与阻塞项。", "High-priority risks need attention before execution.")
+        }
+        if !meeting.followUpTasks.isEmpty {
+            return langMgr.t("这次会议已有明确后续动作，适合直接进入执行跟进。", "This meeting has clear follow-up actions ready for execution.")
+        }
+        if !meeting.decisions.isEmpty {
+            return langMgr.t("这次会议主要沉淀为决策结论，可用于同步共识。", "This meeting primarily captured decisions for alignment.")
+        }
+        if !meeting.openQuestions.isEmpty {
+            return langMgr.t("这次会议仍有问题待确认，建议补齐责任人与下一步。", "There are open questions; owners and next steps should be clarified.")
+        }
+        return langMgr.t("这次会议已提取出可回顾的结构化重点。", "Structured highlights are ready for review.")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Label(langMgr.t("行动焦点", "Action Focus"), systemImage: "scope")
+                        .font(.subheadline.weight(.semibold))
+                    Text(toneLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 10)
+
+                if !metrics.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(metrics) { metric in
+                            DigestMetricPill(metric: metric)
+                        }
+                    }
+                }
+            }
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 10),
+                    GridItem(.flexible(), spacing: 10)
+                ],
+                spacing: 10
+            ) {
+                ForEach(focusItems) { item in
+                    DigestFocusCard(item: item)
+                }
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(Color.gray.opacity(0.12), lineWidth: 1)
+        )
+    }
+}
+
+private struct DigestFocusItem: Identifiable {
+    let id = UUID()
+    let icon: String
+    let title: String
+    let body: String
+    let detail: String
+    let tint: Color
+}
+
+private struct DigestMetric: Identifiable {
+    let id = UUID()
+    let title: String
+    let value: Int
+    let icon: String
+    let tint: Color
+}
+
+private struct DigestMetricPill: View {
+    let metric: DigestMetric
+
+    var body: some View {
+        Label {
+            Text("\(metric.value) \(metric.title)")
+                .monospacedDigit()
+        } icon: {
+            Image(systemName: metric.icon)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(metric.tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(metric.tint.opacity(0.10), in: Capsule())
+    }
+}
+
+private struct DigestFocusCard: View {
+    let item: DigestFocusItem
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.icon)
+                .font(.callout)
+                .foregroundStyle(item.tint)
+                .frame(width: 18)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(item.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                Text(item.body)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !item.detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(item.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .background(item.tint.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(item.tint.opacity(0.16), lineWidth: 1)
         )
     }
 }

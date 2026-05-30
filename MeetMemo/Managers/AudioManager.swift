@@ -18,6 +18,7 @@ class AudioManager: NSObject, ObservableObject {
     /// 用于在 UI 上显示"处理中"指示，避免按钮看上去卡了几秒。
     @Published var isStoppingRecording: Bool = false
     @Published var errorMessage: String?
+    @Published var warningMessage: String?
     @Published var micAudioLevel: Float = 0.0
     @Published var systemAudioLevel: Float = 0.0
 
@@ -29,10 +30,11 @@ class AudioManager: NSObject, ObservableObject {
     private var systemAudioPipeline: AudioProcessingPipeline?
     private var startRecordingTask: Task<Void, Never>?
     private var micRestartTask: Task<Void, Never>?
-    private let finalFlushTimeout: TimeInterval = 8.0
+    private let finalFlushTimeout: TimeInterval = 2.0
     private var recordingStartedAtUptime: TimeInterval?
     private var recordingBaseOffsetMilliseconds = 0
     private var recordingStateMachine = AudioRecordingStateMachine()
+    private var isFinalizingStoppedRecording = false
 
     /// Tracks the active interim chunk id per source for replace-on-update semantics.
     private var activeInterimChunkId: [AudioSource: UUID] = [:]
@@ -158,6 +160,7 @@ class AudioManager: NSObject, ObservableObject {
         let startedSessionID = sessionID
         recordingStateMachine.start(sessionID: startedSessionID)
         errorMessage = nil
+        warningMessage = nil
         transcriptChunks = transcriptChunks.filter(\.isFinal)
         recordingBaseOffsetMilliseconds = Self.maximumTranscriptEndTime(in: transcriptChunks)
         recordingStartedAtUptime = ProcessInfo.processInfo.systemUptime
@@ -181,6 +184,7 @@ class AudioManager: NSObject, ObservableObject {
 
         isTearingDownRecording = true
         defer { isTearingDownRecording = false }
+        isFinalizingStoppedRecording = false
 
         stopStartRecordingTask()
         stopMicRestartTask()
@@ -581,6 +585,15 @@ class AudioManager: NSObject, ObservableObject {
         cleanupAudioEngine()
         micRetryCount = 0
         sendFinalAudioToSTTProviders()
+        isFinalizingStoppedRecording = true
+
+        recordingStateMachine.reset()
+        isRecording = false
+        isRecoveringSTT = false
+        isStoppingRecording = false
+        recordingStartedAtUptime = nil
+        recordingBaseOffsetMilliseconds = 0
+        AudioLevelManager.shared.updateRecordingState(false)
 
         let micProvider = micSTT
         let systemProvider = systemSTT
@@ -591,38 +604,38 @@ class AudioManager: NSObject, ObservableObject {
                 return
             }
 
-            var didFinalize = true
-            await withTaskGroup(of: Bool.self) { group in
+            var finalizationStatuses: [STTFinalizationStatus] = []
+            await withTaskGroup(of: STTFinalizationStatus.self) { group in
                 if let micProvider {
                     group.addTask { await micProvider.awaitPendingFinalization(timeout: timeout) }
                 }
                 if let systemProvider {
                     group.addTask { await systemProvider.awaitPendingFinalization(timeout: timeout) }
                 }
-                for await providerDidFinalize in group {
-                    didFinalize = didFinalize && providerDidFinalize
+                for await status in group {
+                    finalizationStatuses.append(status)
                 }
             }
 
-            if !didFinalize {
+            if finalizationStatuses.contains(where: \.mayHaveMissedTailAudio) {
                 let message = "语音识别收尾超时，最后几秒转录可能未完成。"
                 print("⚠️ \(message)")
-                self.errorMessage = message
+                self.warningMessage = message
+            } else if finalizationStatuses.contains(.resultDrainTimedOut) {
+                let message = "语音识别结果流关闭较慢，已保存已收到的转录内容。"
+                print("ℹ️ \(message)")
+                self.warningMessage = message
             }
 
             guard self.sessionID == stoppedSessionID else {
+                self.isFinalizingStoppedRecording = false
                 completion?()
                 return
             }
 
             self.disconnectSTTProviders()
-            self.recordingStateMachine.reset()
-            self.isRecording = self.recordingStateMachine.state.isRecordingVisible
-            self.isRecoveringSTT = false
-            self.isStoppingRecording = false
-            self.recordingStartedAtUptime = nil
-            self.recordingBaseOffsetMilliseconds = 0
-            AudioLevelManager.shared.updateRecordingState(false)
+            self.firstAudioOffsets.removeAll()
+            self.isFinalizingStoppedRecording = false
             print("Recording stopped")
             completion?()
         }
@@ -818,7 +831,7 @@ class AudioManager: NSObject, ObservableObject {
 
     private func handleSTTProviderError(_ message: String, source: AudioSource) {
         print("❌ STT provider error (\(source)): \(message)")
-        if isStoppingOrTearingDown { return }
+        if isStoppingOrTearingDown || isFinalizingStoppedRecording { return }
 
         if source == .system {
             print("⚠️ System audio STT failed, degrading to mic-only: \(message)")
