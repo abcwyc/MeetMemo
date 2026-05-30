@@ -7,9 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		983D65F32FCB3D4700500D17 /* sherpa-onnx.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 983D65F22FCB3D4700500D17 /* sherpa-onnx.xcframework */; };
 		983D65F42FCB3E0000500D17 /* libonnxruntime.1.24.4.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 983D65F62FCB3E0000500D17 /* libonnxruntime.1.24.4.dylib */; };
 		983D65F52FCB3E0000500D17 /* libonnxruntime.1.24.4.dylib in Embed Libraries */ = {isa = PBXBuildFile; fileRef = 983D65F62FCB3E0000500D17 /* libonnxruntime.1.24.4.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
-		983D65F32FCB3D4700500D17 /* sherpa-onnx.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 983D65F22FCB3D4700500D17 /* sherpa-onnx.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -21,13 +21,6 @@
 			remoteInfo = MeetMemo;
 		};
 /* End PBXContainerItemProxy section */
-
-/* Begin PBXFileReference section */
-		983D65F62FCB3E0000500D17 /* libonnxruntime.1.24.4.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libonnxruntime.1.24.4.dylib; path = Frameworks/onnxruntime/lib/libonnxruntime.1.24.4.dylib; sourceTree = "<group>"; };
-		983D65F22FCB3D4700500D17 /* sherpa-onnx.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "sherpa-onnx.xcframework"; path = "Frameworks/sherpa-onnx.xcframework"; sourceTree = "<group>"; };
-		CC5718182E201D8D0042BA88 /* MeetMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		CC9000012F00000100000001 /* MeetMemoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetMemoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-/* End PBXFileReference section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		983D65F72FCB3E0000500D17 /* Embed Libraries */ = {
@@ -42,6 +35,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		983D65F22FCB3D4700500D17 /* sherpa-onnx.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = "sherpa-onnx.xcframework"; path = "Frameworks/sherpa-onnx.xcframework"; sourceTree = "<group>"; };
+		983D65F62FCB3E0000500D17 /* libonnxruntime.1.24.4.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libonnxruntime.1.24.4.dylib; path = Frameworks/onnxruntime/lib/libonnxruntime.1.24.4.dylib; sourceTree = "<group>"; };
+		CC5718182E201D8D0042BA88 /* MeetMemo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MeetMemo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		CC9000012F00000100000001 /* MeetMemoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MeetMemoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		CC90000C2F00000100000001 /* Exceptions for "MeetMemo" folder in "MeetMemo" target */ = {
@@ -383,7 +383,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_ASSET_PATHS = "\"MeetMemo/Preview Content\"";
 				DEVELOPMENT_TEAM = 423SMX6Z4A;
 				ENABLE_PREVIEWS = YES;
@@ -398,7 +398,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.3;
+				MARKETING_VERSION = 0.4;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -410,11 +410,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.youcai.meetmemo;
 				PRODUCT_NAME = MeetMemo;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = (
-					DEBUG,
-					SHERPA_ONNX_ENABLED,
-					"$(inherited)",
-				);
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG SHERPA_ONNX_ENABLED $(inherited)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/Frameworks/swift-wrapper/SherpaOnnx-Bridging-Header.h";
 				SWIFT_PRECOMPILE_BRIDGING_HEADER = YES;
@@ -434,7 +430,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20;
+				CURRENT_PROJECT_VERSION = 21;
 				DEVELOPMENT_ASSET_PATHS = "\"MeetMemo/Preview Content\"";
 				DEVELOPMENT_TEAM = 423SMX6Z4A;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -450,7 +446,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.3;
+				MARKETING_VERSION = 0.4;
 				ONLY_ACTIVE_ARCH = YES;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
@@ -462,10 +458,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.youcai.meetmemo;
 				PRODUCT_NAME = MeetMemo;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = (
-					SHERPA_ONNX_ENABLED,
-					"$(inherited)",
-				);
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "SHERPA_ONNX_ENABLED $(inherited)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "$(PROJECT_DIR)/Frameworks/swift-wrapper/SherpaOnnx-Bridging-Header.h";
 				SWIFT_PRECOMPILE_BRIDGING_HEADER = YES;
