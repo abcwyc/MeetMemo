@@ -23,7 +23,8 @@ class AudioManager: NSObject, ObservableObject {
     @Published var systemAudioLevel: Float = 0.0
 
     private var audioEngine = AVAudioEngine()
-    private let sttProviderFactory: STTProviderFactory
+    private var sttProviderFactory: STTProviderFactory
+    private var activeEngine: STTEngine
     private var micSTT: STTProvider?
     private var systemSTT: STTProvider?
     private var micAudioPipeline: AudioProcessingPipeline?
@@ -67,7 +68,9 @@ class AudioManager: NSObject, ObservableObject {
     private var didWakeObserver: NSObjectProtocol?
 
     private override init() {
-        self.sttProviderFactory = SpeechAnalyzerSTTProviderFactory()
+        let initialEngine = UserDefaultsManager.shared.sttEngine
+        self.activeEngine = initialEngine
+        self.sttProviderFactory = Self.factory(for: initialEngine)
         super.init()
         registerAudioEngineConfigObserver()
         registerSystemPowerObservers()
@@ -156,6 +159,7 @@ class AudioManager: NSObject, ObservableObject {
         print("Starting recording...")
 
         abortRecording()
+        refreshSTTFactoryFromSettings()
         sessionID = UUID()
         let startedSessionID = sessionID
         recordingStateMachine.start(sessionID: startedSessionID)
@@ -627,6 +631,19 @@ class AudioManager: NSObject, ObservableObject {
                 self.warningMessage = message
             }
 
+            // Offline corrections (e.g. sherpa-onnx speaker diarization refinement)
+            // run while still on this stopped session so any speakerId/Tag updates
+            // land before we tear the providers down.
+            await withTaskGroup(of: Void.self) { group in
+                if let micProvider, micProvider.capabilities.supportsCorrections {
+                    group.addTask { await micProvider.applyOfflineRefinement() }
+                }
+                if let systemProvider, systemProvider.capabilities.supportsCorrections {
+                    group.addTask { await systemProvider.applyOfflineRefinement() }
+                }
+                for await _ in group {}
+            }
+
             guard self.sessionID == stoppedSessionID else {
                 self.isFinalizingStoppedRecording = false
                 completion?()
@@ -756,6 +773,14 @@ class AudioManager: NSObject, ObservableObject {
             }
         }
 
+        provider.onTranscriptCorrection = { [weak self] corrections in
+            DispatchQueue.main.async {
+                guard let self, self.sessionID == sessionToken else { return }
+                let offset = self.firstAudioOffsets[source] ?? offsetMilliseconds
+                self.applyCorrections(corrections, source: source, offsetMilliseconds: offset)
+            }
+        }
+
         provider.onError = { [weak self] message in
             DispatchQueue.main.async {
                 guard let self, self.sessionID == sessionToken else { return }
@@ -769,6 +794,58 @@ class AudioManager: NSObject, ObservableObject {
 
         try await provider.connect(config: config)
         return provider
+    }
+
+    private func refreshSTTFactoryFromSettings() {
+        let requested = UserDefaultsManager.shared.sttEngine
+        guard requested != activeEngine else { return }
+        activeEngine = requested
+        sttProviderFactory = Self.factory(for: requested)
+    }
+
+    private static func factory(for engine: STTEngine) -> STTProviderFactory {
+        switch engine {
+        case .appleSpeechAnalyzer:
+            return SpeechAnalyzerSTTProviderFactory()
+        case .sherpaSenseVoice:
+            return SherpaSTTProviderFactory()
+        }
+    }
+
+    private func applyCorrections(
+        _ corrections: [STTTranscriptCorrection],
+        source: AudioSource,
+        offsetMilliseconds: Int
+    ) {
+        guard !corrections.isEmpty else { return }
+        var didChange = false
+        for correction in corrections {
+            let adjustedStart = correction.startTime + offsetMilliseconds
+            let adjustedEnd = correction.endTime + offsetMilliseconds
+            for index in transcriptChunks.indices {
+                let chunk = transcriptChunks[index]
+                guard chunk.source == source,
+                      chunk.isFinal,
+                      chunk.startTime == adjustedStart,
+                      chunk.endTime == adjustedEnd else { continue }
+                let newChunk = TranscriptChunk(
+                    id: chunk.id,
+                    source: chunk.source,
+                    text: chunk.text,
+                    isFinal: chunk.isFinal,
+                    speakerTag: correction.newSpeakerTag ?? chunk.speakerTag,
+                    speakerId: correction.newSpeakerId,
+                    startTime: chunk.startTime,
+                    endTime: chunk.endTime
+                )
+                transcriptChunks[index] = newChunk
+                didChange = true
+            }
+        }
+        if didChange {
+            // touch the array to ensure SwiftUI republishes
+            transcriptChunks = transcriptChunks
+        }
     }
 
     private func stopMicRestartTask() {

@@ -3,6 +3,7 @@ import Foundation
 protocol STTProvider: AnyObject {
     var capabilities: STTProviderCapabilities { get }
     var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)? { get set }
+    var onTranscriptCorrection: (([STTTranscriptCorrection]) -> Void)? { get set }
     var onError: ((String) -> Void)? { get set }
 
     func connect(config: STTProviderConfig) async throws
@@ -14,6 +15,10 @@ protocol STTProvider: AnyObject {
     /// Waits for the provider to emit all final results after `sendLastAudio`, up to `timeout`.
     @discardableResult
     func awaitPendingFinalization(timeout: TimeInterval) async -> STTFinalizationStatus
+
+    /// Runs any post-recording corrections (e.g. offline speaker diarization refinement)
+    /// and emits the result via `onTranscriptCorrection`. Default no-op.
+    func applyOfflineRefinement() async
 }
 
 extension STTProvider {
@@ -24,6 +29,8 @@ extension STTProvider {
         try? await Task.sleep(for: .seconds(timeout))
         return .completed
     }
+
+    func applyOfflineRefinement() async {}
 }
 
 enum STTFinalizationStatus: Hashable {
@@ -47,6 +54,16 @@ struct STTProviderCapabilities: Hashable {
         supportsCorrections: false,
         supportsFinalizationFlush: false
     )
+}
+
+/// A retroactive update to an already-emitted final transcript chunk.
+/// Currently used by sherpa-onnx provider to revise `speakerId`/`speakerTag`
+/// after a stop-of-recording offline diarization pass.
+struct STTTranscriptCorrection: Hashable {
+    let startTime: Int
+    let endTime: Int
+    let newSpeakerId: Int
+    let newSpeakerTag: String?
 }
 
 protocol STTProviderFactory {

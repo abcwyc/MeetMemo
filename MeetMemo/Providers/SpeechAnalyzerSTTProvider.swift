@@ -13,6 +13,7 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
     }
 
     var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)?
+    var onTranscriptCorrection: (([STTTranscriptCorrection]) -> Void)?
     var onError: ((String) -> Void)?
 
     private var transcriber: SpeechTranscriber?

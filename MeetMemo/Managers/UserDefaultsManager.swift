@@ -8,6 +8,11 @@ enum NotesOutputFormat: String, CaseIterable {
     case structured = "structured"
 }
 
+enum STTEngine: String, CaseIterable {
+    case appleSpeechAnalyzer = "apple"
+    case sherpaSenseVoice = "sherpa"
+}
+
 /// Manages non-sensitive app settings using UserDefaults
 class UserDefaultsManager {
     static let shared = UserDefaultsManager()
@@ -30,6 +35,7 @@ class UserDefaultsManager {
         static let notesOutputFormat = "notesOutputFormat"
         static let sttLocaleIdentifier = "sttLocaleIdentifier"
         static let enableSystemAudioSTT = "enableSystemAudioSTT"
+        static let sttEngine = "sttEngine"
     }
     
     // MARK: - User Blurb
@@ -145,6 +151,15 @@ class UserDefaultsManager {
     var sttLocaleIdentifier: String {
         get { userDefaults.string(forKey: Keys.sttLocaleIdentifier) ?? "zh-CN" }
         set { userDefaults.set(newValue, forKey: Keys.sttLocaleIdentifier) }
+    }
+
+    // MARK: - STT Engine
+    var sttEngine: STTEngine {
+        get {
+            let raw = userDefaults.string(forKey: Keys.sttEngine) ?? STTEngine.appleSpeechAnalyzer.rawValue
+            return STTEngine(rawValue: raw) ?? .appleSpeechAnalyzer
+        }
+        set { userDefaults.set(newValue.rawValue, forKey: Keys.sttEngine) }
     }
 
     // MARK: - Dual STT (mic + system audio)

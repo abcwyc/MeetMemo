@@ -124,3 +124,6 @@ APIKeys.swift
 .env.local
 
 releases/
+
+# sherpa-onnx prebuilt xcframeworks (fetched by scripts/fetch_sherpa_frameworks.sh)
+Frameworks/

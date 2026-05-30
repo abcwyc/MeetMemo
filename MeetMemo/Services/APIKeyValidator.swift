@@ -7,7 +7,10 @@ final class APIKeyValidator {
     private init() {}
 
     func currentSTTConfig() -> STTProviderConfig {
-        STTProviderConfig(locale: Locale(identifier: UserDefaultsManager.shared.sttLocaleIdentifier))
+        STTProviderConfig(
+            locale: Locale(identifier: UserDefaultsManager.shared.sttLocaleIdentifier),
+            engine: UserDefaultsManager.shared.sttEngine
+        )
     }
 
     func currentLLMConfig() -> LLMProviderConfig {

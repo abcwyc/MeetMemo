@@ -6,11 +6,14 @@ struct SettingsView: View {
     @EnvironmentObject var langMgr: LanguageManager
     @ObservedObject private var appearanceMgr = AppearanceManager.shared
     @ObservedObject private var speechInstaller = SpeechModelInstaller.shared
+    @ObservedObject private var sherpaModel = SherpaModelManager.shared
+    @ObservedObject private var audioManager = AudioManager.shared
     @Binding var navigationPath: NavigationPath
     @State private var selectedSection: SettingsSection = .general
     @State private var micPermissionGranted = false
     @State private var systemAudioPermissionGranted = false
     @State private var audioRecordingPermission = AudioRecordingPermission()
+    @State private var sttEngine: STTEngine = UserDefaultsManager.shared.sttEngine
     private let llmSetupGuideURL = URL(string: "https://file.348580.xyz/2026/05/8fdfba8153b5029297b42f4ac6c4d00d.html")!
 
     init(viewModel: SettingsViewModel, navigationPath: Binding<NavigationPath> = .constant(NavigationPath())) {
@@ -152,45 +155,37 @@ struct SettingsView: View {
                     .foregroundColor(.primary)
 
                 Text(langMgr.t(
-                    "使用 macOS 内置语音识别。转录在本地运行；首次使用可能需要下载系统语音模型。",
-                    "Uses macOS on-device speech recognition. Transcription runs locally; the first use may need to download a system speech model."
+                    "选择识别引擎。macOS 内置引擎适合较新版本系统；本地 SenseVoice (sherpa-onnx) 适用于更老系统并支持发言人区分，需先下载模型。",
+                    "Choose a speech recognition engine. The macOS built-in engine targets newer systems; the local SenseVoice (sherpa-onnx) engine works on older macOS and supports speaker labels — model download required."
                 ))
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(langMgr.t("识别语言", "Recognition Language"))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text(speechInstaller.resolvedLocaleIdentifier ?? UserDefaultsManager.shared.sttLocaleIdentifier)
-                            .font(.system(.body, design: .monospaced))
-                    }
-
-                    HStack(spacing: 10) {
-                        Image(systemName: speechInstaller.isModelReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                            .foregroundColor(speechInstaller.isModelReady ? .green : .secondary)
-                        Text(speechModelStatusText)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Button {
-                            Task { await speechInstaller.installModelIfNeeded() }
-                        } label: {
-                            if speechInstaller.isInstalling {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Text(speechInstaller.isModelReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("安装模型", "Install Model"))
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(speechInstaller.isInstalling)
-                    }
+                Picker("", selection: $sttEngine) {
+                    Text(langMgr.t("macOS 内置", "macOS Built-in")).tag(STTEngine.appleSpeechAnalyzer)
+                    Text(langMgr.t("本地 SenseVoice", "Local SenseVoice")).tag(STTEngine.sherpaSenseVoice)
                 }
-                .padding(12)
-                .background(Color.secondary.opacity(0.08))
-                .cornerRadius(8)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 320, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .disabled(audioManager.isRecording)
+                .onChange(of: sttEngine) { _, newValue in
+                    UserDefaultsManager.shared.sttEngine = newValue
+                }
+
+                if audioManager.isRecording {
+                    Text(langMgr.t("录音过程中无法切换识别引擎，请先结束当前录音。",
+                                   "Cannot switch the engine while recording. Stop the current session first."))
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                }
+
+                if sttEngine == .appleSpeechAnalyzer {
+                    appleSpeechEngineCard
+                } else {
+                    sherpaSenseVoiceEngineCard
+                }
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -245,6 +240,109 @@ struct SettingsView: View {
                     .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    private var appleSpeechEngineCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(langMgr.t("识别语言", "Recognition Language"))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(speechInstaller.resolvedLocaleIdentifier ?? UserDefaultsManager.shared.sttLocaleIdentifier)
+                    .font(.system(.body, design: .monospaced))
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: speechInstaller.isModelReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    .foregroundColor(speechInstaller.isModelReady ? .green : .secondary)
+                Text(speechModelStatusText)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    Task { await speechInstaller.installModelIfNeeded() }
+                } label: {
+                    if speechInstaller.isInstalling {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text(speechInstaller.isModelReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("安装模型", "Install Model"))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(speechInstaller.isInstalling)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(8)
+    }
+
+    private var sherpaSenseVoiceEngineCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(langMgr.t("引擎", "Engine"))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("sherpa-onnx · SenseVoice-Small")
+                    .font(.system(.body, design: .monospaced))
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: sherpaModel.isReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    .foregroundColor(sherpaModel.isReady ? .green : .secondary)
+                Text(sherpaModelStatusText)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    Task {
+                        do {
+                            try await sherpaModel.installModelsIfNeeded()
+                            await sherpaModel.refreshReadiness()
+                        } catch {
+                            // installError is already set by the manager; UI shows it via status text
+                        }
+                    }
+                } label: {
+                    if sherpaModel.isDownloading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text(sherpaModel.isReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("下载模型", "Download Models"))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(sherpaModel.isDownloading)
+            }
+
+            if let error = sherpaModel.installError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(8)
+    }
+
+    private var sherpaModelStatusText: String {
+        if sherpaModel.isDownloading {
+            if let progress = sherpaModel.downloadProgress {
+                return langMgr.t(
+                    "正在下载 SenseVoice 模型 \(Int(progress * 100))%",
+                    "Downloading SenseVoice models \(Int(progress * 100))%"
+                )
+            }
+            return langMgr.t("正在下载 SenseVoice 模型", "Downloading SenseVoice models")
+        }
+        if sherpaModel.isReady {
+            return langMgr.t("SenseVoice 模型已就绪", "SenseVoice models are ready")
+        }
+        return langMgr.t("SenseVoice 模型尚未下载（约 240 MB）",
+                         "SenseVoice models not downloaded yet (~240 MB)")
     }
 
     private var promptSettings: some View {

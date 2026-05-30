@@ -49,6 +49,11 @@ DMG_PATH="${VERSION_DIR}/${DMG_NAME}"
 
 echo "🚀 Building ${APP_NAME} v${VERSION}..."
 
+# Make sure third-party xcframeworks (sherpa-onnx + onnxruntime) are in place
+# before Xcode tries to link them. The fetch script is idempotent.
+echo "📦 Ensuring sherpa-onnx xcframeworks are present..."
+"$(dirname "$0")/fetch_sherpa_frameworks.sh"
+
 # Check signing configuration
 echo "🔏 Using Developer ID Application: $DEVELOPER_ID"
 
