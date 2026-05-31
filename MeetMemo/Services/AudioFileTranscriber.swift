@@ -16,6 +16,24 @@ final class AudioFileTranscriber {
         url: URL,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> AudioFileTranscriptionResult {
+        let config = APIKeyValidator.shared.currentSTTConfig()
+        switch config.engine {
+        case .appleSpeechAnalyzer:
+            return try await transcribeWithSpeechAnalyzer(url: url, progress: progress)
+        case .sherpaSenseVoice:
+            return try await transcribeWithProvider(
+                SherpaSTTProviderFactory().makeProvider(),
+                config: config,
+                url: url,
+                progress: progress
+            )
+        }
+    }
+
+    private func transcribeWithSpeechAnalyzer(
+        url: URL,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> AudioFileTranscriptionResult {
         let locale = try await SpeechModelInstaller.shared.ensureReadyForUse()
         let state = AudioFileTranscriptionState()
 
@@ -68,6 +86,128 @@ final class AudioFileTranscriber {
         return AudioFileTranscriptionResult(chunks: chunks)
     }
 
+    private func transcribeWithProvider(
+        _ provider: STTProvider,
+        config: STTProviderConfig,
+        url: URL,
+        progress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> AudioFileTranscriptionResult {
+        let state = AudioFileProviderTranscriptionState()
+        let targetFormat = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: 16_000,
+            channels: 1,
+            interleaved: false
+        )!
+
+        provider.onTranscriptUpdate = { update in
+            state.append(update)
+        }
+        provider.onTranscriptCorrection = { corrections in
+            state.apply(corrections)
+        }
+        provider.onError = { message in
+            state.recordError(message)
+        }
+
+        progress?(0.03)
+        try await provider.connect(config: config)
+        defer { provider.disconnect() }
+
+        let file = try AVAudioFile(forReading: url)
+        guard let converter = AVAudioConverter(from: file.processingFormat, to: targetFormat) else {
+            throw AudioFileTranscriberError.unsupportedAudioFormat
+        }
+
+        let totalFrames = max(1, file.length)
+        let inputFrameCapacity: AVAudioFrameCount = 4096
+
+        while file.framePosition < file.length {
+            try Task.checkCancellation()
+
+            let framesRemaining = AVAudioFrameCount(
+                min(Int64(inputFrameCapacity), file.length - file.framePosition)
+            )
+            guard framesRemaining > 0,
+                  let inputBuffer = AVAudioPCMBuffer(
+                    pcmFormat: file.processingFormat,
+                    frameCapacity: framesRemaining
+                  ) else {
+                break
+            }
+
+            try file.read(into: inputBuffer, frameCount: framesRemaining)
+            guard inputBuffer.frameLength > 0 else { break }
+
+            if let data = Self.convertToPCM16Data(
+                inputBuffer,
+                targetFormat: targetFormat,
+                converter: converter
+            ) {
+                provider.sendAudio(data)
+            }
+
+            let fraction = Double(file.framePosition) / Double(totalFrames)
+            progress?(min(0.92, max(0.03, 0.03 + fraction * 0.89)))
+        }
+
+        provider.sendLastAudio()
+        _ = await provider.awaitPendingFinalization(timeout: 30)
+        await provider.applyOfflineRefinement()
+        await MainActor.run {}
+        progress?(1.0)
+
+        if let message = state.currentErrorMessage() {
+            throw AudioFileTranscriberError.providerError(message)
+        }
+
+        let chunks = state.finalChunks()
+        guard !chunks.isEmpty else {
+            throw AudioFileTranscriberError.noTranscript
+        }
+
+        return AudioFileTranscriptionResult(chunks: chunks.sortedByTranscriptTimeline())
+    }
+
+    private static func convertToPCM16Data(
+        _ inputBuffer: AVAudioPCMBuffer,
+        targetFormat: AVAudioFormat,
+        converter: AVAudioConverter
+    ) -> Data? {
+        let outputFrameCapacity = AVAudioFrameCount(
+            max(1, Double(inputBuffer.frameLength) * targetFormat.sampleRate / inputBuffer.format.sampleRate)
+        ) + 32
+        guard let outputBuffer = AVAudioPCMBuffer(
+            pcmFormat: targetFormat,
+            frameCapacity: outputFrameCapacity
+        ) else {
+            return nil
+        }
+
+        var didProvideInput = false
+        var conversionError: NSError?
+        let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+            guard !didProvideInput else {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+
+            didProvideInput = true
+            outStatus.pointee = .haveData
+            return inputBuffer
+        }
+
+        guard conversionError == nil,
+              status == .haveData || status == .inputRanDry || status == .endOfStream,
+              let channelData = outputBuffer.int16ChannelData?[0] else {
+            return nil
+        }
+
+        let frameCount = Int(outputBuffer.frameLength)
+        guard frameCount > 0 else { return nil }
+        return Data(bytes: channelData, count: frameCount * MemoryLayout<Int16>.size)
+    }
+
     private static func durationMilliseconds(for file: AVAudioFile) -> Int {
         let sampleRate = file.processingFormat.sampleRate
         guard sampleRate > 0 else { return 1 }
@@ -95,6 +235,79 @@ private actor AudioFileTranscriptionState {
             startTime: startTime,
             endTime: endTime
         ))
+    }
+}
+
+private final class AudioFileProviderTranscriptionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var chunks: [TranscriptChunk] = []
+    private var errorMessage: String?
+
+    func append(_ update: STTTranscriptUpdate) {
+        let text = update.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        let chunk = TranscriptChunk(
+            source: .mic,
+            text: text,
+            isFinal: update.isFinal,
+            speakerTag: update.speakerTag,
+            speakerId: update.speakerId,
+            startTime: update.startTime,
+            endTime: update.endTime
+        )
+
+        lock.withLock {
+            chunks.append(chunk)
+        }
+    }
+
+    func apply(_ corrections: [STTTranscriptCorrection]) {
+        guard !corrections.isEmpty else { return }
+
+        lock.withLock {
+            for correction in corrections {
+                for index in chunks.indices {
+                    let chunk = chunks[index]
+                    guard chunk.isFinal,
+                          chunk.startTime == correction.startTime,
+                          chunk.endTime == correction.endTime else {
+                        continue
+                    }
+
+                    chunks[index] = TranscriptChunk(
+                        id: chunk.id,
+                        timestamp: chunk.timestamp,
+                        source: chunk.source,
+                        text: chunk.text,
+                        isFinal: chunk.isFinal,
+                        speakerTag: correction.newSpeakerTag ?? chunk.speakerTag,
+                        speakerId: correction.newSpeakerId,
+                        startTime: chunk.startTime,
+                        endTime: chunk.endTime,
+                        isLowConfidence: chunk.isLowConfidence
+                    )
+                }
+            }
+        }
+    }
+
+    func recordError(_ message: String) {
+        lock.withLock {
+            errorMessage = message
+        }
+    }
+
+    func finalChunks() -> [TranscriptChunk] {
+        lock.withLock {
+            chunks.filter(\.isFinal)
+        }
+    }
+
+    func currentErrorMessage() -> String? {
+        lock.withLock {
+            errorMessage
+        }
     }
 }
 

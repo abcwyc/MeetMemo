@@ -1,73 +1,104 @@
 import SwiftUI
 
-// MARK: - Dancing Audio Bars
-struct DancingAudioBars: View {
+// MARK: - Recording Track Meter
+struct RecordingTrackMeter: View {
     let micLevel: Float
     let systemLevel: Float
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // App logo
-            Image("Icon32")
-                .resizable()
-                .frame(width: 32, height: 32)
-            
-            // Interleaved bars - alternating blue (mic) and orange (system)
-            HStack(spacing: -2) {
-                // Bar 1: Microphone (blue)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.blue.opacity(0.6))
-                    .frame(width: 6, height: getDancingBarHeight(index: 0, level: micLevel))
-                    .animation(.easeInOut(duration: 0.1), value: micLevel)
-                
-                // Bar 2: System (orange)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.orange.opacity(0.6))
-                    .frame(width: 6, height: getDancingBarHeight(index: 1, level: systemLevel))
-                    .animation(.easeInOut(duration: 0.1).delay(0.03), value: systemLevel)
-                
-                // Bar 3: Microphone (blue)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.blue.opacity(0.6))
-                    .frame(width: 6, height: getDancingBarHeight(index: 2, level: micLevel))
-                    .animation(.easeInOut(duration: 0.1).delay(0.06), value: micLevel)
-                
-                // Bar 4: System (orange)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.orange.opacity(0.6))
-                    .frame(width: 6, height: getDancingBarHeight(index: 0, level: systemLevel))
-                    .animation(.easeInOut(duration: 0.1).delay(0.09), value: systemLevel)
-                
-                // Bar 5: Microphone (blue)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.blue.opacity(0.6))
-                    .frame(width: 6, height: getDancingBarHeight(index: 1, level: micLevel))
-                    .animation(.easeInOut(duration: 0.1).delay(0.12), value: micLevel)
-                
-                // Bar 6: System (orange)
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.orange.opacity(0.6))
-                    .frame(width: 6, height: getDancingBarHeight(index: 2, level: systemLevel))
-                    .animation(.easeInOut(duration: 0.1).delay(0.15), value: systemLevel)
-            }
-            .frame(width: 32, height: 32)
-        }
-        .padding(0)
+
+    private var hasMicAudio: Bool {
+        micLevel > 0.08
     }
-    
-    private func getDancingBarHeight(index: Int, level: Float) -> CGFloat {
-        let baseHeight: CGFloat = 4 // Flat when no audio
-        let maxHeight: CGFloat = 24 // Max dancing height
-        
-        if level > 0.03 { // Only dance when there's actual audio
-            // Each bar responds to the same audio level but with different scaling
-            // This creates a natural dancing effect as audio levels fluctuate
-            let barVariation: [CGFloat] = [0.9, 1.0, 0.8] // Different responsiveness per bar
-            let audioResponse = CGFloat(level) * maxHeight * barVariation[index % 3]
-            return max(baseHeight, min(maxHeight, baseHeight + audioResponse))
+
+    private var hasSystemAudio: Bool {
+        systemLevel > 0.08
+    }
+
+    private var isDualTrack: Bool {
+        hasMicAudio && hasSystemAudio
+    }
+
+    var body: some View {
+        HStack(spacing: hasMicAudio || hasSystemAudio ? 7.5 : 0) {
+            ZStack(alignment: .bottomTrailing) {
+                Image("Icon32")
+                    .resizable()
+                    .frame(width: 27, height: 27)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 9, height: 9)
+                    .overlay(Circle().stroke(.white.opacity(0.9), lineWidth: 1.5))
+                    .shadow(color: .red.opacity(0.5), radius: 4.5)
+            }
+
+            if hasMicAudio || hasSystemAudio {
+                VStack(spacing: isDualTrack ? 1.5 : 4.5) {
+                    if hasMicAudio {
+                        AudioTrackRow(
+                            systemName: "mic.fill",
+                            tint: .blue,
+                            level: micLevel,
+                            phase: 0,
+                            isCompact: isDualTrack
+                        )
+                    }
+
+                    if hasSystemAudio {
+                        AudioTrackRow(
+                            systemName: "speaker.wave.2.fill",
+                            tint: .orange,
+                            level: systemLevel,
+                            phase: 3,
+                            isCompact: isDualTrack
+                        )
+                    }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .leading)))
+            }
         }
-        
-        return baseHeight
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7.5)
+        .animation(.easeInOut(duration: 0.12), value: hasMicAudio)
+        .animation(.easeInOut(duration: 0.12), value: hasSystemAudio)
+    }
+}
+
+private struct AudioTrackRow: View {
+    let systemName: String
+    let tint: Color
+    let level: Float
+    let phase: Int
+    let isCompact: Bool
+
+    private let barCount = 4
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Image(systemName: systemName)
+                .font(.system(size: isCompact ? 10 : 12, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 12)
+
+            HStack(alignment: .center, spacing: 3) {
+                ForEach(0..<barCount, id: \.self) { index in
+                    Capsule(style: .continuous)
+                        .fill(tint.opacity(level > 0.015 ? 0.88 : 0.28))
+                        .frame(width: 4.5, height: barHeight(at: index))
+                        .animation(.interactiveSpring(response: 0.18, dampingFraction: 0.78), value: level)
+                }
+            }
+            .frame(width: 27, height: isCompact ? 12.75 : 15)
+        }
+    }
+
+    private func barHeight(at index: Int) -> CGFloat {
+        let normalizedLevel = min(max(CGFloat(level), 0), 1)
+        let baseHeight: CGFloat = isCompact ? 2.5 : 3
+        let maxHeight: CGFloat = isCompact ? 12.75 : 15
+        let shape = CGFloat(((index + phase) * 37) % 11) / 10
+        let emphasis = 0.42 + shape * 0.58
+        return baseHeight + (maxHeight - baseHeight) * normalizedLevel * emphasis
     }
 }
 
@@ -76,15 +107,14 @@ struct AudioLevelWindowView: View {
     @StateObject private var audioLevelManager = AudioLevelManager.shared
     
     var body: some View {
-        let micLevel = audioLevelManager.isRecording ? audioLevelManager.micAudioLevel * 30 : 0
-        let systemLevel = audioLevelManager.isRecording ? audioLevelManager.systemAudioLevel * 5 : 0
-        return DancingAudioBars(
-                micLevel: micLevel,
-                systemLevel: systemLevel
-            )
-            .padding(2)
-            .background(.regularMaterial.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
-            .shadow(color: .black.opacity(0.2), radius: 3)
+        let micLevel = audioLevelManager.isRecording ? audioLevelManager.micAudioLevel * 36 : 0
+        let systemLevel = audioLevelManager.isRecording ? audioLevelManager.systemAudioLevel * 10 : 0
+        return RecordingTrackMeter(
+            micLevel: micLevel,
+            systemLevel: systemLevel
+        )
+        .background(.regularMaterial.opacity(0.94), in: Capsule(style: .continuous))
+        .clipShape(Capsule(style: .continuous))
     }
 }
 
@@ -136,7 +166,7 @@ class AudioLevelWindowManager: ObservableObject {
     }
     
     private func setupPanel() {
-        let panelRect = NSRect(x: 0, y: 0, width: 60, height: 80)
+        let panelRect = NSRect(x: 0, y: 0, width: 99, height: 63)
         
         audioLevelPanel = NSPanel(
             contentRect: panelRect,
@@ -147,22 +177,23 @@ class AudioLevelWindowManager: ObservableObject {
         
         guard let panel = audioLevelPanel else { return }
         
-        // Configure panel properties inspired by the provided code
         panel.level = .mainMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isFloatingPanel = true
         panel.isMovableByWindowBackground = true
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.identifier = NSUserInterfaceItemIdentifier("audio-levels")
         
-        // Set up the SwiftUI hosting view
         let hostingView = NSHostingView(rootView: AudioLevelWindowView())
         hostingView.frame = panelRect
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hostingView
+        panel.contentView?.superview?.wantsLayer = true
+        panel.contentView?.superview?.layer?.backgroundColor = NSColor.clear.cgColor
         
-        // Position the panel in the top-right corner of the screen
         if let screen = NSScreen.main {
             let screenFrame = screen.visibleFrame
             let panelFrame = NSRect(
@@ -188,4 +219,4 @@ class AudioLevelWindowManager: ObservableObject {
     func hideWindow() {
         audioLevelPanel?.orderOut(nil)
     }
-} 
+}

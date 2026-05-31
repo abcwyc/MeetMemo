@@ -154,13 +154,6 @@ struct SettingsView: View {
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Text(langMgr.t(
-                    "选择识别引擎。macOS 内置引擎适合较新版本系统；本地 SenseVoice (sherpa-onnx) 适用于更老系统并支持发言人区分，需先下载模型。",
-                    "Choose a speech recognition engine. The macOS built-in engine targets newer systems; the local SenseVoice (sherpa-onnx) engine works on older macOS and supports speaker labels — model download required."
-                ))
-                .font(.caption)
-                .foregroundColor(.secondary)
-
                 Picker("", selection: $sttEngine) {
                     Text(langMgr.t("macOS 内置", "macOS Built-in")).tag(STTEngine.appleSpeechAnalyzer)
                     Text(langMgr.t("本地 SenseVoice", "Local SenseVoice")).tag(STTEngine.sherpaSenseVoice)
@@ -173,6 +166,11 @@ struct SettingsView: View {
                 .onChange(of: sttEngine) { _, newValue in
                     UserDefaultsManager.shared.sttEngine = newValue
                 }
+
+                Text(sttEngineDescriptionText)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if audioManager.isRecording {
                     Text(langMgr.t("录音过程中无法切换识别引擎，请先结束当前录音。",
@@ -276,6 +274,21 @@ struct SettingsView: View {
         .padding(12)
         .background(Color.secondary.opacity(0.08))
         .cornerRadius(8)
+    }
+
+    private var sttEngineDescriptionText: String {
+        switch sttEngine {
+        case .appleSpeechAnalyzer:
+            return langMgr.t(
+                "适合已升级到 macOS 26 及以上的设备，无需额外下载模型；当前暂不支持区分不同发言人。",
+                "Best for devices running macOS 26 or later. No extra model download is needed; speaker separation is not currently supported."
+            )
+        case .sherpaSenseVoice:
+            return langMgr.t(
+                "兼容所有 macOS 版本，支持区分不同发言人；首次启用前需要先下载本地模型，下载完成后即可离线使用。",
+                "Compatible with all macOS versions and supports speaker separation. Download the local models before first use; recognition works offline after setup."
+            )
+        }
     }
 
     private var sherpaSenseVoiceEngineCard: some View {

@@ -111,8 +111,11 @@ class MeetingViewModel: ObservableObject {
     private var isApplyingLoadedMeeting = false
     private var isStreamingGeneratedNotes = false
     private var generationTask: Task<Void, Never>?
+    private var activeGenerationMeetingId: UUID?
     private var generationCounter: Int = 0
     private var structuredExtractionToken: UUID?
+    private var activeStructuredExtractionMeetingId: UUID?
+    private var activeFollowUpExtractionMeetingId: UUID?
     
     // Computed property to check if meeting is empty
     var isEmpty: Bool {
@@ -262,7 +265,7 @@ class MeetingViewModel: ObservableObject {
             .compactMap { $0.object as? Meeting }
             .sink { [weak self] deleting in
                 guard let self, deleting.id == self.meeting.id else { return }
-                self.cancelGeneratingNotes()
+                self.cancelGeneratingNotes(for: deleting.id)
                 self.saveMeeting()
             }
             .store(in: &cancellables)
@@ -272,7 +275,7 @@ class MeetingViewModel: ObservableObject {
             .compactMap { $0.object as? Meeting }
             .sink { [weak self] deleted in
                 guard let self, deleted.id == self.meeting.id else { return }
-                self.cancelGeneratingNotes()
+                self.cancelGeneratingNotes(for: deleted.id)
                 self.hasLocalUnsavedChanges = false
                 self.isDeleted = true
             }
@@ -287,7 +290,6 @@ class MeetingViewModel: ObservableObject {
     ) {
         guard meeting.id != self.meeting.id else { return }
 
-        cancelGeneratingNotes()
         deleteIfEmpty()
 
         print("🔁 Switching detail meeting: \(meeting.id)")
@@ -300,8 +302,10 @@ class MeetingViewModel: ObservableObject {
         isValidatingKey = false
         isStartingRecording = false
         isLoadingMeeting = false
-        isExtractingFollowUpTasks = false
-        isExtractingStructuredSummary = false
+        isGeneratingNotes = activeGenerationMeetingId == meeting.id
+        isStreamingGeneratedNotes = activeGenerationMeetingId == meeting.id
+        isExtractingFollowUpTasks = activeFollowUpExtractionMeetingId == meeting.id
+        isExtractingStructuredSummary = activeStructuredExtractionMeetingId == meeting.id
         syncingFollowUpTaskIds = []
         hasLocalUnsavedChanges = false
         hasCompletedInitialLoad = false
@@ -585,9 +589,17 @@ class MeetingViewModel: ObservableObject {
     }
 
     func cancelGeneratingNotes() {
+        cancelGeneratingNotes(for: nil)
+    }
+
+    private func cancelGeneratingNotes(for meetingId: UUID?) {
+        if let meetingId, activeGenerationMeetingId != meetingId {
+            return
+        }
         generationCounter += 1
         generationTask?.cancel()
         generationTask = nil
+        activeGenerationMeetingId = nil
         isGeneratingNotes = false
         isStreamingGeneratedNotes = false
     }
@@ -605,9 +617,11 @@ class MeetingViewModel: ObservableObject {
         let myGeneration = generationCounter
         let meetingId = meeting.id
         let meetingSnapshot = meeting
+        activeGenerationMeetingId = meetingId
         let templateIdSnapshot = selectedTemplateId
         defer {
             if generationCounter == myGeneration {
+                activeGenerationMeetingId = nil
                 isGeneratingNotes = false
                 isStreamingGeneratedNotes = false
                 generationTask = nil
@@ -616,6 +630,7 @@ class MeetingViewModel: ObservableObject {
 
         let previousGeneratedNotes = meetingSnapshot.generatedNotes
         let previousOneLiner = meetingSnapshot.oneLiner
+        var generatedMeeting = meetingSnapshot
         var receivedContent = false
 
         // Load settings for generation
@@ -632,7 +647,7 @@ class MeetingViewModel: ObservableObject {
 
         var hasError = false
         for await result in stream {
-            guard isCurrentGeneration(meetingId: meetingId, generation: myGeneration) else {
+            guard generationCounter == myGeneration else {
                 hasError = true
                 break
             }
@@ -650,21 +665,32 @@ class MeetingViewModel: ObservableObject {
             switch result {
             case .content(let chunk):
                 if !receivedContent {
-                    meeting.generatedNotes = ""
+                    generatedMeeting.generatedNotes = ""
                     // Drop the stale one-liner so the AI-notes header card disappears
                     // immediately; extractStructuredSummary will repopulate after the
                     // new notes finish. Other structured fields stay visible on the
                     // digest tab until they're refreshed.
-                    meeting.oneLiner = ""
+                    generatedMeeting.oneLiner = ""
+                    if meeting.id == meetingId {
+                        meeting.generatedNotes = ""
+                        meeting.oneLiner = ""
+                    }
                     receivedContent = true
                 }
-                meeting.generatedNotes += chunk
-                toolbarHasGeneratedNotes = true
+                generatedMeeting.generatedNotes += chunk
+                if meeting.id == meetingId {
+                    meeting.generatedNotes += chunk
+                    toolbarHasGeneratedNotes = true
+                }
             case .error(let error):
-                meeting.generatedNotes = previousGeneratedNotes
-                meeting.oneLiner = previousOneLiner
-                toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                errorMessage = error
+                if meeting.id == meetingId {
+                    meeting.generatedNotes = previousGeneratedNotes
+                    meeting.oneLiner = previousOneLiner
+                    toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                if meeting.id == meetingId {
+                    errorMessage = error
+                }
                 hasError = true
                 print("🚨 Note Generation Error: \(error)")
                 break
@@ -677,25 +703,25 @@ class MeetingViewModel: ObservableObject {
         
         // Only save if there was no error
         if !hasError {
-            if meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if let generated = await NotesGenerator.shared.generateTitle(meeting: meeting) {
-                    guard isCurrentGeneration(meetingId: meetingId, generation: myGeneration) else { return }
-                    meeting.title = generated
+            if generatedMeeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let generated = await NotesGenerator.shared.generateTitle(meeting: generatedMeeting) {
+                    guard generationCounter == myGeneration else { return }
+                    generatedMeeting.title = generated
                 }
             }
-            guard isCurrentGeneration(meetingId: meetingId, generation: myGeneration) else { return }
+            guard generationCounter == myGeneration else { return }
             isStreamingGeneratedNotes = false
-            saveMeeting()
-            selectedTab = .enhancedNotes
-            aiNotesSubTab = .notes
-            Task { await self.extractStructuredSummary() }
+            savePersistedMeeting(generatedMeeting)
+            if meeting.id == meetingId {
+                meeting = generatedMeeting
+                refreshToolbarSnapshot()
+                selectedTab = .enhancedNotes
+                aiNotesSubTab = .notes
+            }
+            Task { await self.extractStructuredSummary(from: generatedMeeting) }
         }
     }
 
-    private func isCurrentGeneration(meetingId: UUID, generation: Int) -> Bool {
-        meeting.id == meetingId && generationCounter == generation
-    }
-    
     func saveMeeting() {
         if isDeleted || !hasCompletedInitialLoad { return }
         print("💾 Saving meeting: \(meeting.id)")
@@ -703,6 +729,18 @@ class MeetingViewModel: ObservableObject {
         print("💾 Save result: \(success ? "SUCCESS" : "FAILED")")
         if success {
             hasLocalUnsavedChanges = false
+            NotificationCenter.default.post(name: .meetingSaved, object: meeting)
+        }
+    }
+
+    private func savePersistedMeeting(_ meeting: Meeting) {
+        print("💾 Saving background meeting: \(meeting.id)")
+        let success = LocalStorageManager.shared.saveMeeting(meeting)
+        print("💾 Background save result: \(success ? "SUCCESS" : "FAILED")")
+        if success {
+            if self.meeting.id == meeting.id {
+                hasLocalUnsavedChanges = false
+            }
             NotificationCenter.default.post(name: .meetingSaved, object: meeting)
         }
     }
@@ -761,51 +799,60 @@ class MeetingViewModel: ObservableObject {
     }
 
     func extractStructuredSummary() async {
+        await extractStructuredSummary(from: meeting)
+    }
+
+    private func extractStructuredSummary(from snapshot: Meeting) async {
         guard !isExtractingStructuredSummary else { return }
 
         // Pin the meeting identity at task start. The Task may outlive the active meeting
-        // (user switches sidebar selection during the multi-second LLM call); on completion
-        // we must discard the result rather than overwriting whatever meeting is now loaded.
+        // (user switches sidebar selection during the multi-second LLM call); on completion,
+        // save the original meeting and only mirror results into the UI if it is still current.
         let token = UUID()
-        let meetingId = meeting.id
-        let snapshot = meeting
+        let meetingId = snapshot.id
         structuredExtractionToken = token
+        activeStructuredExtractionMeetingId = meetingId
 
-        isExtractingStructuredSummary = true
+        isExtractingStructuredSummary = meeting.id == meetingId
         structuredSummaryErrorMessage = nil
         defer {
             if structuredExtractionToken == token {
+                activeStructuredExtractionMeetingId = nil
                 isExtractingStructuredSummary = false
             }
         }
 
         do {
             let result = try await MeetingStructuredExtractor.shared.extract(from: snapshot)
-            guard structuredExtractionToken == token, meeting.id == meetingId else { return }
+            var updatedMeeting = snapshot
             // Don't overwrite oneLiner with empty — the model occasionally returns ""
             // despite the prompt rule, which would erase the header card entirely.
             // Fall back to the current value, then to the title.
             if !result.oneLiner.isEmpty {
-                meeting.oneLiner = result.oneLiner
-            } else if meeting.oneLiner.isEmpty {
-                let trimmedTitle = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                updatedMeeting.oneLiner = result.oneLiner
+            } else if updatedMeeting.oneLiner.isEmpty {
+                let trimmedTitle = updatedMeeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmedTitle.isEmpty {
-                    meeting.oneLiner = trimmedTitle
+                    updatedMeeting.oneLiner = trimmedTitle
                 }
             }
-            meeting.host = result.host
-            meeting.location = result.location
-            meeting.decisions = result.decisions
-            meeting.risks = result.risks
-            meeting.openQuestions = result.openQuestions
-            meeting.discussions = result.discussions
-            meeting.milestones = result.milestones
-            meeting.structuredSummarySourceHash = meeting.structuredSummaryCurrentSourceHash
-            meeting.structuredSummaryGeneratedAt = Date()
-            saveMeeting()
+            updatedMeeting.host = result.host
+            updatedMeeting.location = result.location
+            updatedMeeting.decisions = result.decisions
+            updatedMeeting.risks = result.risks
+            updatedMeeting.openQuestions = result.openQuestions
+            updatedMeeting.discussions = result.discussions
+            updatedMeeting.milestones = result.milestones
+            updatedMeeting.structuredSummarySourceHash = updatedMeeting.structuredSummaryCurrentSourceHash
+            updatedMeeting.structuredSummaryGeneratedAt = Date()
+            savePersistedMeeting(updatedMeeting)
+            if meeting.id == meetingId {
+                meeting = updatedMeeting
+            }
         } catch {
-            guard structuredExtractionToken == token, meeting.id == meetingId else { return }
-            structuredSummaryErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            if meeting.id == meetingId {
+                structuredSummaryErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
             print("⚠️ Structured extraction failed: \(error)")
         }
     }
@@ -879,16 +926,28 @@ class MeetingViewModel: ObservableObject {
 
     func extractFollowUpTasks() async {
         guard !isExtractingFollowUpTasks else { return }
+        let meetingId = meeting.id
+        let snapshot = meeting
+        activeFollowUpExtractionMeetingId = meetingId
         isExtractingFollowUpTasks = true
         errorMessage = nil
-        defer { isExtractingFollowUpTasks = false }
+        defer {
+            activeFollowUpExtractionMeetingId = nil
+            isExtractingFollowUpTasks = false
+        }
 
         do {
-            let extractedTasks = try await FollowUpTaskExtractor.shared.extractTasks(from: meeting)
-            mergeExtractedFollowUpTasks(extractedTasks)
-            saveMeeting()
+            let extractedTasks = try await FollowUpTaskExtractor.shared.extractTasks(from: snapshot)
+            var updatedMeeting = snapshot
+            mergeExtractedFollowUpTasks(extractedTasks, into: &updatedMeeting)
+            savePersistedMeeting(updatedMeeting)
+            if meeting.id == meetingId {
+                meeting = updatedMeeting
+            }
         } catch {
-            errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            if meeting.id == meetingId {
+                errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
         }
     }
 
@@ -1046,7 +1105,12 @@ class MeetingViewModel: ObservableObject {
 
     @discardableResult
     private func mergeExtractedFollowUpTasks(_ extractedTasks: [MeetingFollowUpTask]) -> Int {
-        var existingKeys = Set(meeting.followUpTasks.map { normalizedTaskKey(for: $0) })
+        mergeExtractedFollowUpTasks(extractedTasks, into: &meeting)
+    }
+
+    @discardableResult
+    private func mergeExtractedFollowUpTasks(_ extractedTasks: [MeetingFollowUpTask], into targetMeeting: inout Meeting) -> Int {
+        var existingKeys = Set(targetMeeting.followUpTasks.map { normalizedTaskKey(for: $0) })
         var newTasks: [MeetingFollowUpTask] = []
 
         for task in extractedTasks {
@@ -1063,7 +1127,7 @@ class MeetingViewModel: ObservableObject {
             newTasks.append(sanitizedTask)
         }
 
-        meeting.followUpTasks.append(contentsOf: newTasks)
+        targetMeeting.followUpTasks.append(contentsOf: newTasks)
         return newTasks.count
     }
 
@@ -1125,7 +1189,7 @@ class MeetingViewModel: ObservableObject {
             recordingSessionManager.stopRecording()
         }
 
-        cancelGeneratingNotes()
+        cancelGeneratingNotes(for: meeting.id)
         saveMeeting()
         
         let success = LocalStorageManager.shared.deleteMeeting(meeting)

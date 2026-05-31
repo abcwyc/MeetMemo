@@ -709,7 +709,6 @@ struct MeetingDetailContentView: View {
             Text(langMgr.t("确定要删除这个会议吗？此操作不可撤销。", "Are you sure you want to delete this meeting? This action cannot be undone."))
         }
         .onDisappear {
-            viewModel.cancelGeneratingNotes()
             viewModel.deleteIfEmpty()
             speakerNamingWindow?.close()
             followUpTasksWindow?.close()
