@@ -4,21 +4,14 @@ import SwiftUI
 struct RecordingTrackMeter: View {
     let micLevel: Float
     let systemLevel: Float
-
-    private var hasMicAudio: Bool {
-        micLevel > 0.08
-    }
-
-    private var hasSystemAudio: Bool {
-        systemLevel > 0.08
-    }
+    let showsSystemTrack: Bool
 
     private var isDualTrack: Bool {
-        hasMicAudio && hasSystemAudio
+        showsSystemTrack
     }
 
     var body: some View {
-        HStack(spacing: hasMicAudio || hasSystemAudio ? 7.5 : 0) {
+        HStack(spacing: 7.5) {
             ZStack(alignment: .bottomTrailing) {
                 Image("Icon32")
                     .resizable()
@@ -32,35 +25,29 @@ struct RecordingTrackMeter: View {
                     .shadow(color: .red.opacity(0.5), radius: 4.5)
             }
 
-            if hasMicAudio || hasSystemAudio {
-                VStack(spacing: isDualTrack ? 1.5 : 4.5) {
-                    if hasMicAudio {
-                        AudioTrackRow(
-                            systemName: "mic.fill",
-                            tint: .blue,
-                            level: micLevel,
-                            phase: 0,
-                            isCompact: isDualTrack
-                        )
-                    }
+            VStack(spacing: isDualTrack ? 1.5 : 4.5) {
+                AudioTrackRow(
+                    systemName: "mic.fill",
+                    tint: .blue,
+                    level: micLevel,
+                    phase: 0,
+                    isCompact: isDualTrack
+                )
 
-                    if hasSystemAudio {
-                        AudioTrackRow(
-                            systemName: "speaker.wave.2.fill",
-                            tint: .orange,
-                            level: systemLevel,
-                            phase: 3,
-                            isCompact: isDualTrack
-                        )
-                    }
+                if showsSystemTrack {
+                    AudioTrackRow(
+                        systemName: "speaker.wave.2.fill",
+                        tint: .orange,
+                        level: systemLevel,
+                        phase: 3,
+                        isCompact: isDualTrack
+                    )
                 }
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .leading)))
             }
+            .frame(width: 42, alignment: .leading)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7.5)
-        .animation(.easeInOut(duration: 0.12), value: hasMicAudio)
-        .animation(.easeInOut(duration: 0.12), value: hasSystemAudio)
     }
 }
 
@@ -111,7 +98,8 @@ struct AudioLevelWindowView: View {
         let systemLevel = audioLevelManager.isRecording ? audioLevelManager.systemAudioLevel * 10 : 0
         return RecordingTrackMeter(
             micLevel: micLevel,
-            systemLevel: systemLevel
+            systemLevel: systemLevel,
+            showsSystemTrack: UserDefaultsManager.shared.enableSystemAudioSTT
         )
         .background(.regularMaterial.opacity(0.94), in: Capsule(style: .continuous))
         .clipShape(Capsule(style: .continuous))
