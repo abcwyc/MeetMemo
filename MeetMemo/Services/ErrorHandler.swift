@@ -47,30 +47,6 @@ class ErrorHandler {
         return "An unexpected error occurred: \(error.localizedDescription)"
     }
     
-    /// Handles WebSocket close codes
-    /// - Parameter closeCode: WebSocket close code
-    /// - Returns: User-friendly error message
-    func handleWebSocketCloseCode(_ closeCode: Int) -> String {
-        switch closeCode {
-        case 1000: return "Connection closed normally"
-        case 1001: return ErrorMessage.connectionLost
-        case 1002: return "Connection protocol error. Please try again."
-        case 1003: return ErrorMessage.unsupportedData
-        case 1008: return "API policy violation. Please check your API key and account status."
-        case 1011: return ErrorMessage.apiServerError
-        case 4000: return ErrorMessage.badRequest
-        case 4001: return ErrorMessage.invalidAPIKey
-        case 4002: return ErrorMessage.accessForbidden
-        case 4003: return ErrorMessage.apiEndpointNotFound
-        case 4004: return "Invalid API method. Please update the app."
-        case 4005: return ErrorMessage.requestTimeout
-        case 4006: return ErrorMessage.requestTooLarge
-        case 4007: return ErrorMessage.rateLimited
-        case 4008: return ErrorMessage.insufficientFunds
-        default:   return "Connection error (code \(closeCode)). Please try again."
-        }
-    }
-    
     /// Handles HTTP status codes
     /// - Parameter statusCode: HTTP status code
     /// - Parameter message: Optional error message
@@ -118,38 +94,6 @@ class ErrorHandler {
         default:
             return "HTTP error \(statusCode): \(message ?? "Unknown error")"
         }
-    }
-    
-    /// Determines if an error should trigger a retry
-    /// - Parameter error: The error to check
-    /// - Returns: True if the error is retryable
-    func shouldRetry(_ error: Error) -> Bool {
-        // Network errors are generally retryable
-        if let urlError = error as? URLError {
-            switch urlError.code {
-            case .timedOut, .cannotFindHost, .networkConnectionLost, .cannotConnectToHost:
-                return true
-            default:
-                return false
-            }
-        }
-        
-        // Handle POSIX socket errors (e.g., "Socket is not connected")
-        if let nsError = error as NSError?, nsError.domain == NSPOSIXErrorDomain {
-            switch nsError.code {
-            case 57: // ENOTCONN - Socket is not connected
-                return true
-            default:
-                return false
-            }
-        }
-        
-        // WebSocket close codes
-        if let closeCode = (error as NSError?)?.userInfo["closeCode"] as? Int {
-            return closeCode < 4000 // Only retry for non-API errors
-        }
-        
-        return false
     }
     
     // MARK: - Private Methods
@@ -326,9 +270,5 @@ enum ErrorMessage {
     static let rateLimited = "API 请求频率超限，请稍后再试。"
     static let sttConcurrencyQuotaExceeded = "服务并发额度已达上限。请结束其他任务后稍后重试。"
     static let apiServerError = "服务端错误，请稍后再试。"
-    static let requestTimeout = "Request timeout. Please try again."
-    static let requestTooLarge = "Request too large. Please try again."
-    static let unsupportedData = "Unsupported data format. Please update the app."
-    static let connectionLost = "Connection lost. Please try again."
     static let sessionExpired = "Session expired and has been automatically renewed. Transcription will continue."
 }

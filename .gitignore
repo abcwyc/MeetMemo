@@ -127,3 +127,6 @@ releases/
 
 # sherpa-onnx prebuilt xcframeworks (fetched by scripts/fetch_sherpa_frameworks.sh)
 Frameworks/
+
+# Playwright MCP debug artifacts
+.playwright-mcp/

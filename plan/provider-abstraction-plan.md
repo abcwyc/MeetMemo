@@ -1,83 +1,52 @@
 # Provider Abstraction Status
 
-This document records the current provider architecture. It replaces the original migration plan, which described an older OpenAI/MacPaw implementation and several steps that have already changed.
+This document records the current provider architecture (STT + LLM). It reflects the
+current dual-engine STT design; earlier revisions of this file described a Doubao
+WebSocket STT implementation that has since been removed.
 
 ## Current State
 
-- STT is abstracted behind `STTProvider` in `MeetMemo/Providers/ProviderProtocols.swift`.
-- `AudioManager` receives an `STTProviderFactory` and creates separate provider instances for microphone and system audio.
-- The implemented STT provider is `DoubaoSTTProvider`.
-- LLM calls are abstracted behind `LLMProvider`.
-- `NotesGenerator` depends on `LLMProvider` and does not construct provider-specific requests directly.
+- STT is abstracted behind `STTProvider` / `STTProviderFactory` in
+  `MeetMemo/Providers/ProviderProtocols.swift`.
+- `AudioManager` holds an `STTProviderFactory` chosen from `UserDefaultsManager.sttEngine`
+  and creates separate provider instances for microphone and system audio. It refreshes
+  the factory from settings on each recording start (`refreshSTTFactoryFromSettings`).
+- Two STT engines are implemented, selected via the `STTEngine` enum
+  (`UserDefaultsManager.swift`):
+  - `.appleSpeechAnalyzer` → `SpeechAnalyzerSTTProvider` (macOS 26 SpeechAnalyzer).
+  - `.sherpaSenseVoice` → `SherpaSTTProvider` (sherpa-onnx: SenseVoice-Small + Silero VAD
+    + CAM++ speaker embedding).
+- LLM calls are abstracted behind `LLMProvider`. `NotesGenerator` depends on `LLMProvider`
+  and does not construct provider-specific requests directly.
 - `LLMClient` routes by `LLMProviderConfig.apiStyle`:
   - Anthropic base URLs and `/v1/messages` endpoints use the Anthropic Messages API.
   - Other base URLs use OpenAI-compatible `/chat/completions` streaming.
-- Provider credentials and model settings are stored through `SettingsViewModel` and `KeychainHelper`.
+- Provider credentials and model settings are stored through `SettingsViewModel` and
+  `KeychainHelper` (sensitive) / `UserDefaultsManager` (non-sensitive).
 
 ## STT Implementation
 
 Files:
 
-- `MeetMemo/Providers/STTProviderConfig.swift`
-- `MeetMemo/Providers/ProviderProtocols.swift`
-- `MeetMemo/Providers/DoubaoProtocol.swift`
-- `MeetMemo/Providers/DoubaoSTTProvider.swift`
-- `MeetMemo/Managers/AudioManager.swift`
-
-`DoubaoSTTProvider` connects to `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async` with:
-
-- `X-Api-App-Key`
-- `X-Api-Access-Key`
-- `X-Api-Resource-Id`
-- `X-Api-Connect-Id`
-
-Audio is converted to 16 kHz mono PCM before streaming. Transcript callbacks use `STTTranscriptUpdate`, which carries text, final/interim status, and optional utterance timing.
+- `MeetMemo/Providers/ProviderProtocols.swift` — `STTProvider`, `STTProviderFactory`,
+  `LLMProvider` protocols; `STTProviderCapabilities`; `STTTranscriptCorrection`.
+- `MeetMemo/Providers/SpeechAnalyzerSTTProvider.swift` — SpeechAnalyzer engine.
+  No speaker diarization (`supportsCorrections: false`).
+- `MeetMemo/Providers/SherpaSTTProvider.swift` — SenseVoice engine. Two-stage speaker
+  labeling: online centroid clustering during recording, then offline complete-linkage
+  HAC re-clustering on stop, emitted as `STTTranscriptCorrection`s via
+  `applyOfflineRefinement()`.
+- `MeetMemo/Providers/SherpaOnnxRuntime.swift` — sherpa-onnx runtime adapter.
+- `MeetMemo/Providers/SpeakerClusteringHelpers.swift` — clustering helpers.
+- `MeetMemo/Providers/STTProviderConfig.swift` — STT configuration (`locale`, `engine`).
+- `MeetMemo/Managers/AudioManager.swift` — Uses the injected factory to run mic + system STT.
+- `MeetMemo/Services/SpeechModelInstaller.swift` — readiness for the SpeechAnalyzer engine.
+- `MeetMemo/Services/SherpaModelManager.swift` — downloads/verifies local sherpa-onnx models.
 
 ## LLM Implementation
 
 Files:
 
-- `MeetMemo/Providers/LLMProviderConfig.swift`
-- `MeetMemo/Providers/LLMClient.swift`
-- `MeetMemo/Providers/ProviderProtocols.swift`
-- `MeetMemo/Services/NotesGenerator.swift`
-
-`LLMProviderConfig.defaultBaseURL` is `https://api.anthropic.com`.
-
-Anthropic requests:
-
-- Endpoint: `/v1/messages`
-- Header: `x-api-key`
-- Header: `anthropic-version`
-- Stream parser: Anthropic event stream, primarily `content_block_delta`
-
-OpenAI-compatible requests:
-
-- Endpoint: `/chat/completions`
-- Header: `Authorization: Bearer ...`
-- Stream parser: SSE `choices[].delta.content`
-
-`LLMProviderConfig.requestURL(endpoint:)` avoids duplicating path segments, so base URLs such as `https://api.openai.com/v1`, `https://api.anthropic.com/v1`, and full chat-completions endpoints are handled correctly.
-
-## Validation And Tests
-
-The test target is `MeetMemoTests`.
-
-Current provider-related tests include:
-
-- `MeetMemoTests/LLMProviderConfigTests.swift`
-- `MeetMemoTests/MeetingTranscriptFormattingTests.swift`
-- `MeetMemoTests/UtteranceDiffTrackerTests.swift`
-
-Useful command:
-
-```bash
-xcodebuild test -project MeetMemo.xcodeproj -scheme MeetMemo -configuration Debug -destination 'platform=macOS,arch=arm64'
-```
-
-## Remaining Work
-
-- Add a second concrete STT provider to validate that the `STTProvider` abstraction is broad enough.
-- Add unit coverage for `DoubaoProtocol` frame encoding/decoding.
-- Add mocked stream tests for Anthropic and OpenAI-compatible LLM parsing.
-- Expand provider validation beyond connection tests where providers expose a suitable health or account endpoint.
+- `MeetMemo/Providers/LLMClient.swift` — Anthropic + OpenAI-compatible streaming.
+- `MeetMemo/Providers/LLMProviderConfig.swift` — `apiStyle`, URL building, validation.
+- `MeetMemo/Services/NotesGenerator.swift` — Talks to `LLMProvider` only.
