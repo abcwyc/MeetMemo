@@ -97,4 +97,4 @@ SwiftUI views wired to ViewModels. Entry point is `ContentView.swift`; app boots
 - **Code signing**: The release binary requires a Developer ID Application certificate. Debug builds run unsigned locally.
 - **Universal binary**: Release builds target both `arm64` and `x86_64`.
 - **Conventional commits**: Follow conventional commit format (`feat:`, `fix:`, `chore:`, etc.) per `CONTRIBUTING.md`.
-- **Contributor License Agreement**: All contributions grant the project rights to relicense under LGPL-3.0.
+- **License**: Released under the PolyForm Noncommercial License 1.0.0 (noncommercial use only; redistribution and modifications must retain the copyright notice and license). See `LICENSE`.
