@@ -35,12 +35,15 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         let provisionalSpeakerId: Int
     }
 
-    private static let fallbackDecodeSampleLimit = 16_000 * 30
+    private static let sampleRate = 16_000
+    private static let fallbackDecodeSampleLimit = sampleRate * 30
+    private static let leadingContextSamples = Int(Double(sampleRate) * 0.32)
 
     private var runtime: SherpaOnnxRuntime?
     private var ringBuffer: [Float] = []
     private var totalSamplesIngested: Int = 0
     private var emittedSegmentCount = 0
+    private var lastEmittedEndSampleOffset = 0
     private var speakerCentroids: [(centroid: [Float], count: Int)] = []
     private var segmentLedger: [SegmentRecord] = []
     private let workQueue = DispatchQueue(label: "io.meetmemo.sherpa.stt", qos: .userInitiated)
@@ -83,6 +86,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         ringBuffer.removeAll(keepingCapacity: false)
         totalSamplesIngested = 0
         emittedSegmentCount = 0
+        lastEmittedEndSampleOffset = 0
         speakerCentroids.removeAll()
         segmentLedger.removeAll()
     }
@@ -156,7 +160,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     private func drainCompletedSegments(runtime: SherpaOnnxRuntime, force: Bool) {
         let segmentsBeforeDrain = emittedSegmentCount
         while let segment = runtime.nextCompletedSegment(force: force) {
-            handle(segment: segment, runtime: runtime)
+            handle(segment: segmentWithLeadingContext(segment, runtime: runtime), runtime: runtime)
         }
         if force, emittedSegmentCount == segmentsBeforeDrain, !ringBuffer.isEmpty {
             let endOffset = totalSamplesIngested
@@ -169,10 +173,41 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         }
     }
 
+    private func segmentWithLeadingContext(
+        _ segment: SherpaOnnxRuntime.Segment,
+        runtime: SherpaOnnxRuntime
+    ) -> SherpaOnnxRuntime.Segment {
+        let historyStartOffset = totalSamplesIngested - ringBuffer.count
+        let contextStartOffset = max(
+            historyStartOffset,
+            lastEmittedEndSampleOffset,
+            segment.startSampleOffset - Self.leadingContextSamples
+        )
+        guard contextStartOffset < segment.startSampleOffset else {
+            return segment
+        }
+
+        let prefixStartIndex = contextStartOffset - historyStartOffset
+        let prefixEndIndex = segment.startSampleOffset - historyStartOffset
+        guard prefixStartIndex >= 0,
+              prefixEndIndex <= ringBuffer.count,
+              prefixStartIndex < prefixEndIndex else {
+            return segment
+        }
+
+        let expandedSamples = Array(ringBuffer[prefixStartIndex..<prefixEndIndex]) + segment.samples
+        let expanded = runtime.decodeFallbackSegment(
+            samples: expandedSamples,
+            startSampleOffset: contextStartOffset
+        )
+        return expanded.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? segment : expanded
+    }
+
     private func handle(segment: SherpaOnnxRuntime.Segment, runtime: SherpaOnnxRuntime) {
         let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         emittedSegmentCount += 1
+        lastEmittedEndSampleOffset = max(lastEmittedEndSampleOffset, segment.endSampleOffset)
 
         let embedding = runtime.embedding(for: segment.samples)
         let speakerId = SpeakerClustering.assignOnline(
@@ -180,8 +215,8 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
             centroids: &speakerCentroids
         )
 
-        let startMs = Int(Double(segment.startSampleOffset) * 1000.0 / 16000.0)
-        let endMs = Int(Double(segment.endSampleOffset) * 1000.0 / 16000.0)
+        let startMs = Int(Double(segment.startSampleOffset) * 1000.0 / Double(Self.sampleRate))
+        let endMs = Int(Double(segment.endSampleOffset) * 1000.0 / Double(Self.sampleRate))
         let tag = Self.speakerTag(forId: speakerId)
 
         segmentLedger.append(SegmentRecord(

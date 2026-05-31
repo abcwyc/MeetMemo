@@ -79,12 +79,13 @@ final class SherpaOnnxRuntime {
             SherpaOnnxOfflineRecognizer(config: ptr)
         }
 
-        // Silero VAD — 15s max segment caps the recognition latency floor.
+        // Silero VAD — keep the start trigger permissive; SherpaSTTProvider
+        // adds leading context before decoding to preserve soft utterance starts.
         let sileroCfg = sherpaOnnxSileroVadModelConfig(
             model: vadPath,
-            threshold: 0.25,
+            threshold: 0.22,
             minSilenceDuration: 0.25,
-            minSpeechDuration: 0.5,
+            minSpeechDuration: 0.25,
             windowSize: 512,
             maxSpeechDuration: 15.0
         )
