@@ -539,7 +539,12 @@ class MeetingViewModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await SpeechModelInstaller.shared.ensureReadyForUse()
+                switch UserDefaultsManager.shared.sttEngine {
+                case .appleSpeechAnalyzer:
+                    try await SpeechModelInstaller.shared.ensureReadyForUse()
+                case .sherpaSenseVoice:
+                    try await SherpaModelManager.shared.ensureReadyForUse()
+                }
                 self.hasStartedRecordingSession = true
                 self.toolbarHasStartedRecordingSession = true
                 self.recordingSessionManager.startRecording(for: self.meeting.id, existingChunks: self.meeting.transcriptChunks)

@@ -162,15 +162,25 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         while let segment = runtime.nextCompletedSegment(force: force) {
             handle(segment: segmentWithLeadingContext(segment, runtime: runtime), runtime: runtime)
         }
-        if force, emittedSegmentCount == segmentsBeforeDrain, !ringBuffer.isEmpty {
-            let endOffset = totalSamplesIngested
-            let startOffset = max(0, endOffset - ringBuffer.count)
-            let segment = runtime.decodeFallbackSegment(
-                samples: ringBuffer,
-                startSampleOffset: startOffset
-            )
+        if force, emittedSegmentCount == segmentsBeforeDrain,
+           let segment = makeUnemittedFallbackSegment(runtime: runtime) {
             handle(segment: segment, runtime: runtime)
         }
+    }
+
+    private func makeUnemittedFallbackSegment(runtime: SherpaOnnxRuntime) -> SherpaOnnxRuntime.Segment? {
+        guard !ringBuffer.isEmpty else { return nil }
+
+        let historyStartOffset = totalSamplesIngested - ringBuffer.count
+        let fallbackStartOffset = max(historyStartOffset, lastEmittedEndSampleOffset)
+        let startIndex = fallbackStartOffset - historyStartOffset
+        guard startIndex >= 0, startIndex < ringBuffer.count else { return nil }
+
+        let tailSamples = Array(ringBuffer[startIndex...])
+        return runtime.decodeFallbackSegment(
+            samples: tailSamples,
+            startSampleOffset: fallbackStartOffset
+        )
     }
 
     private func segmentWithLeadingContext(

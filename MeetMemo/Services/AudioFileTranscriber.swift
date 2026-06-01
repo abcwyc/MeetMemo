@@ -19,6 +19,14 @@ final class AudioFileTranscriber {
         let config = APIKeyValidator.shared.currentSTTConfig()
         switch config.engine {
         case .appleSpeechAnalyzer:
+            guard #available(macOS 26.0, *) else {
+                throw AudioFileTranscriberError.providerError(
+                    LanguageManager.shared.t(
+                        "macOS 内置语音识别需要 macOS 26 或更高版本。请切换到本地 SenseVoice。",
+                        "macOS built-in speech recognition requires macOS 26 or later. Switch to Local SenseVoice."
+                    )
+                )
+            }
             return try await transcribeWithSpeechAnalyzer(url: url, progress: progress)
         case .sherpaSenseVoice:
             return try await transcribeWithProvider(
@@ -30,6 +38,7 @@ final class AudioFileTranscriber {
         }
     }
 
+    @available(macOS 26.0, *)
     private func transcribeWithSpeechAnalyzer(
         url: URL,
         progress: (@Sendable (Double) -> Void)? = nil

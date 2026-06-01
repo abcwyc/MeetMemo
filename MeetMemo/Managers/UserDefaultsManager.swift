@@ -156,8 +156,8 @@ class UserDefaultsManager {
     // MARK: - STT Engine
     var sttEngine: STTEngine {
         get {
-            let raw = userDefaults.string(forKey: Keys.sttEngine) ?? STTEngine.appleSpeechAnalyzer.rawValue
-            return STTEngine(rawValue: raw) ?? .appleSpeechAnalyzer
+            let raw = userDefaults.string(forKey: Keys.sttEngine) ?? STTEngine.sherpaSenseVoice.rawValue
+            return STTEngine(rawValue: raw) ?? .sherpaSenseVoice
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.sttEngine) }
     }

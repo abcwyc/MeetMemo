@@ -8,7 +8,7 @@ struct STTProviderConfig: Hashable {
 
     init(
         locale: Locale = Locale(identifier: "zh-CN"),
-        engine: STTEngine = .appleSpeechAnalyzer
+        engine: STTEngine = .sherpaSenseVoice
     ) {
         self.locale = locale
         self.engine = engine

@@ -4,7 +4,7 @@ import AVFoundation
 struct OnboardingView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var langMgr: LanguageManager
-    @ObservedObject private var speechInstaller = SpeechModelInstaller.shared
+    @ObservedObject private var sherpaModel = SherpaModelManager.shared
     @State private var llmApiKey = ""
     @State private var llmBaseURL = ""
     @State private var llmModel = ""
@@ -35,15 +35,6 @@ struct OnboardingView: View {
                                 )
 
                                 PermissionRow(
-                                    title: langMgr.t("语音识别权限", "Speech Recognition"),
-                                    description: langMgr.t("允许 macOS 本地语音识别处理会议音频", "Allows macOS on-device speech recognition to process meeting audio"),
-                                    isGranted: speechInstaller.isSpeechAuthorized,
-                                    grantedLabel: speechInstaller.speechAuthorizationLabel,
-                                    enableLabel: langMgr.t("授权", "Enable"),
-                                    action: requestSpeechPermission
-                                )
-
-                                PermissionRow(
                                     title: langMgr.t("系统录音权限", "System Audio Recording"),
                                     description: langMgr.t("用于转录会议中他人说的话", "Required to transcribe what others say in meetings"),
                                     isGranted: systemAudioPermissionGranted,
@@ -56,29 +47,43 @@ struct OnboardingView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                         VStack(alignment: .leading, spacing: 12) {
-                            Text(langMgr.t("语音识别模型", "Speech Recognition Model"))
+                            Text(langMgr.t("本地语音识别模型", "Local Speech Recognition Model"))
                                 .font(.title2)
                                 .fontWeight(.semibold)
 
+                            Text(langMgr.t(
+                                "推荐使用 SenseVoice：兼容更多 macOS 版本，下载完成后可离线转录并支持发言人区分。",
+                                "SenseVoice is recommended: it works across more macOS versions, runs offline after download, and supports speaker separation."
+                            ))
+                            .font(.body)
+                            .foregroundColor(.secondary)
+
                             HStack(spacing: 10) {
-                                Image(systemName: speechInstaller.isModelReady ? "checkmark.circle.fill" : "arrow.down.circle")
-                                    .foregroundColor(speechInstaller.isModelReady ? .green : .secondary)
-                                Text(speechModelStatusText)
+                                Image(systemName: sherpaModel.isReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                                    .foregroundColor(sherpaModel.isReady ? .green : .secondary)
+                                Text(sherpaModelStatusText)
                                     .foregroundColor(.secondary)
                                 Spacer()
                                 Button {
-                                    Task { await speechInstaller.installModelIfNeeded() }
+                                    Task {
+                                        do {
+                                            try await sherpaModel.installModelsIfNeeded()
+                                            await sherpaModel.refreshReadiness()
+                                        } catch {
+                                            // installError is published by SherpaModelManager.
+                                        }
+                                    }
                                 } label: {
-                                    if speechInstaller.isInstalling {
+                                    if sherpaModel.isDownloading {
                                         ProgressView()
                                             .controlSize(.small)
                                     } else {
-                                        Text(speechInstaller.isModelReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("安装模型", "Install Model"))
+                                        Text(sherpaModel.isReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("下载模型", "Download Models"))
                                     }
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
-                                .disabled(speechInstaller.isInstalling)
+                                .disabled(sherpaModel.isDownloading)
                             }
                             .padding()
                             .background(Color(NSColor.controlBackgroundColor))
@@ -184,20 +189,20 @@ struct OnboardingView: View {
         }
         .background(Color(NSColor.controlBackgroundColor))
         .onAppear {
+            UserDefaultsManager.shared.sttEngine = .sherpaSenseVoice
             checkPermissions()
             settingsViewModel.loadProviderConfig()
             llmApiKey = settingsViewModel.settings.llmApiKey
             llmBaseURL = settingsViewModel.settings.llmBaseURL
             llmModel = settingsViewModel.settings.llmModel
-            Task { await speechInstaller.checkModelAvailability() }
+            Task { await sherpaModel.refreshReadiness() }
         }
         .onChange(of: audioRecordingPermission.status) { oldValue, newValue in
             systemAudioPermissionGranted = (newValue == .authorized)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             checkPermissions()
-            speechInstaller.refreshSpeechAuthorizationStatus()
-            Task { await speechInstaller.checkModelAvailability() }
+            Task { await sherpaModel.refreshReadiness() }
         }
         .alert(item: $settingsViewModel.activeAlert) { alert in
             Alert(
@@ -210,8 +215,7 @@ struct OnboardingView: View {
 
     private var canProceed: Bool {
         micPermissionGranted &&
-        speechInstaller.isSpeechAuthorized &&
-        speechInstaller.isModelReady &&
+        sherpaModel.isReady &&
         systemAudioPermissionGranted &&
         !llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
@@ -246,21 +250,6 @@ struct OnboardingView: View {
         }
     }
 
-    private func requestSpeechPermission() {
-        Task { @MainActor in
-            let status = await speechInstaller.requestSpeechAuthorization()
-            if status != .authorized {
-                settingsViewModel.activeAlert = AlertMessage(
-                    title: langMgr.t("需要权限", "Permission Required"),
-                    message: langMgr.t(
-                        "转录会议需要语音识别权限，请在「系统设置 > 隐私与安全性 > 语音识别」中开启。",
-                        "Speech recognition access is required for transcription. Enable it in System Settings > Privacy & Security > Speech Recognition."
-                    )
-                )
-            }
-        }
-    }
-
     private func requestSystemAudioPermission() {
         audioRecordingPermission.request()
 
@@ -277,24 +266,24 @@ struct OnboardingView: View {
         }
     }
 
-    private var speechModelStatusText: String {
-        if speechInstaller.isInstalling {
-            if let progress = speechInstaller.installProgress {
+    private var sherpaModelStatusText: String {
+        if sherpaModel.isDownloading {
+            if let progress = sherpaModel.downloadProgress {
                 return langMgr.t(
-                    "正在安装语音识别模型 \(Int(progress * 100))%",
-                    "Installing speech recognition model \(Int(progress * 100))%"
+                    "正在下载 SenseVoice 模型 \(Int(progress * 100))%",
+                    "Downloading SenseVoice models \(Int(progress * 100))%"
                 )
             }
-            return langMgr.t("正在安装语音识别模型", "Installing speech recognition model")
+            return langMgr.t("正在下载 SenseVoice 模型", "Downloading SenseVoice models")
         }
 
-        if speechInstaller.isModelReady {
-            return langMgr.t("语音识别模型已就绪", "Speech recognition model is ready")
+        if sherpaModel.isReady {
+            return langMgr.t("SenseVoice 模型已就绪", "SenseVoice models are ready")
         }
 
-        return speechInstaller.installError ?? langMgr.t(
-            "首次使用前需要安装 macOS 语音识别模型。",
-            "Install the macOS speech recognition model before first use."
+        return sherpaModel.installError ?? langMgr.t(
+            "首次使用前需要下载 SenseVoice 本地模型（约 240 MB）。",
+            "Download the local SenseVoice models before first use (~240 MB)."
         )
     }
 }

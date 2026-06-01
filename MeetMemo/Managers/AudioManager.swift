@@ -152,6 +152,9 @@ class AudioManager: NSObject, ObservableObject {
             queue: .main
         ) { _ in
             print("☀️ System woke up. Recording was stopped at sleep; user must start again manually.")
+            Task { @MainActor in
+                SpeechModelInstaller.shared.handleSystemDidWake()
+            }
         }
     }
 
@@ -806,7 +809,15 @@ class AudioManager: NSObject, ObservableObject {
     private static func factory(for engine: STTEngine) -> STTProviderFactory {
         switch engine {
         case .appleSpeechAnalyzer:
-            return SpeechAnalyzerSTTProviderFactory()
+            if #available(macOS 26.0, *) {
+                return SpeechAnalyzerSTTProviderFactory()
+            }
+            return UnavailableSTTProviderFactory(
+                message: LanguageManager.shared.t(
+                    "macOS 内置语音识别需要 macOS 26 或更高版本。请切换到本地 SenseVoice。",
+                    "macOS built-in speech recognition requires macOS 26 or later. Switch to Local SenseVoice."
+                )
+            )
         case .sherpaSenseVoice:
             return SherpaSTTProviderFactory()
         }

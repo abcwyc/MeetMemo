@@ -70,6 +70,42 @@ protocol STTProviderFactory {
     func makeProvider() -> STTProvider
 }
 
+final class UnavailableSTTProvider: STTProvider {
+    var onTranscriptUpdate: ((STTTranscriptUpdate) -> Void)?
+    var onTranscriptCorrection: (([STTTranscriptCorrection]) -> Void)?
+    var onError: ((String) -> Void)?
+
+    private let message: String
+
+    init(message: String) {
+        self.message = message
+    }
+
+    func connect(config: STTProviderConfig) async throws {
+        throw NSError(domain: "MeetMemo.STTProvider", code: -1, userInfo: [
+            NSLocalizedDescriptionKey: message
+        ])
+    }
+
+    func sendAudio(_ pcmData: Data) {}
+    func sendLastAudio() {}
+    func disconnect() {}
+
+    func testConnection(config: STTProviderConfig, timeout: TimeInterval) async throws {
+        throw NSError(domain: "MeetMemo.STTProvider", code: -1, userInfo: [
+            NSLocalizedDescriptionKey: message
+        ])
+    }
+}
+
+struct UnavailableSTTProviderFactory: STTProviderFactory {
+    let message: String
+
+    func makeProvider() -> STTProvider {
+        UnavailableSTTProvider(message: message)
+    }
+}
+
 protocol LLMProvider {
     func chatCompletionsStreamThrowing(
         config: LLMProviderConfig,

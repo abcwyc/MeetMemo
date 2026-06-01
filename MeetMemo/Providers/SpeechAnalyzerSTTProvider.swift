@@ -3,6 +3,7 @@ import CoreMedia
 import Foundation
 import Speech
 
+@available(macOS 26.0, *)
 final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
     var capabilities: STTProviderCapabilities {
         STTProviderCapabilities(
@@ -242,6 +243,7 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
     }
 }
 
+@available(macOS 26.0, *)
 final class SpeechAnalyzerSTTProviderFactory: STTProviderFactory {
     func makeProvider() -> STTProvider {
         SpeechAnalyzerSTTProvider()

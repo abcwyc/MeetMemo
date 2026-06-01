@@ -53,6 +53,10 @@ struct SettingsView: View {
             viewModel.loadTemplates()
             viewModel.loadProviderConfig()
             checkPermissions()
+            if sttEngine == .appleSpeechAnalyzer && !isAppleSpeechAnalyzerAvailable {
+                sttEngine = .sherpaSenseVoice
+                UserDefaultsManager.shared.sttEngine = .sherpaSenseVoice
+            }
             Task { await speechInstaller.checkModelAvailability() }
         }
         .onChange(of: audioRecordingPermission.status) { _, newValue in
@@ -94,14 +98,16 @@ struct SettingsView: View {
                         action: requestMicrophonePermission
                     )
 
-                    PermissionRow(
-                        title: langMgr.t("语音识别权限", "Speech Recognition"),
-                        description: langMgr.t("允许 macOS 本地语音识别处理会议音频", "Allows macOS on-device speech recognition to process meeting audio"),
-                        isGranted: speechInstaller.isSpeechAuthorized,
-                        grantedLabel: speechInstaller.speechAuthorizationLabel,
-                        enableLabel: langMgr.t("授权", "Enable"),
-                        action: requestSpeechPermission
-                    )
+                    if sttEngine == .appleSpeechAnalyzer {
+                        PermissionRow(
+                            title: langMgr.t("语音识别权限", "Speech Recognition"),
+                            description: langMgr.t("允许 macOS 本地语音识别处理会议音频", "Allows macOS on-device speech recognition to process meeting audio"),
+                            isGranted: speechInstaller.isSpeechAuthorized,
+                            grantedLabel: speechInstaller.speechAuthorizationLabel,
+                            enableLabel: langMgr.t("授权", "Enable"),
+                            action: requestSpeechPermission
+                        )
+                    }
 
                     PermissionRow(
                         title: langMgr.t("系统录音权限", "System Audio Recording"),
@@ -155,8 +161,9 @@ struct SettingsView: View {
                     .foregroundColor(.primary)
 
                 Picker("", selection: $sttEngine) {
-                    Text(langMgr.t("macOS 内置", "macOS Built-in")).tag(STTEngine.appleSpeechAnalyzer)
                     Text(langMgr.t("本地 SenseVoice", "Local SenseVoice")).tag(STTEngine.sherpaSenseVoice)
+                    Text(langMgr.t("macOS 内置", "macOS Built-in")).tag(STTEngine.appleSpeechAnalyzer)
+                        .disabled(!isAppleSpeechAnalyzerAvailable)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -164,6 +171,11 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .disabled(audioManager.isRecording)
                 .onChange(of: sttEngine) { _, newValue in
+                    if newValue == .appleSpeechAnalyzer && !isAppleSpeechAnalyzerAvailable {
+                        sttEngine = .sherpaSenseVoice
+                        UserDefaultsManager.shared.sttEngine = .sherpaSenseVoice
+                        return
+                    }
                     UserDefaultsManager.shared.sttEngine = newValue
                 }
 
@@ -279,16 +291,29 @@ struct SettingsView: View {
     private var sttEngineDescriptionText: String {
         switch sttEngine {
         case .appleSpeechAnalyzer:
+            if !isAppleSpeechAnalyzerAvailable {
+                return langMgr.t(
+                    "macOS 内置语音识别需要 macOS 26 或更高版本。建议使用本地 SenseVoice。",
+                    "macOS built-in speech recognition requires macOS 26 or later. Local SenseVoice is recommended."
+                )
+            }
             return langMgr.t(
                 "适合已升级到 macOS 26 及以上的设备，无需额外下载模型；当前暂不支持区分不同发言人。",
                 "Best for devices running macOS 26 or later. No extra model download is needed; speaker separation is not currently supported."
             )
         case .sherpaSenseVoice:
             return langMgr.t(
-                "兼容所有 macOS 版本，支持区分不同发言人；首次启用前需要先下载本地模型，下载完成后即可离线使用。",
-                "Compatible with all macOS versions and supports speaker separation. Download the local models before first use; recognition works offline after setup."
+                "推荐使用，兼容 macOS 15.5 及以上，支持区分不同发言人；首次启用前需要先下载本地模型，下载完成后即可离线使用。",
+                "Recommended. Compatible with macOS 15.5 or later and supports speaker separation. Download the local models before first use; recognition works offline after setup."
             )
         }
+    }
+
+    private var isAppleSpeechAnalyzerAvailable: Bool {
+        if #available(macOS 26.0, *) {
+            return true
+        }
+        return false
     }
 
     private var sherpaSenseVoiceEngineCard: some View {

@@ -12,6 +12,8 @@ final class SpeechModelInstaller: ObservableObject {
     @Published var speechAuthorizationStatus: SFSpeechRecognizerAuthorizationStatus = SFSpeechRecognizer.authorizationStatus()
     @Published var resolvedLocaleIdentifier: String?
 
+    private var postWakeRefreshTask: Task<Void, Never>?
+
     var primaryLocale: Locale {
         Locale(identifier: UserDefaultsManager.shared.sttLocaleIdentifier)
     }
@@ -40,9 +42,24 @@ final class SpeechModelInstaller: ObservableObject {
         Task { await checkModelAvailability() }
     }
 
+    func handleSystemDidWake() {
+        postWakeRefreshTask?.cancel()
+        postWakeRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await self?.checkModelAvailability()
+        }
+    }
+
     func checkModelAvailability() async {
         speechAuthorizationStatus = SFSpeechRecognizer.authorizationStatus()
         installError = nil
+
+        guard #available(macOS 26.0, *) else {
+            isModelReady = false
+            installError = SpeechModelInstallerError.speechTranscriberUnavailable.localizedDescription
+            return
+        }
 
         do {
             let locale = try await Self.resolvedLocale(for: primaryLocale)
@@ -66,6 +83,11 @@ final class SpeechModelInstaller: ObservableObject {
             installError = SpeechModelInstallerError.authorizationFailed(status).localizedDescription
             return
         }
+        guard #available(macOS 26.0, *) else {
+            isModelReady = false
+            installError = SpeechModelInstallerError.speechTranscriberUnavailable.localizedDescription
+            return
+        }
 
         do {
             _ = try await installModelIfNeeded(for: primaryLocale)
@@ -79,6 +101,11 @@ final class SpeechModelInstaller: ObservableObject {
         guard status == .authorized else {
             isModelReady = false
             installError = SpeechModelInstallerError.authorizationFailed(status).localizedDescription
+            return
+        }
+        guard #available(macOS 26.0, *) else {
+            isModelReady = false
+            installError = SpeechModelInstallerError.speechTranscriberUnavailable.localizedDescription
             return
         }
 
@@ -115,10 +142,14 @@ final class SpeechModelInstaller: ObservableObject {
         guard status == .authorized else {
             throw SpeechModelInstallerError.authorizationFailed(status)
         }
+        guard #available(macOS 26.0, *) else {
+            throw SpeechModelInstallerError.speechTranscriberUnavailable
+        }
 
         return try await installModelIfNeeded(for: requestedLocale ?? primaryLocale)
     }
 
+    @available(macOS 26.0, *)
     @discardableResult
     private func installModelIfNeeded(for requestedLocale: Locale, force: Bool = false) async throws -> Locale {
         if isInstalling {
@@ -140,10 +171,13 @@ final class SpeechModelInstaller: ObservableObject {
             let locale = try await Self.resolvedLocale(for: requestedLocale)
             resolvedLocaleIdentifier = locale.identifier
             let transcriber = Self.makeTranscriber(locale: locale, includeTimeRange: false, includeVolatileResults: false)
-            let status = await AssetInventory.status(forModules: [transcriber])
+            let status = await confirmedAssetStatus(for: transcriber, force: force)
             if status == .installed && !force {
                 isModelReady = true
                 return locale
+            }
+            if status == .unsupported {
+                throw SpeechModelInstallerError.localeNotSupported(requestedLocale)
             }
 
             if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
@@ -176,6 +210,25 @@ final class SpeechModelInstaller: ObservableObject {
         }
     }
 
+    @available(macOS 26.0, *)
+    private func confirmedAssetStatus(for transcriber: SpeechTranscriber, force: Bool) async -> AssetInventory.Status {
+        let status = await AssetInventory.status(forModules: [transcriber])
+        guard status != .installed, !force else {
+            return status
+        }
+
+        // SpeechAnalyzer's asset inventory can briefly report stale availability
+        // immediately after system wake. Give the system service a moment to settle
+        // before treating an installed model as missing.
+        try? await Task.sleep(for: .seconds(1))
+        let retryStatus = await AssetInventory.status(forModules: [transcriber])
+        if retryStatus == .installed {
+            print("ℹ️ Speech model became available after wake retry.")
+        }
+        return retryStatus
+    }
+
+    @available(macOS 26.0, *)
     nonisolated static func makeTranscriber(
         locale: Locale,
         includeTimeRange: Bool,
@@ -189,6 +242,7 @@ final class SpeechModelInstaller: ObservableObject {
         )
     }
 
+    @available(macOS 26.0, *)
     nonisolated static func resolvedLocale(for requestedLocale: Locale) async throws -> Locale {
         guard SpeechTranscriber.isAvailable else {
             throw SpeechModelInstallerError.speechTranscriberUnavailable
