@@ -36,6 +36,7 @@ class UserDefaultsManager {
         static let sttLocaleIdentifier = "sttLocaleIdentifier"
         static let enableSystemAudioSTT = "enableSystemAudioSTT"
         static let sttEngine = "sttEngine"
+        static let sherpaSTTDebugLogging = "sherpaSTTDebugLogging"
     }
     
     // MARK: - User Blurb
@@ -169,6 +170,16 @@ class UserDefaultsManager {
             return userDefaults.bool(forKey: Keys.enableSystemAudioSTT)
         }
         set { userDefaults.set(newValue, forKey: Keys.enableSystemAudioSTT) }
+    }
+
+    // MARK: - SenseVoice Debug Logging
+    /// When true, `SherpaSTTProvider` logs a per-session accounting summary
+    /// (input audio duration vs VAD-passed duration, empty-decode count, fallback count)
+    /// to help diagnose dropped/"swallowed" words. Off by default; not exposed in the
+    /// normal UI. Toggle via `defaults write` or a debug build.
+    var sherpaSTTDebugLogging: Bool {
+        get { userDefaults.bool(forKey: Keys.sherpaSTTDebugLogging) }
+        set { userDefaults.set(newValue, forKey: Keys.sherpaSTTDebugLogging) }
     }
 
     private func normalizedNames(_ names: [String]) -> [String] {

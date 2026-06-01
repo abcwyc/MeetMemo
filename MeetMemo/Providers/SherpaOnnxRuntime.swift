@@ -83,9 +83,9 @@ final class SherpaOnnxRuntime {
         // adds leading context before decoding to preserve soft utterance starts.
         let sileroCfg = sherpaOnnxSileroVadModelConfig(
             model: vadPath,
-            threshold: 0.22,
+            threshold: 0.18,
             minSilenceDuration: 0.25,
-            minSpeechDuration: 0.25,
+            minSpeechDuration: 0.12,
             windowSize: 512,
             maxSpeechDuration: 15.0
         )

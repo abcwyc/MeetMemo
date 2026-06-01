@@ -671,7 +671,7 @@ class AudioManager: NSObject, ObservableObject {
             source: source,
             inputFormat: inputFormat,
             targetFormat: targetFormat,
-            silenceThreshold: source == .system ? 0.005 : nil,
+            silenceThreshold: source == .system ? 0.0015 : nil,
             onAudioData: { [weak self] data, source in
                 Task { @MainActor [weak self] in
                     self?.sendAudioData(data, source: source, sessionToken: sessionToken)

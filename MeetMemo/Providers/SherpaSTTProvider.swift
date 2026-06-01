@@ -37,7 +37,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
 
     private static let sampleRate = 16_000
     private static let fallbackDecodeSampleLimit = sampleRate * 30
-    private static let leadingContextSamples = Int(Double(sampleRate) * 0.32)
+    private static let leadingContextSamples = Int(Double(sampleRate) * 0.5)
 
     private var runtime: SherpaOnnxRuntime?
     private var ringBuffer: [Float] = []
@@ -47,6 +47,14 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     private var speakerCentroids: [(centroid: [Float], count: Int)] = []
     private var segmentLedger: [SegmentRecord] = []
     private let workQueue = DispatchQueue(label: "io.meetmemo.sherpa.stt", qos: .userInitiated)
+
+    // Debug accounting (only meaningful when `debugLogging` is on). Lets us tell
+    // whether swallowed words are dropped upstream by the VAD (low passed/ingested
+    // ratio) or downstream by SenseVoice (high empty-decode count).
+    private let debugLogging = UserDefaultsManager.shared.sherpaSTTDebugLogging
+    private var vadSpeechSamples = 0
+    private var emptyDecodeCount = 0
+    private var fallbackDecodeCount = 0
 
     func connect(config: STTProviderConfig) async throws {
         disconnect()
@@ -82,6 +90,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     }
 
     func disconnect() {
+        logDebugSummary()
         runtime = nil
         ringBuffer.removeAll(keepingCapacity: false)
         totalSamplesIngested = 0
@@ -89,6 +98,20 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         lastEmittedEndSampleOffset = 0
         speakerCentroids.removeAll()
         segmentLedger.removeAll()
+        vadSpeechSamples = 0
+        emptyDecodeCount = 0
+        fallbackDecodeCount = 0
+    }
+
+    private func logDebugSummary() {
+        guard debugLogging, totalSamplesIngested > 0 else { return }
+        let inputSeconds = Double(totalSamplesIngested) / Double(Self.sampleRate)
+        let vadSeconds = Double(vadSpeechSamples) / Double(Self.sampleRate)
+        let passedRatio = inputSeconds > 0 ? vadSeconds / inputSeconds : 0
+        print(String(
+            format: "🔎 SenseVoice session: input %.1fs | VAD-passed %.1fs (%.0f%%) | segments %d | empty-decodes %d | fallback %d",
+            inputSeconds, vadSeconds, passedRatio * 100, emittedSegmentCount, emptyDecodeCount, fallbackDecodeCount
+        ))
     }
 
     func testConnection(config: STTProviderConfig, timeout: TimeInterval) async throws {
@@ -160,10 +183,12 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     private func drainCompletedSegments(runtime: SherpaOnnxRuntime, force: Bool) {
         let segmentsBeforeDrain = emittedSegmentCount
         while let segment = runtime.nextCompletedSegment(force: force) {
+            vadSpeechSamples += segment.samples.count
             handle(segment: segmentWithLeadingContext(segment, runtime: runtime), runtime: runtime)
         }
         if force, emittedSegmentCount == segmentsBeforeDrain,
            let segment = makeUnemittedFallbackSegment(runtime: runtime) {
+            fallbackDecodeCount += 1
             handle(segment: segment, runtime: runtime)
         }
     }
@@ -215,7 +240,10 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
 
     private func handle(segment: SherpaOnnxRuntime.Segment, runtime: SherpaOnnxRuntime) {
         let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard !text.isEmpty else {
+            emptyDecodeCount += 1
+            return
+        }
         emittedSegmentCount += 1
         lastEmittedEndSampleOffset = max(lastEmittedEndSampleOffset, segment.endSampleOffset)
 
