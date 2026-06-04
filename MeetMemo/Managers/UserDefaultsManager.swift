@@ -13,6 +13,11 @@ enum STTEngine: String, CaseIterable {
     case sherpaSenseVoice = "sherpa"
 }
 
+enum SenseVoiceModelVariant: String, CaseIterable {
+    case quantized = "int8"
+    case fullPrecision = "fp32"
+}
+
 /// Manages non-sensitive app settings using UserDefaults
 class UserDefaultsManager {
     static let shared = UserDefaultsManager()
@@ -36,7 +41,12 @@ class UserDefaultsManager {
         static let sttLocaleIdentifier = "sttLocaleIdentifier"
         static let enableSystemAudioSTT = "enableSystemAudioSTT"
         static let sttEngine = "sttEngine"
+        static let senseVoiceModelVariant = "senseVoiceModelVariant"
         static let sherpaSTTDebugLogging = "sherpaSTTDebugLogging"
+        static let voiceInputEnabled = "voiceInputEnabled"
+        static let voiceInputTriggerMode = "voiceInputTriggerMode"
+        static let voiceInputShortcut = "voiceInputShortcut"
+        static let voiceInputCleansText = "voiceInputCleansText"
     }
     
     // MARK: - User Blurb
@@ -163,6 +173,15 @@ class UserDefaultsManager {
         set { userDefaults.set(newValue.rawValue, forKey: Keys.sttEngine) }
     }
 
+    // MARK: - SenseVoice Model Variant
+    var senseVoiceModelVariant: SenseVoiceModelVariant {
+        get {
+            let raw = userDefaults.string(forKey: Keys.senseVoiceModelVariant) ?? SenseVoiceModelVariant.quantized.rawValue
+            return SenseVoiceModelVariant(rawValue: raw) ?? .quantized
+        }
+        set { userDefaults.set(newValue.rawValue, forKey: Keys.senseVoiceModelVariant) }
+    }
+
     // MARK: - Dual STT (mic + system audio)
     var enableSystemAudioSTT: Bool {
         get {
@@ -180,6 +199,46 @@ class UserDefaultsManager {
     var sherpaSTTDebugLogging: Bool {
         get { userDefaults.bool(forKey: Keys.sherpaSTTDebugLogging) }
         set { userDefaults.set(newValue, forKey: Keys.sherpaSTTDebugLogging) }
+    }
+
+    // MARK: - Voice Input
+    var voiceInputEnabled: Bool {
+        get {
+            if userDefaults.object(forKey: Keys.voiceInputEnabled) == nil { return false }
+            return userDefaults.bool(forKey: Keys.voiceInputEnabled)
+        }
+        set { userDefaults.set(newValue, forKey: Keys.voiceInputEnabled) }
+    }
+
+    var voiceInputTriggerMode: VoiceInputTriggerMode {
+        get {
+            let raw = userDefaults.string(forKey: Keys.voiceInputTriggerMode) ?? VoiceInputTriggerMode.singlePress.rawValue
+            return VoiceInputTriggerMode(rawValue: raw) ?? .singlePress
+        }
+        set { userDefaults.set(newValue.rawValue, forKey: Keys.voiceInputTriggerMode) }
+    }
+
+    var voiceInputShortcut: VoiceInputShortcut {
+        get {
+            guard let data = userDefaults.data(forKey: Keys.voiceInputShortcut),
+                  let shortcut = try? JSONDecoder().decode(VoiceInputShortcut.self, from: data) else {
+                return .defaultShortcut
+            }
+            return shortcut
+        }
+        set {
+            if let data = try? JSONEncoder().encode(newValue) {
+                userDefaults.set(data, forKey: Keys.voiceInputShortcut)
+            }
+        }
+    }
+
+    var voiceInputCleansText: Bool {
+        get {
+            if userDefaults.object(forKey: Keys.voiceInputCleansText) == nil { return true }
+            return userDefaults.bool(forKey: Keys.voiceInputCleansText)
+        }
+        set { userDefaults.set(newValue, forKey: Keys.voiceInputCleansText) }
     }
 
     private func normalizedNames(_ names: [String]) -> [String] {

@@ -118,6 +118,8 @@ class RecordingSessionManager: ObservableObject {
     }
     
     func startRecording(for meetingId: UUID, existingChunks: [TranscriptChunk] = []) {
+        // 会议录音与语音输入互斥：开始录音前先静默停止正在进行的语音输入。
+        VoiceInputManager.shared.cancelForRecording()
         print("🎙️ Starting recording for meeting: \(meetingId)")
 
         let resumableChunks = existingChunks

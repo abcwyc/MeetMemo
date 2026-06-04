@@ -59,13 +59,19 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     func connect(config: STTProviderConfig) async throws {
         disconnect()
 
-        let modelDir: URL = try await Task { @MainActor in
+        let runtimeConfig: (modelDirectory: URL, modelFileName: String) = try await Task { @MainActor in
             try await SherpaModelManager.shared.ensureReadyForUse()
-            return SherpaModelManager.shared.modelDirectory
+            return (
+                SherpaModelManager.shared.modelDirectory,
+                SherpaModelManager.shared.activeSenseVoiceModelFileName
+            )
         }.value
 
         do {
-            runtime = try SherpaOnnxRuntime.make(modelDirectory: modelDir)
+            runtime = try SherpaOnnxRuntime.make(
+                modelDirectory: runtimeConfig.modelDirectory,
+                senseVoiceModelFileName: runtimeConfig.modelFileName
+            )
         } catch {
             onError?(error.localizedDescription)
             throw error

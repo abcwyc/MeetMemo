@@ -53,4 +53,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             named: UserDefaultsManager.shared.appAppearance.nsAppearanceName
         )
     }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        if UserDefaultsManager.shared.voiceInputEnabled {
+            VoiceInputHotkeyManager.shared.start()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        VoiceInputHotkeyManager.shared.stop()
+    }
 }

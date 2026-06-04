@@ -24,17 +24,28 @@ final class SherpaModelManager: ObservableObject {
     /// File list is intentionally small: SenseVoice (model + tokens), Silero VAD,
     /// and a CAM++-style speaker embedding extractor. Mirrors what
     /// `SherpaSTTProvider` will load at connect time.
-    static let modelFiles: [ModelFile] = [
-        ModelFile(
-            key: "sense_voice_model",
-            fileName: "sense-voice-small.int8.onnx",
-            urls: [
-                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/sense-voice-small.int8.onnx")!,
-                URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx")!,
-            ],
-            approximateBytes: 210 * 1024 * 1024,
-            sha256: nil
-        ),
+    static let quantizedSenseVoiceModel = ModelFile(
+        key: "sense_voice_model",
+        fileName: "sense-voice-small.int8.onnx",
+        urls: [
+            URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/sense-voice-small.int8.onnx")!,
+            URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx")!,
+        ],
+        approximateBytes: 210 * 1024 * 1024,
+        sha256: nil
+    )
+
+    static let fullPrecisionSenseVoiceModel = ModelFile(
+        key: "sense_voice_model",
+        fileName: "sense-voice-small.fp32.onnx",
+        urls: [
+            URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.onnx")!,
+        ],
+        approximateBytes: 938 * 1024 * 1024,
+        sha256: nil
+    )
+
+    static let sharedModelFiles: [ModelFile] = [
         ModelFile(
             key: "sense_voice_tokens",
             fileName: "tokens.txt",
@@ -67,6 +78,19 @@ final class SherpaModelManager: ObservableObject {
         ),
     ]
 
+    static func senseVoiceModel(for variant: SenseVoiceModelVariant) -> ModelFile {
+        switch variant {
+        case .quantized:
+            return quantizedSenseVoiceModel
+        case .fullPrecision:
+            return fullPrecisionSenseVoiceModel
+        }
+    }
+
+    static func modelFiles(for variant: SenseVoiceModelVariant) -> [ModelFile] {
+        [senseVoiceModel(for: variant)] + sharedModelFiles
+    }
+
     let modelDirectory: URL
     private var activeDownloadSession: URLSession?
 
@@ -78,14 +102,30 @@ final class SherpaModelManager: ObservableObject {
     }
 
     func localURL(forKey key: String) -> URL? {
-        guard let model = Self.modelFiles.first(where: { $0.key == key }) else { return nil }
+        guard let model = activeModelFiles.first(where: { $0.key == key }) else { return nil }
         return modelDirectory.appendingPathComponent(model.fileName)
+    }
+
+    var activeVariant: SenseVoiceModelVariant {
+        UserDefaultsManager.shared.senseVoiceModelVariant
+    }
+
+    var activeSenseVoiceModelFileName: String {
+        Self.senseVoiceModel(for: activeVariant).fileName
+    }
+
+    var activeApproximateBytes: Int64 {
+        activeModelFiles.reduce(Int64(0)) { $0 + $1.approximateBytes }
+    }
+
+    private var activeModelFiles: [ModelFile] {
+        Self.modelFiles(for: activeVariant)
     }
 
     /// Re-checks whether every required file is present on disk (and matches its SHA, if provided).
     func refreshReadiness() async {
         var allReady = true
-        for model in Self.modelFiles {
+        for model in activeModelFiles {
             let url = modelDirectory.appendingPathComponent(model.fileName)
             guard FileManager.default.fileExists(atPath: url.path) else {
                 allReady = false; break
@@ -101,6 +141,7 @@ final class SherpaModelManager: ObservableObject {
     /// Guarantees every model file is on disk and (optionally) hash-verified.
     /// Throws if the user cancels or any file download fails.
     func ensureReadyForUse() async throws {
+        await refreshReadiness()
         if isReady { return }
         try await installModelsIfNeeded()
         await refreshReadiness()
@@ -124,10 +165,11 @@ final class SherpaModelManager: ObservableObject {
             downloadProgress = nil
         }
 
-        let totalBytes = Self.modelFiles.reduce(Int64(0)) { $0 + $1.approximateBytes }
+        let modelFiles = activeModelFiles
+        let totalBytes = modelFiles.reduce(Int64(0)) { $0 + $1.approximateBytes }
         var completedBytes: Int64 = 0
 
-        for model in Self.modelFiles {
+        for model in modelFiles {
             let destination = modelDirectory.appendingPathComponent(model.fileName)
             if FileManager.default.fileExists(atPath: destination.path) {
                 if let expected = model.sha256,
@@ -190,7 +232,6 @@ final class SherpaModelManager: ObservableObject {
                 return
             } catch {
                 lastError = error
-                try? FileManager.default.removeItem(at: destination.appendingPathExtension("part"))
             }
         }
         throw lastError ?? SherpaModelError.downloadFailed(model.fileName, "No download source available")
@@ -204,9 +245,9 @@ final class SherpaModelManager: ObservableObject {
         totalBytes: Int64
     ) async throws {
         let temp = destination.appendingPathExtension("part")
-        try? FileManager.default.removeItem(at: temp)
+        let resumeOffset = (try? FileManager.default.attributesOfItem(atPath: temp.path)[.size] as? Int64) ?? 0
 
-        let delegate = ModelDownloadDelegate(tempURL: temp) { [weak self] receivedBytes, expectedBytes in
+        let delegate = ModelDownloadDelegate(tempURL: temp, resumeOffset: resumeOffset) { [weak self] receivedBytes, expectedBytes in
             let expected = max(expectedBytes, model.approximateBytes)
             let fraction = (Double(completedBaseBytes) + Double(receivedBytes) * Double(model.approximateBytes) / Double(max(1, expected))) / Double(totalBytes)
             Task { @MainActor in
@@ -227,7 +268,12 @@ final class SherpaModelManager: ObservableObject {
             session.finishTasksAndInvalidate()
         }
 
-        let response = try await delegate.download(from: url, using: session)
+        var request = URLRequest(url: url)
+        if resumeOffset > 0 {
+            request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+        }
+
+        let response = try await delegate.download(request, using: session)
         guard let httpResponse = response as? HTTPURLResponse, (200..<300).contains(httpResponse.statusCode) else {
             throw SherpaModelError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
@@ -261,23 +307,26 @@ final class SherpaModelManager: ObservableObject {
 
 private final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let tempURL: URL
+    private let resumeOffset: Int64
     private let progressHandler: @Sendable (Int64, Int64) -> Void
     private var continuation: CheckedContinuation<URLResponse?, Error>?
     private var fileMoveError: Error?
 
     init(
         tempURL: URL,
+        resumeOffset: Int64,
         progressHandler: @escaping @Sendable (Int64, Int64) -> Void
     ) {
         self.tempURL = tempURL
+        self.resumeOffset = resumeOffset
         self.progressHandler = progressHandler
     }
 
-    func download(from url: URL, using session: URLSession) async throws -> URLResponse? {
+    func download(_ request: URLRequest, using session: URLSession) async throws -> URLResponse? {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 self.continuation = continuation
-                session.downloadTask(with: url).resume()
+                session.downloadTask(with: request).resume()
             }
         } onCancel: {
             session.invalidateAndCancel()
@@ -291,7 +340,7 @@ private final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate,
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        progressHandler(totalBytesWritten, totalBytesExpectedToWrite)
+        progressHandler(resumeOffset + totalBytesWritten, resumeOffset + totalBytesExpectedToWrite)
     }
 
     func urlSession(
@@ -300,8 +349,22 @@ private final class ModelDownloadDelegate: NSObject, URLSessionDownloadDelegate,
         didFinishDownloadingTo location: URL
     ) {
         do {
-            try? FileManager.default.removeItem(at: tempURL)
-            try FileManager.default.moveItem(at: location, to: tempURL)
+            let statusCode = (downloadTask.response as? HTTPURLResponse)?.statusCode
+            if resumeOffset > 0, statusCode == 206 {
+                let input = try FileHandle(forReadingFrom: location)
+                defer { try? input.close() }
+                let output = try FileHandle(forWritingTo: tempURL)
+                defer { try? output.close() }
+                try output.seekToEnd()
+                while true {
+                    let chunk = input.readData(ofLength: 1024 * 1024)
+                    if chunk.isEmpty { break }
+                    output.write(chunk)
+                }
+            } else {
+                try? FileManager.default.removeItem(at: tempURL)
+                try FileManager.default.moveItem(at: location, to: tempURL)
+            }
         } catch {
             fileMoveError = error
         }

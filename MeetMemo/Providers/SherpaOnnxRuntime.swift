@@ -43,8 +43,8 @@ final class SherpaOnnxRuntime {
         self.embeddingExtractor = embeddingExtractor
     }
 
-    static func make(modelDirectory: URL) throws -> SherpaOnnxRuntime {
-        let modelPath = modelDirectory.appendingPathComponent("sense-voice-small.int8.onnx").path
+    static func make(modelDirectory: URL, senseVoiceModelFileName: String) throws -> SherpaOnnxRuntime {
+        let modelPath = modelDirectory.appendingPathComponent(senseVoiceModelFileName).path
         let tokensPath = modelDirectory.appendingPathComponent("tokens.txt").path
         let vadPath = modelDirectory.appendingPathComponent("silero-vad.onnx").path
         let embPath = modelDirectory.appendingPathComponent("3dspeaker-cam-plus.onnx").path
@@ -157,8 +157,9 @@ final class SherpaOnnxRuntime {
         return embeddingExtractor.compute(stream: stream)
     }
 #else
-    static func make(modelDirectory: URL) throws -> SherpaOnnxRuntime {
+    static func make(modelDirectory: URL, senseVoiceModelFileName: String) throws -> SherpaOnnxRuntime {
         _ = modelDirectory
+        _ = senseVoiceModelFileName
         throw SherpaOnnxRuntimeError.frameworkUnavailable
     }
 

@@ -11,6 +11,7 @@ struct OnboardingView: View {
     @State private var micPermissionGranted = false
     @State private var systemAudioPermissionGranted = false
     @State private var audioRecordingPermission = AudioRecordingPermission()
+    @State private var senseVoiceModelVariant: SenseVoiceModelVariant = UserDefaultsManager.shared.senseVoiceModelVariant
     private let llmSetupGuideURL = URL(string: "https://file.348580.xyz/2026/05/8fdfba8153b5029297b42f4ac6c4d00d.html")!
 
     var body: some View {
@@ -57,6 +58,25 @@ struct OnboardingView: View {
                             ))
                             .font(.body)
                             .foregroundColor(.secondary)
+
+                            Picker("", selection: $senseVoiceModelVariant) {
+                                ForEach(SenseVoiceModelVariant.allCases, id: \.self) { variant in
+                                    Text(senseVoiceVariantPickerLabel(variant)).tag(variant)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .frame(maxWidth: 360, alignment: .leading)
+                            .disabled(sherpaModel.isDownloading)
+                            .onChange(of: senseVoiceModelVariant) { _, newValue in
+                                UserDefaultsManager.shared.senseVoiceModelVariant = newValue
+                                Task { await sherpaModel.refreshReadiness() }
+                            }
+
+                            Text(senseVoiceVariantDescription(senseVoiceModelVariant))
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
 
                             HStack(spacing: 10) {
                                 Image(systemName: sherpaModel.isReady ? "checkmark.circle.fill" : "arrow.down.circle")
@@ -190,6 +210,7 @@ struct OnboardingView: View {
         .background(Color(NSColor.controlBackgroundColor))
         .onAppear {
             UserDefaultsManager.shared.sttEngine = .sherpaSenseVoice
+            senseVoiceModelVariant = UserDefaultsManager.shared.senseVoiceModelVariant
             checkPermissions()
             settingsViewModel.loadProviderConfig()
             llmApiKey = settingsViewModel.settings.llmApiKey
@@ -282,9 +303,40 @@ struct OnboardingView: View {
         }
 
         return sherpaModel.installError ?? langMgr.t(
-            "首次使用前需要下载 SenseVoice 本地模型（约 240 MB）。",
-            "Download the local SenseVoice models before first use (~240 MB)."
+            "首次使用前需要下载 SenseVoice 本地模型（约 \(senseVoiceInstallSizeText)）。",
+            "Download the local SenseVoice models before first use (~\(senseVoiceInstallSizeText))."
         )
+    }
+
+    private var senseVoiceInstallSizeText: String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: sherpaModel.activeApproximateBytes)
+    }
+
+    private func senseVoiceVariantPickerLabel(_ variant: SenseVoiceModelVariant) -> String {
+        switch variant {
+        case .quantized:
+            return langMgr.t("轻量版", "Lite")
+        case .fullPrecision:
+            return langMgr.t("高准确率", "High Accuracy")
+        }
+    }
+
+    private func senseVoiceVariantDescription(_ variant: SenseVoiceModelVariant) -> String {
+        switch variant {
+        case .quantized:
+            return langMgr.t(
+                "量化版，下载更小、运行更轻，适合多数设备。",
+                "Quantized model. Smaller download and lighter runtime, suitable for most devices."
+            )
+        case .fullPrecision:
+            return langMgr.t(
+                "非量化版，体积和内存占用更高，适合优先追求识别准确率。",
+                "Full-precision model. Larger download and memory use, best when recognition accuracy matters most."
+            )
+        }
     }
 }
 
