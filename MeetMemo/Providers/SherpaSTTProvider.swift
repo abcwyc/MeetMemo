@@ -44,6 +44,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     private var totalSamplesIngested: Int = 0
     private var emittedSegmentCount = 0
     private var lastEmittedEndSampleOffset = 0
+    private var lastEmittedText = ""
     private var speakerCentroids: [(centroid: [Float], count: Int)] = []
     private var segmentLedger: [SegmentRecord] = []
     private let workQueue = DispatchQueue(label: "io.meetmemo.sherpa.stt", qos: .userInitiated)
@@ -102,6 +103,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         totalSamplesIngested = 0
         emittedSegmentCount = 0
         lastEmittedEndSampleOffset = 0
+        lastEmittedText = ""
         speakerCentroids.removeAll()
         segmentLedger.removeAll()
         vadSpeechSamples = 0
@@ -194,6 +196,11 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         }
         if force, emittedSegmentCount == segmentsBeforeDrain,
            let segment = makeUnemittedFallbackSegment(runtime: runtime) {
+            // 兜底解码用于捕捉 VAD 没切出来的尾音。但停止时若上一轮 drain 已发出该段
+            // （例如补静音封口了 VAD 段），fallback 会从段尾重解码同一句语音、时间戳却不同，
+            // 导致重复转写。文本与上一条已发出 final 相同则跳过。
+            let fallbackText = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !fallbackText.isEmpty, fallbackText != lastEmittedText else { return }
             fallbackDecodeCount += 1
             handle(segment: segment, runtime: runtime)
         }
@@ -252,6 +259,7 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         }
         emittedSegmentCount += 1
         lastEmittedEndSampleOffset = max(lastEmittedEndSampleOffset, segment.endSampleOffset)
+        lastEmittedText = text
 
         let embedding = runtime.embedding(for: segment.samples)
         let speakerId = SpeakerClustering.assignOnline(
