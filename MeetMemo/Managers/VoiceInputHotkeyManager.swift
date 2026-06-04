@@ -13,14 +13,14 @@ final class VoiceInputHotkeyManager: ObservableObject {
     private var previousFlags: CGEventFlags = []
     private var lastActivationAt: Date?
     private var isHoldingShortcut = false
-    private let doublePressWindow: TimeInterval = 0.45
+    private let doublePressWindow = VoiceInputTiming.doublePressWindow
 
     // 「干净轻拍」判定：修饰键释放时才触发，且按下期间没有叠加其他按键/修饰键，
     // 用时也足够短。避免把右 Command 等常用修饰键当作组合键使用时被误触发。
     private var tapCandidateActive = false
     private var tapCandidateStartedAt: Date?
     private var tapPolluted = false
-    private let cleanTapMaxDuration: TimeInterval = 0.6
+    private let cleanTapMaxDuration = VoiceInputTiming.cleanTapMaxDuration
 
     private init() {}
 
@@ -64,7 +64,10 @@ final class VoiceInputHotkeyManager: ObservableObject {
                 keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
                 flagsRawValue: UInt64(event.flags.rawValue)
             )
-            Task { @MainActor in
+            // 回调运行在主 run loop（source 加在 CFRunLoopGetMain()）。
+            // 必须同步处理：handle() 强依赖事件先后顺序（flagsChanged/keyDown/keyUp），
+            // 用非结构化 Task 转发不保证按到达顺序执行，会破坏轻拍污染判定与按住逻辑。
+            MainActor.assumeIsolated {
                 VoiceInputHotkeyManager.shared.handle(snapshot)
             }
             return Unmanaged.passUnretained(event)
@@ -142,7 +145,11 @@ final class VoiceInputHotkeyManager: ObservableObject {
 
         switch snapshot.type {
         case .keyDown:
-            if mode == .doublePress && VoiceInputManager.shared.state == .listening {
+            // 仅当再次按下「同一个快捷键」时才停止；否则正常打字的按键不应中断语音输入。
+            // 仍保留 keyDown 路径是为了兼容把双击触发键绑成普通键（非修饰键）的情况。
+            if mode == .doublePress,
+               VoiceInputManager.shared.state == .listening,
+               shortcut.matches(keyCode: keyCode, flags: flags) {
                 VoiceInputManager.shared.stop()
                 lastActivationAt = nil
                 return

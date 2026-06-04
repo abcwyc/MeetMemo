@@ -22,14 +22,16 @@ final class VoiceInputManager: NSObject, ObservableObject {
     private var audioPipeline: AudioProcessingPipeline?
     private var provider: STTProvider?
     private var providerConnectTask: Task<Void, Never>?
+    private var maxListeningTask: Task<Void, Never>?
     private var transcriptParts: [String] = []
+    private var receivedFinalTranscriptKeys = Set<FinalTranscriptKey>()
     private var pendingAudioChunks: [Data] = []
     private var pendingAudioByteCount = 0
     private var sessionID = UUID()
-    private let finalFlushTimeout: TimeInterval = 2.2
+    private let finalFlushTimeout = VoiceInputTiming.finalFlushTimeout
     // 在 provider 连接（含首次模型加载）期间缓冲麦克风音频，避免冷启动吃掉开头几秒。
-    private let maxPendingAudioBytes = 16_000 * 2 * 12
-    private let trailingSilenceBytes = 16_000 * 2 / 3
+    private let maxPendingAudioBytes = VoiceInputTiming.maxPendingAudioBytes
+    private let trailingSilenceBytes = VoiceInputTiming.trailingSilenceBytes
 
     private override init() {
         super.init()
@@ -77,6 +79,7 @@ final class VoiceInputManager: NSObject, ObservableObject {
         let newSessionID = UUID()
         sessionID = newSessionID
         transcriptParts.removeAll()
+        receivedFinalTranscriptKeys.removeAll()
         pendingAudioChunks.removeAll()
         pendingAudioByteCount = 0
         errorMessage = nil
@@ -94,11 +97,32 @@ final class VoiceInputManager: NSObject, ObservableObject {
         providerConnectTask = Task { [weak self] in
             await self?.connectProvider(sessionID: newSessionID)
         }
+
+        startMaxListeningGuard(sessionID: newSessionID)
+    }
+
+    /// listening 安全阀：超过最大时长后自动停止并插入已识别内容，
+    /// 防止忘记停止（单击/双击）或 keyUp 丢失（按住模式）造成的无限录音。
+    private func startMaxListeningGuard(sessionID guardedSessionID: UUID) {
+        maxListeningTask?.cancel()
+        maxListeningTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(VoiceInputTiming.maxListeningDuration))
+            guard !Task.isCancelled else { return }
+            await self?.handleMaxListeningReached(sessionID: guardedSessionID)
+        }
+    }
+
+    private func handleMaxListeningReached(sessionID guardedSessionID: UUID) {
+        guard sessionID == guardedSessionID, state == .listening else { return }
+        maxListeningTask = nil
+        stop()
     }
 
     func stop() {
         guard state == .listening else { return }
         let stoppedSessionID = sessionID
+        maxListeningTask?.cancel()
+        maxListeningTask = nil
         state = .transcribing
         VoiceInputFloatingWindowManager.shared.showTranscribing()
 
@@ -182,12 +206,15 @@ final class VoiceInputManager: NSObject, ObservableObject {
         sessionID = UUID()
         providerConnectTask?.cancel()
         providerConnectTask = nil
+        maxListeningTask?.cancel()
+        maxListeningTask = nil
         cleanupAudioEngine()
         audioPipeline?.stop()
         audioPipeline = nil
         provider?.disconnect()
         provider = nil
         transcriptParts.removeAll()
+        receivedFinalTranscriptKeys.removeAll()
         pendingAudioChunks.removeAll(keepingCapacity: false)
         pendingAudioByteCount = 0
         audioLevel = 0
@@ -267,7 +294,7 @@ final class VoiceInputManager: NSObject, ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             _ = await stoppedProvider.awaitPendingFinalization(timeout: self.finalFlushTimeout)
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: VoiceInputTiming.postFinalizationDrainDelay)
             guard self.sessionID == stoppedSessionID else { return }
             await self.finishAndInsert()
         }
@@ -282,7 +309,7 @@ final class VoiceInputManager: NSObject, ObservableObject {
                 guard manager.sessionID == sessionID else { return }
                 guard update.isFinal else { return }
                 let text = update.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !text.isEmpty {
+                if !text.isEmpty, manager.acceptFinalTranscript(text: text, update: update) {
                     manager.transcriptParts.append(text)
                 }
             }
@@ -301,7 +328,7 @@ final class VoiceInputManager: NSObject, ObservableObject {
 
     private func finishAndInsert() async {
         state = .inserting
-        let rawText = transcriptParts.joined(separator: "")
+        let rawText = VoiceInputTextComposer.compose(transcriptParts)
         let finalText = UserDefaultsManager.shared.voiceInputCleansText
             ? VoiceInputTextNormalizer.normalize(rawText)
             : rawText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -319,6 +346,7 @@ final class VoiceInputManager: NSObject, ObservableObject {
         providerConnectTask = nil
         pendingAudioChunks.removeAll(keepingCapacity: false)
         pendingAudioByteCount = 0
+        receivedFinalTranscriptKeys.removeAll()
         switch result {
         case .inserted:
             VoiceInputFloatingWindowManager.shared.showInsertedAndHide()
@@ -334,12 +362,15 @@ final class VoiceInputManager: NSObject, ObservableObject {
         errorMessage = message
         providerConnectTask?.cancel()
         providerConnectTask = nil
+        maxListeningTask?.cancel()
+        maxListeningTask = nil
         cleanupAudioEngine()
         audioPipeline?.stop()
         audioPipeline = nil
         provider?.disconnect()
         provider = nil
         transcriptParts.removeAll()
+        receivedFinalTranscriptKeys.removeAll()
         pendingAudioChunks.removeAll(keepingCapacity: false)
         pendingAudioByteCount = 0
         audioLevel = 0
@@ -356,6 +387,11 @@ final class VoiceInputManager: NSObject, ObservableObject {
         audioEngine = AVAudioEngine()
     }
 
+    private func acceptFinalTranscript(text: String, update: STTTranscriptUpdate) -> Bool {
+        let key = FinalTranscriptKey(text: text, startTime: update.startTime, endTime: update.endTime)
+        return receivedFinalTranscriptKeys.insert(key).inserted
+    }
+
     private nonisolated static func factory(for engine: STTEngine) -> STTProviderFactory {
         switch engine {
         case .appleSpeechAnalyzer:
@@ -370,6 +406,12 @@ final class VoiceInputManager: NSObject, ObservableObject {
         }
     }
 
+}
+
+private struct FinalTranscriptKey: Hashable {
+    let text: String
+    let startTime: Int?
+    let endTime: Int?
 }
 
 private enum VoiceInputError: LocalizedError {
