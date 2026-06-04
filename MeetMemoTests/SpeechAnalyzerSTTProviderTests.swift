@@ -2,6 +2,7 @@ import CoreMedia
 import XCTest
 @testable import MeetMemo
 
+@available(macOS 26.0, *)
 final class SpeechAnalyzerSTTProviderTests: XCTestCase {
     func testMillisecondRangeConvertsSpeechResultRange() {
         let range = CMTimeRange(
