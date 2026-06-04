@@ -21,6 +21,12 @@ final class VoiceInputTextInserter {
         AXIsProcessTrusted()
     }
 
+    var accessibilityTrustDiagnostic: String {
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "unknown"
+        let bundlePath = Bundle.main.bundlePath
+        return "Bundle ID: \(bundleIdentifier)\nPath: \(bundlePath)"
+    }
+
     func requestAccessibilityTrust() {
         let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
         AXIsProcessTrustedWithOptions(options)

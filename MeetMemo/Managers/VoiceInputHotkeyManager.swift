@@ -24,6 +24,14 @@ final class VoiceInputHotkeyManager: ObservableObject {
 
     private init() {}
 
+    var hasInputMonitoringAccess: Bool {
+        CGPreflightListenEventAccess()
+    }
+
+    func requestInputMonitoringAccess() -> Bool {
+        CGRequestListenEventAccess()
+    }
+
     private struct EventSnapshot: Sendable {
         let type: CGEventType
         let keyCode: UInt16
@@ -36,6 +44,15 @@ final class VoiceInputHotkeyManager: ObservableObject {
 
     func start() {
         guard eventTap == nil else { return }
+
+        guard hasInputMonitoringAccess else {
+            isMonitoring = false
+            lastErrorMessage = LanguageManager.shared.t(
+                "无法监听全局快捷键，请在系统设置中允许 MeetMemo 使用输入监控。",
+                "Unable to monitor global shortcuts. Allow MeetMemo to use Input Monitoring in System Settings."
+            )
+            return
+        }
 
         let mask = (1 << CGEventType.keyDown.rawValue)
             | (1 << CGEventType.keyUp.rawValue)
@@ -63,8 +80,8 @@ final class VoiceInputHotkeyManager: ObservableObject {
         ) else {
             isMonitoring = false
             lastErrorMessage = LanguageManager.shared.t(
-                "无法监听全局快捷键，请在系统设置中允许 MeetMemo 使用辅助功能。",
-                "Unable to monitor global shortcuts. Allow MeetMemo to use Accessibility in System Settings."
+                "无法监听全局快捷键，请在系统设置中允许 MeetMemo 使用输入监控。",
+                "Unable to monitor global shortcuts. Allow MeetMemo to use Input Monitoring in System Settings."
             )
             return
         }

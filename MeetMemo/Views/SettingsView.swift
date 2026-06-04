@@ -14,6 +14,8 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .general
     @State private var micPermissionGranted = false
     @State private var systemAudioPermissionGranted = false
+    @State private var accessibilityPermissionGranted = false
+    @State private var inputMonitoringPermissionGranted = false
     @State private var audioRecordingPermission = AudioRecordingPermission()
     @State private var sttEngine: STTEngine = UserDefaultsManager.shared.sttEngine
     @State private var senseVoiceModelVariant: SenseVoiceModelVariant = UserDefaultsManager.shared.senseVoiceModelVariant
@@ -79,6 +81,9 @@ struct SettingsView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             checkPermissions()
             speechInstaller.refreshSpeechAuthorizationStatus()
+            if voiceInputEnabled && inputMonitoringPermissionGranted {
+                VoiceInputHotkeyManager.shared.refresh()
+            }
             Task { await speechInstaller.checkModelAvailability() }
             Task { await sherpaModel.refreshReadiness() }
         }
@@ -279,8 +284,11 @@ struct SettingsView: View {
                 }
                 .onChange(of: voiceInputEnabled) { _, newValue in
                     UserDefaultsManager.shared.voiceInputEnabled = newValue
-                    if newValue && !VoiceInputTextInserter.shared.isAccessibilityTrusted {
-                        VoiceInputTextInserter.shared.requestAccessibilityTrust()
+                    if newValue && !accessibilityPermissionGranted {
+                        requestAccessibilityPermission()
+                    }
+                    if newValue && !inputMonitoringPermissionGranted {
+                        requestInputMonitoringPermission()
                     }
                     VoiceInputHotkeyManager.shared.refresh()
                 }
@@ -378,21 +386,21 @@ struct SettingsView: View {
                     .foregroundColor(.primary)
 
                 PermissionRow(
-                    title: langMgr.t("麦克风权限", "Microphone Access"),
-                    description: langMgr.t("用于采集语音输入内容", "Required to capture dictated speech"),
-                    isGranted: micPermissionGranted,
+                    title: langMgr.t("辅助功能权限", "Accessibility"),
+                    description: langMgr.t("用于向前台应用插入文字", "Required to insert text into other apps"),
+                    isGranted: accessibilityPermissionGranted,
                     grantedLabel: langMgr.t("已授权", "Granted"),
                     enableLabel: langMgr.t("授权", "Enable"),
-                    action: requestMicrophonePermission
+                    action: requestAccessibilityPermission
                 )
 
                 PermissionRow(
-                    title: langMgr.t("辅助功能权限", "Accessibility"),
-                    description: langMgr.t("用于监听全局快捷键并向前台应用插入文字", "Required to monitor global shortcuts and insert text into other apps"),
-                    isGranted: VoiceInputTextInserter.shared.isAccessibilityTrusted,
+                    title: langMgr.t("输入监控权限", "Input Monitoring"),
+                    description: langMgr.t("用于接收全局快捷键按键事件", "Required to receive global shortcut key events"),
+                    isGranted: inputMonitoringPermissionGranted,
                     grantedLabel: langMgr.t("已授权", "Granted"),
                     enableLabel: langMgr.t("授权", "Enable"),
-                    action: VoiceInputTextInserter.shared.requestAccessibilityTrust
+                    action: requestInputMonitoringPermission
                 )
 
                 if let message = voiceInputHotkey.lastErrorMessage {
@@ -715,6 +723,8 @@ struct SettingsView: View {
     private func checkPermissions() {
         micPermissionGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
         systemAudioPermissionGranted = (audioRecordingPermission.status == .authorized)
+        accessibilityPermissionGranted = VoiceInputTextInserter.shared.isAccessibilityTrusted
+        inputMonitoringPermissionGranted = VoiceInputHotkeyManager.shared.hasInputMonitoringAccess
     }
 
     private var voiceInputShortcutSummaryText: String {
@@ -822,6 +832,54 @@ struct SettingsView: View {
                 )
             }
         }
+    }
+
+    private func requestAccessibilityPermission() {
+        VoiceInputTextInserter.shared.requestAccessibilityTrust()
+        accessibilityPermissionGranted = VoiceInputTextInserter.shared.isAccessibilityTrusted
+
+        if !accessibilityPermissionGranted {
+            openAccessibilitySettings()
+            viewModel.activeAlert = AlertMessage(
+                title: langMgr.t("需要权限", "Permission Required"),
+                message: langMgr.t(
+                    "请在「系统设置 > 隐私与安全性 > 辅助功能」中为 MeetMemo 开启权限，开启后回到本窗口会自动刷新状态。\n\n如果已经开启但仍提示未授权，请确认授权的是以下正在运行的应用：\n\(VoiceInputTextInserter.shared.accessibilityTrustDiagnostic)",
+                    "Enable MeetMemo in System Settings > Privacy & Security > Accessibility. The status will refresh when you return to this window.\n\nIf it is already enabled but still appears unauthorized, confirm that System Settings granted access to this running app:\n\(VoiceInputTextInserter.shared.accessibilityTrustDiagnostic)"
+                )
+            )
+        }
+    }
+
+    private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func requestInputMonitoringPermission() {
+        inputMonitoringPermissionGranted = VoiceInputHotkeyManager.shared.requestInputMonitoringAccess()
+        inputMonitoringPermissionGranted = VoiceInputHotkeyManager.shared.hasInputMonitoringAccess
+
+        if !inputMonitoringPermissionGranted {
+            openInputMonitoringSettings()
+            viewModel.activeAlert = AlertMessage(
+                title: langMgr.t("需要权限", "Permission Required"),
+                message: langMgr.t(
+                    "请在「系统设置 > 隐私与安全性 > 输入监控」中为 MeetMemo 开启权限。开启后可能需要重启 MeetMemo 才能开始监听快捷键。",
+                    "Enable MeetMemo in System Settings > Privacy & Security > Input Monitoring. You may need to restart MeetMemo before global shortcuts start working."
+                )
+            )
+        } else {
+            VoiceInputHotkeyManager.shared.refresh()
+        }
+    }
+
+    private func openInputMonitoringSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     private var speechModelStatusText: String {
