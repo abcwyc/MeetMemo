@@ -75,7 +75,13 @@ final class AudioProcessController {
             .store(in: &cancellables)
     }
 
-    fileprivate func reload(apps: [NSRunningApplication]) {
+    func refresh() {
+        let apps = NSWorkspace.shared.runningApplications
+            .filter { $0.processIdentifier != ProcessInfo.processInfo.processIdentifier }
+        reload(apps: apps)
+    }
+
+    private func reload(apps: [NSRunningApplication]) {
         logger.debug(#function)
 
         do {

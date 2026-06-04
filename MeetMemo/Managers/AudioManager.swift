@@ -376,9 +376,10 @@ class AudioManager: NSObject, ObservableObject {
             _ = try await connectSTTProvider(for: .system, offsetMilliseconds: elapsedRecordingMilliseconds())
             guard isActiveSession(activeSessionToken) else { return }
 
-            let allProcessObjectIDs = audioProcessController.processes.map { $0.objectID }
+            let allProcessObjectIDs = refreshedSystemAudioProcessObjectIDs()
             if allProcessObjectIDs.isEmpty {
-                print("⚠️ No audio-producing processes found. System audio tap might not capture anything.")
+                degradeSystemAudioToMicOnly("没有检测到可用的系统音频源，已自动切换为仅麦克风模式。")
+                return
             }
 
             let target = TapTarget.systemAudio(processObjectIDs: allProcessObjectIDs)
@@ -390,16 +391,7 @@ class AudioManager: NSObject, ObservableObject {
                 guard isActiveSession(activeSessionToken) else { return }
                 let errorMsg = "Failed to activate system audio tap: \(tapError)"
                 print("❌ \(errorMsg)")
-                if isRestart {
-                    // Restart failure: silently degrade to mic-only, don't bother user
-                    systemSTT?.disconnect()
-                    systemSTT = nil
-                    isTapActive = false
-                    print("⚠️ System audio tap restart failed, continuing mic-only")
-                } else {
-                    errorMessage = errorMsg
-                    abortRecording()
-                }
+                degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
                 return
             }
 
@@ -424,22 +416,50 @@ class AudioManager: NSObject, ObservableObject {
                 print("❌ \(errorMsg)")
                 newTap.invalidate()
                 isTapActive = false
-                if isRestart {
-                    systemSTT?.disconnect()
-                    systemSTT = nil
-                    print("⚠️ System audio tap IO restart failed, continuing mic-only")
-                } else {
-                    errorMessage = errorMsg
-                    abortRecording()
-                }
+                degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
             }
         } catch {
             guard isActiveSession(activeSessionToken) else { return }
             let errorMsg = ErrorHandler.shared.handleError(error)
             print("❌ Failed to connect system STT provider: \(errorMsg)")
             // System audio STT failure: degrade to mic-only without aborting recording.
-            errorMessage = "系统音频转录不可用，已自动切换为仅麦克风模式。"
+            degradeSystemAudioToMicOnly("系统音频转录不可用，已自动切换为仅麦克风模式。")
         }
+    }
+
+    private func refreshedSystemAudioProcessObjectIDs() -> [AudioObjectID] {
+        audioProcessController.refresh()
+
+        let currentObjectIDs = Set((try? AudioObjectID.readProcessList()) ?? [])
+        var seenObjectIDs = Set<AudioObjectID>()
+
+        return audioProcessController.processes.compactMap { process in
+            let objectID = process.objectID
+            guard objectID.isValid,
+                  currentObjectIDs.contains(objectID),
+                  objectID.readProcessIsRunning(),
+                  seenObjectIDs.insert(objectID).inserted else {
+                return nil
+            }
+
+            return objectID
+        }
+    }
+
+    private func degradeSystemAudioToMicOnly(_ message: String) {
+        systemAudioPipeline?.stop()
+        systemAudioPipeline = nil
+        processTap?.invalidate()
+        processTap = nil
+        isTapActive = false
+        systemAudioLevel = 0
+        AudioLevelManager.shared.updateSystemLevel(0)
+
+        systemSTT?.disconnect()
+        systemSTT = nil
+
+        print("⚠️ \(message)")
+        warningMessage = message
     }
 
     private func restartSystemAudioTapIfNeeded() async {
