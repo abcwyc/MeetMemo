@@ -24,7 +24,7 @@ final class SherpaModelManager: ObservableObject {
     /// File list is intentionally small: SenseVoice (model + tokens), Silero VAD,
     /// and a CAM++-style speaker embedding extractor. Mirrors what
     /// `SherpaSTTProvider` will load at connect time.
-    static let quantizedSenseVoiceModel = ModelFile(
+    static let senseVoiceModel = ModelFile(
         key: "sense_voice_model",
         fileName: "sense-voice-small.int8.onnx",
         urls: [
@@ -35,61 +35,80 @@ final class SherpaModelManager: ObservableObject {
         sha256: nil
     )
 
-    static let fullPrecisionSenseVoiceModel = ModelFile(
-        key: "sense_voice_model",
-        fileName: "sense-voice-small.fp32.onnx",
+    static let tokensModelFile = ModelFile(
+        key: "sense_voice_tokens",
+        fileName: "tokens.txt",
         urls: [
-            URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.onnx")!,
+            URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/tokens.txt")!,
+            URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt")!,
         ],
-        approximateBytes: 938 * 1024 * 1024,
+        approximateBytes: 320 * 1024,
+        sha256: nil
+    )
+
+    /// Silero VAD — shared by both the SenseVoice and Fun-ASR-Nano pipelines.
+    static let vadModelFile = ModelFile(
+        key: "vad",
+        fileName: "silero-vad.onnx",
+        urls: [
+            URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/silero-vad.onnx")!,
+            URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx")!,
+        ],
+        approximateBytes: 2 * 1024 * 1024,
+        sha256: nil
+    )
+
+    /// CAM++ speaker embedding extractor — shared for diarization in both pipelines.
+    static let speakerEmbeddingModelFile = ModelFile(
+        key: "speaker_embedding",
+        fileName: "3dspeaker-cam-plus.onnx",
+        urls: [
+            URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/3dspeaker-cam-plus.onnx")!,
+            URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx")!,
+        ],
+        approximateBytes: 28 * 1024 * 1024,
         sha256: nil
     )
 
     static let sharedModelFiles: [ModelFile] = [
-        ModelFile(
-            key: "sense_voice_tokens",
-            fileName: "tokens.txt",
-            urls: [
-                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/tokens.txt")!,
-                URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt")!,
-            ],
-            approximateBytes: 320 * 1024,
-            sha256: nil
-        ),
-        ModelFile(
-            key: "vad",
-            fileName: "silero-vad.onnx",
-            urls: [
-                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/silero-vad.onnx")!,
-                URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx")!,
-            ],
-            approximateBytes: 2 * 1024 * 1024,
-            sha256: nil
-        ),
-        ModelFile(
-            key: "speaker_embedding",
-            fileName: "3dspeaker-cam-plus.onnx",
-            urls: [
-                URL(string: "https://file.348580.xyz/drive/MeetMemo-SenseVoice-models/3dspeaker-cam-plus.onnx")!,
-                URL(string: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx")!,
-            ],
-            approximateBytes: 28 * 1024 * 1024,
-            sha256: nil
-        ),
+        tokensModelFile,
+        vadModelFile,
+        speakerEmbeddingModelFile,
     ]
 
-    static func senseVoiceModel(for variant: SenseVoiceModelVariant) -> ModelFile {
-        switch variant {
-        case .quantized:
-            return quantizedSenseVoiceModel
-        case .fullPrecision:
-            return fullPrecisionSenseVoiceModel
-        }
+    /// Fun-ASR-Nano (int8) real-time STT engine model. The ASR weights live under
+    /// a `funasr-nano/` subdirectory; Silero VAD + CAM++ are reused from the shared set so
+    /// diarization comes for free. ~1 GB total.
+    static func funASRNanoFile(_ name: String, _ approximateBytes: Int64) -> ModelFile {
+        ModelFile(
+            key: "funasr_nano_\(name)",
+            fileName: "funasr-nano/\(name)",
+            urls: [
+                URL(string: "https://hf-mirror.com/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/\(name)")!,
+                URL(string: "https://huggingface.co/csukuangfj/sherpa-onnx-funasr-nano-int8-2025-12-30/resolve/main/\(name)")!,
+            ],
+            approximateBytes: approximateBytes,
+            sha256: nil
+        )
     }
 
-    static func modelFiles(for variant: SenseVoiceModelVariant) -> [ModelFile] {
-        [senseVoiceModel(for: variant)] + sharedModelFiles
+    static let funASRNanoModelFiles: [ModelFile] = [
+        funASRNanoFile("encoder_adaptor.int8.onnx", 237_792_748),
+        funASRNanoFile("embedding.int8.onnx", 155_584_380),
+        funASRNanoFile("llm.int8.onnx", 600_356_593),
+        funASRNanoFile("Qwen3-0.6B/tokenizer.json", 11_422_654),
+        funASRNanoFile("Qwen3-0.6B/vocab.json", 2_776_833),
+        funASRNanoFile("Qwen3-0.6B/merges.txt", 1_671_853),
+        vadModelFile,
+        speakerEmbeddingModelFile,
+    ]
+
+    /// Absolute path to the directory holding the Fun-ASR-Nano weights + tokenizer.
+    var funASRNanoDirectory: URL {
+        modelDirectory.appendingPathComponent("funasr-nano", isDirectory: true)
     }
+
+    static let senseVoiceModelFiles: [ModelFile] = [senseVoiceModel] + sharedModelFiles
 
     let modelDirectory: URL
     private var activeDownloadSession: URLSession?
@@ -102,40 +121,34 @@ final class SherpaModelManager: ObservableObject {
     }
 
     func localURL(forKey key: String) -> URL? {
-        guard let model = activeModelFiles.first(where: { $0.key == key }) else { return nil }
+        guard let model = Self.senseVoiceModelFiles.first(where: { $0.key == key }) else { return nil }
         return modelDirectory.appendingPathComponent(model.fileName)
     }
 
-    var activeVariant: SenseVoiceModelVariant {
-        UserDefaultsManager.shared.senseVoiceModelVariant
-    }
-
     var activeSenseVoiceModelFileName: String {
-        Self.senseVoiceModel(for: activeVariant).fileName
+        Self.senseVoiceModel.fileName
     }
 
     var activeApproximateBytes: Int64 {
-        activeModelFiles.reduce(Int64(0)) { $0 + $1.approximateBytes }
+        Self.senseVoiceModelFiles.reduce(Int64(0)) { $0 + $1.approximateBytes }
     }
 
-    private var activeModelFiles: [ModelFile] {
-        Self.modelFiles(for: activeVariant)
-    }
-
-    /// Re-checks whether every required file is present on disk (and matches its SHA, if provided).
-    func refreshReadiness() async {
-        var allReady = true
-        for model in activeModelFiles {
+    /// Pure check: are all the given files present on disk (and SHA-matched, if provided)?
+    func modelFilesReady(_ files: [ModelFile]) -> Bool {
+        for model in files {
             let url = modelDirectory.appendingPathComponent(model.fileName)
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                allReady = false; break
-            }
+            guard FileManager.default.fileExists(atPath: url.path) else { return false }
             if let expected = model.sha256,
                (try? Self.sha256Hex(of: url)) != expected.lowercased() {
-                allReady = false; break
+                return false
             }
         }
-        isReady = allReady
+        return true
+    }
+
+    /// Re-checks whether every required SenseVoice file is present on disk.
+    func refreshReadiness() async {
+        isReady = modelFilesReady(Self.senseVoiceModelFiles)
     }
 
     /// Guarantees every model file is on disk and (optionally) hash-verified.
@@ -150,7 +163,7 @@ final class SherpaModelManager: ObservableObject {
         }
     }
 
-    /// Public entry point for the Settings UI "Install" button.
+    /// Public entry point for the Settings UI "Install" button (SenseVoice).
     func installModelsIfNeeded() async throws {
         if isDownloading {
             while isDownloading { try? await Task.sleep(for: .milliseconds(250)) }
@@ -165,21 +178,33 @@ final class SherpaModelManager: ObservableObject {
             downloadProgress = nil
         }
 
-        let modelFiles = activeModelFiles
-        let totalBytes = modelFiles.reduce(Int64(0)) { $0 + $1.approximateBytes }
+        try await downloadModelFiles(Self.senseVoiceModelFiles) { [weak self] progress in
+            self?.downloadProgress = progress
+        }
+    }
+
+    /// Generic downloader shared by the SenseVoice and Fun-ASR-Nano pipelines. Reports
+    /// aggregate [0, 1] progress through `onProgress` instead of mutating `self`, so each
+    /// caller (with its own `@Published` state) stays isolated. Sets `installError` and
+    /// throws on the first failed file.
+    func downloadModelFiles(
+        _ files: [ModelFile],
+        onProgress: @escaping @MainActor (Double) -> Void
+    ) async throws {
+        let totalBytes = files.reduce(Int64(0)) { $0 + $1.approximateBytes }
         var completedBytes: Int64 = 0
 
-        for model in modelFiles {
+        for model in files {
             let destination = modelDirectory.appendingPathComponent(model.fileName)
             if FileManager.default.fileExists(atPath: destination.path) {
                 if let expected = model.sha256,
                    (try? Self.sha256Hex(of: destination)) == expected.lowercased() {
                     completedBytes += model.approximateBytes
-                    downloadProgress = Double(completedBytes) / Double(totalBytes)
+                    onProgress(Double(completedBytes) / Double(totalBytes))
                     continue
                 } else if model.sha256 == nil {
                     completedBytes += model.approximateBytes
-                    downloadProgress = Double(completedBytes) / Double(totalBytes)
+                    onProgress(Double(completedBytes) / Double(totalBytes))
                     continue
                 } else {
                     try? FileManager.default.removeItem(at: destination)
@@ -191,10 +216,11 @@ final class SherpaModelManager: ObservableObject {
                     model: model,
                     destination: destination,
                     completedBaseBytes: completedBytes,
-                    totalBytes: totalBytes
+                    totalBytes: totalBytes,
+                    onProgress: onProgress
                 )
                 completedBytes += model.approximateBytes
-                downloadProgress = Double(completedBytes) / Double(totalBytes)
+                onProgress(Double(completedBytes) / Double(totalBytes))
             } catch {
                 let message = LanguageManager.shared.t(
                     "下载 \(model.fileName) 失败:\(error.localizedDescription)",
@@ -217,7 +243,8 @@ final class SherpaModelManager: ObservableObject {
         model: ModelFile,
         destination: URL,
         completedBaseBytes: Int64,
-        totalBytes: Int64
+        totalBytes: Int64,
+        onProgress: @escaping @MainActor (Double) -> Void
     ) async throws {
         var lastError: Error?
         for url in model.urls {
@@ -227,7 +254,8 @@ final class SherpaModelManager: ObservableObject {
                     model: model,
                     destination: destination,
                     completedBaseBytes: completedBaseBytes,
-                    totalBytes: totalBytes
+                    totalBytes: totalBytes,
+                    onProgress: onProgress
                 )
                 return
             } catch {
@@ -242,16 +270,22 @@ final class SherpaModelManager: ObservableObject {
         model: ModelFile,
         destination: URL,
         completedBaseBytes: Int64,
-        totalBytes: Int64
+        totalBytes: Int64,
+        onProgress: @escaping @MainActor (Double) -> Void
     ) async throws {
+        // Files may live in subdirectories (e.g. funasr-nano/Qwen3-0.6B/tokenizer.json).
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
         let temp = destination.appendingPathExtension("part")
         let resumeOffset = (try? FileManager.default.attributesOfItem(atPath: temp.path)[.size] as? Int64) ?? 0
 
-        let delegate = ModelDownloadDelegate(tempURL: temp, resumeOffset: resumeOffset) { [weak self] receivedBytes, expectedBytes in
+        let delegate = ModelDownloadDelegate(tempURL: temp, resumeOffset: resumeOffset) { receivedBytes, expectedBytes in
             let expected = max(expectedBytes, model.approximateBytes)
             let fraction = (Double(completedBaseBytes) + Double(receivedBytes) * Double(model.approximateBytes) / Double(max(1, expected))) / Double(totalBytes)
             Task { @MainActor in
-                self?.downloadProgress = min(0.99, max(0, fraction))
+                onProgress(min(0.99, max(0, fraction)))
             }
         }
 

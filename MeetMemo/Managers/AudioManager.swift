@@ -44,6 +44,16 @@ class AudioManager: NSObject, ObservableObject {
     /// is more accurate than capturing the offset at connectSTTProvider time.
     private var firstAudioOffsets: [AudioSource: Int] = [:]
 
+    /// True while the system-audio STT runtime is being connected lazily (on first real
+    /// system audio). Prevents duplicate concurrent connects.
+    private var systemSTTConnecting = false
+
+    /// Mic audio captured while the mic STT provider is still connecting (e.g. Fun-ASR's
+    /// ~2 s model load). Ring-buffered up to `VoiceInputTiming.maxPendingAudioBytes` and
+    /// flushed into the provider once connected, so cold start doesn't eat the opening speech.
+    private var micPendingAudioChunks: [Data] = []
+    private var micPendingAudioByteCount = 0
+
     // Unique identifier for the current recording session
     private var sessionID = UUID()
 
@@ -275,9 +285,10 @@ class AudioManager: NSObject, ObservableObject {
                 return false
             }
 
-            // Start the audio engine before awaiting the STT connection so the UI
-            // shows recording state immediately. Tap is installed after STT connects;
-            // the few hundred ms of audio captured before that is discarded (pipeline nil).
+            // Start the audio engine and install the tap *before* awaiting the STT
+            // connection, so mic audio is captured from t=0. Audio arriving while the
+            // provider is still loading (e.g. Fun-ASR's ~2 s model load) is ring-buffered
+            // and flushed on connect, instead of being lost during the connect window.
             audioEngine.prepare()
             try audioEngine.start()
             guard isActiveSession(sessionToken) else {
@@ -285,9 +296,6 @@ class AudioManager: NSObject, ObservableObject {
                 return false
             }
             markRecordingActive(sessionToken: sessionToken)
-
-            _ = try await connectSTTProvider(for: .mic, offsetMilliseconds: elapsedRecordingMilliseconds())
-            guard isActiveSession(sessionToken) else { return false }
 
             guard let pipeline = makeAudioPipeline(
                 source: .mic,
@@ -315,6 +323,9 @@ class AudioManager: NSObject, ObservableObject {
 
                 self.micAudioPipeline?.enqueue(buffer)
             }
+
+            _ = try await connectSTTProvider(for: .mic, offsetMilliseconds: elapsedRecordingMilliseconds())
+            guard isActiveSession(sessionToken) else { return false }
 
             print("✅ Microphone tap started successfully")
             micRetryCount = 0
@@ -373,9 +384,11 @@ class AudioManager: NSObject, ObservableObject {
         }
 
         do {
-            _ = try await connectSTTProvider(for: .system, offsetMilliseconds: elapsedRecordingMilliseconds())
-            guard isActiveSession(activeSessionToken) else { return }
-
+            // The system-audio STT runtime is created lazily on first non-silent system
+            // audio (see sendAudioData / ensureSystemSTTConnectedLazily) so mic-only
+            // recordings never load a second ~1.5 GB recognizer. The tap below still
+            // starts listening; if no app is playing audio, no data arrives and no
+            // runtime is allocated.
             let allProcessObjectIDs = refreshedSystemAudioProcessObjectIDs()
             if allProcessObjectIDs.isEmpty {
                 degradeSystemAudioToMicOnly("没有检测到可用的系统音频源，已自动切换为仅麦克风模式。")
@@ -738,9 +751,45 @@ class AudioManager: NSObject, ObservableObject {
         }
         switch source {
         case .mic:
-            micSTT?.sendAudio(data)
+            if let micSTT {
+                micSTT.sendAudio(data)
+            } else {
+                // Provider still connecting (cold model load): buffer so the opening
+                // speech isn't lost; flushed in connectSTTProvider once micSTT is set.
+                bufferPendingMicAudio(data)
+            }
         case .system:
-            systemSTT?.sendAudio(data)
+            if let systemSTT {
+                systemSTT.sendAudio(data)
+            } else {
+                // First real system audio: spin up the recognizer now. Audio arriving
+                // during the few-second load is dropped (no-buffer mode).
+                ensureSystemSTTConnectedLazily(sessionToken: sessionToken)
+            }
+        }
+    }
+
+    /// Lazily connects the system-audio STT runtime the first time real (non-silent)
+    /// system audio arrives. Mic-only sessions never reach here, so the second
+    /// recognizer is never loaded.
+    private func ensureSystemSTTConnectedLazily(sessionToken: UUID) {
+        guard isActiveSession(sessionToken) else { return }
+        guard systemSTT == nil, !systemSTTConnecting else { return }
+        systemSTTConnecting = true
+        let offset = firstAudioOffsets[.system] ?? elapsedRecordingMilliseconds()
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.systemSTTConnecting = false }
+            do {
+                _ = try await self.connectSTTProvider(for: .system, offsetMilliseconds: offset)
+            } catch {
+                guard self.isActiveSession(sessionToken) else { return }
+                print("⚠️ Lazy system STT connect failed: \(ErrorHandler.shared.handleError(error))")
+                self.degradeSystemAudioToMicOnly(LanguageManager.shared.t(
+                    "系统音频转录不可用，已自动切换为仅麦克风模式。",
+                    "System audio transcription is unavailable; switched to mic-only."
+                ))
+            }
         }
     }
 
@@ -768,11 +817,32 @@ class AudioManager: NSObject, ObservableObject {
         switch source {
         case .mic:
             micSTT = provider
+            flushPendingMicAudio(to: provider)
         case .system:
             systemSTT = provider
         }
 
         return provider
+    }
+
+    /// Ring-buffers mic audio captured before the provider finishes connecting, capped at
+    /// `VoiceInputTiming.maxPendingAudioBytes` so a slow/failed connect can't grow unbounded.
+    private func bufferPendingMicAudio(_ data: Data) {
+        micPendingAudioChunks.append(data)
+        micPendingAudioByteCount += data.count
+        while micPendingAudioByteCount > VoiceInputTiming.maxPendingAudioBytes,
+              !micPendingAudioChunks.isEmpty {
+            let removed = micPendingAudioChunks.removeFirst()
+            micPendingAudioByteCount -= removed.count
+        }
+    }
+
+    private func flushPendingMicAudio(to provider: STTProvider) {
+        guard !micPendingAudioChunks.isEmpty else { return }
+        let chunks = micPendingAudioChunks
+        micPendingAudioChunks.removeAll(keepingCapacity: true)
+        micPendingAudioByteCount = 0
+        chunks.forEach { provider.sendAudio($0) }
     }
 
     private func makeConnectedSTTProvider(
@@ -840,6 +910,8 @@ class AudioManager: NSObject, ObservableObject {
             )
         case .sherpaSenseVoice:
             return SherpaSTTProviderFactory()
+        case .funASRNano:
+            return SherpaSTTProviderFactory(kind: .funASRNano)
         }
     }
 
@@ -973,6 +1045,8 @@ class AudioManager: NSObject, ObservableObject {
         systemSTT?.disconnect()
         micSTT = nil
         systemSTT = nil
+        micPendingAudioChunks.removeAll(keepingCapacity: false)
+        micPendingAudioByteCount = 0
         activeInterimChunkId.removeAll()
     }
 

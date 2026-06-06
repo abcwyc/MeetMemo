@@ -4,8 +4,6 @@ enum VoiceInputFloatingState: Equatable {
     case hidden
     case listening
     case transcribing
-    case inserted
-    case pasted
     case failed
 }
 
@@ -29,7 +27,7 @@ private struct VoiceInputCapsule: View {
     let message: String?
 
     private var showsMessage: Bool {
-        (state == .failed || state == .pasted) && !(message ?? "").isEmpty
+        state == .failed && !(message ?? "").isEmpty
     }
 
     var body: some View {
@@ -67,10 +65,6 @@ private struct VoiceInputCapsule: View {
             return "mic.fill"
         case .transcribing:
             return "waveform"
-        case .inserted:
-            return "checkmark"
-        case .pasted:
-            return "doc.on.clipboard"
         case .failed:
             return "exclamationmark"
         }
@@ -80,10 +74,6 @@ private struct VoiceInputCapsule: View {
         switch state {
         case .failed:
             return .red
-        case .inserted:
-            return .green
-        case .pasted:
-            return .orange
         default:
             return .accentColor
         }
@@ -146,14 +136,6 @@ final class VoiceInputFloatingWindowManager: ObservableObject {
         message = nil
         state = .transcribing
         showWindow()
-    }
-
-    func showInsertedAndHide() {
-        showTerminalState(.inserted, duration: 0.65)
-    }
-
-    func showPastedAndHide(message: String? = nil) {
-        showTerminalState(.pasted, duration: message == nil ? 1.1 : 2.6, message: message)
     }
 
     func showFailedAndHide(message: String? = nil) {

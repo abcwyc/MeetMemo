@@ -181,6 +181,14 @@ final class VoiceInputManager: NSObject, ObservableObject {
                     "SenseVoice models are not downloaded. Download them in Settings first."
                 ))
             }
+        case .funASRNano:
+            await FunASRNanoModelManager.shared.refreshReadiness()
+            guard FunASRNanoModelManager.shared.isReady else {
+                throw VoiceInputError.modelNotReady(LanguageManager.shared.t(
+                    "Fun-ASR-Nano 模型尚未下载，请先在设置中下载模型。",
+                    "Fun-ASR-Nano models are not downloaded. Download them in Settings first."
+                ))
+            }
         case .appleSpeechAnalyzer:
             if #available(macOS 26.0, *) {
                 await SpeechModelInstaller.shared.checkModelAvailability()
@@ -348,10 +356,9 @@ final class VoiceInputManager: NSObject, ObservableObject {
         pendingAudioByteCount = 0
         receivedFinalTranscriptKeys.removeAll()
         switch result {
-        case .inserted:
-            VoiceInputFloatingWindowManager.shared.showInsertedAndHide()
-        case .pastedBestEffort:
-            VoiceInputFloatingWindowManager.shared.showPastedAndHide()
+        case .inserted, .pastedBestEffort:
+            // 正常结束（已插入或回退到剪贴板）直接收起浮窗，不再展示结果确认面板。
+            VoiceInputFloatingWindowManager.shared.hideWindow()
         case .failed:
             VoiceInputFloatingWindowManager.shared.showFailedAndHide()
         }
@@ -403,6 +410,8 @@ final class VoiceInputManager: NSObject, ObservableObject {
             )
         case .sherpaSenseVoice:
             return SherpaSTTProviderFactory()
+        case .funASRNano:
+            return SherpaSTTProviderFactory(kind: .funASRNano)
         }
     }
 

@@ -79,8 +79,68 @@ final class SherpaOnnxRuntime {
             SherpaOnnxOfflineRecognizer(config: ptr)
         }
 
-        // Silero VAD — keep the start trigger permissive; SherpaSTTProvider
-        // adds leading context before decoding to preserve soft utterance starts.
+        let vad = Self.makeVad(vadPath: vadPath)
+        let emb = Self.makeSpeakerEmbeddingExtractor(modelPath: embPath)
+        return SherpaOnnxRuntime(recognizer: recognizer, vad: vad, embeddingExtractor: emb)
+    }
+
+    /// Fun-ASR-Nano offline recognizer + the same Silero VAD / CAM++ pipeline used by
+    /// SenseVoice. Backs the Fun-ASR-Nano real-time STT engine. ASR weights live under
+    /// `modelDirectory/funasr-nano/`; VAD + speaker embedding are reused from the root.
+    static func makeFunASRNano(
+        modelDirectory: URL,
+        language: String = "",
+        hotwords: String = ""
+    ) throws -> SherpaOnnxRuntime {
+        let funDir = modelDirectory.appendingPathComponent("funasr-nano", isDirectory: true)
+        let encoderPath = funDir.appendingPathComponent("encoder_adaptor.int8.onnx").path
+        let llmPath = funDir.appendingPathComponent("llm.int8.onnx").path
+        let embeddingPath = funDir.appendingPathComponent("embedding.int8.onnx").path
+        let tokenizerDir = funDir.appendingPathComponent("Qwen3-0.6B", isDirectory: true).path
+        let vadPath = modelDirectory.appendingPathComponent("silero-vad.onnx").path
+        let spkPath = modelDirectory.appendingPathComponent("3dspeaker-cam-plus.onnx").path
+
+        for path in [encoderPath, llmPath, embeddingPath, tokenizerDir, vadPath, spkPath] {
+            guard FileManager.default.fileExists(atPath: path) else {
+                throw SherpaOnnxRuntimeError.modelFileMissing(path)
+            }
+        }
+
+        let funCfg = sherpaOnnxOfflineFunASRNanoModelConfig(
+            encoderAdaptor: encoderPath,
+            llm: llmPath,
+            embedding: embeddingPath,
+            tokenizer: tokenizerDir,
+            language: language,
+            itn: true,
+            hotwords: hotwords
+        )
+        let modelCfg = sherpaOnnxOfflineModelConfig(
+            tokens: "",
+            numThreads: 2,
+            provider: "cpu",
+            debug: 0,
+            modelType: "",
+            funasrNano: funCfg
+        )
+        let featCfg = sherpaOnnxFeatureConfig(sampleRate: 16_000, featureDim: 80)
+        var recognizerCfg = sherpaOnnxOfflineRecognizerConfig(
+            featConfig: featCfg,
+            modelConfig: modelCfg,
+            decodingMethod: "greedy_search"
+        )
+        let recognizer = withUnsafePointer(to: &recognizerCfg) { ptr in
+            SherpaOnnxOfflineRecognizer(config: ptr)
+        }
+
+        let vad = Self.makeVad(vadPath: vadPath)
+        let emb = Self.makeSpeakerEmbeddingExtractor(modelPath: spkPath)
+        return SherpaOnnxRuntime(recognizer: recognizer, vad: vad, embeddingExtractor: emb)
+    }
+
+    /// Silero VAD — keep the start trigger permissive; callers add leading context before
+    /// decoding to preserve soft utterance starts.
+    private static func makeVad(vadPath: String) -> SherpaOnnxVoiceActivityDetectorWrapper {
         let sileroCfg = sherpaOnnxSileroVadModelConfig(
             model: vadPath,
             threshold: 0.18,
@@ -96,22 +156,21 @@ final class SherpaOnnxRuntime {
             provider: "cpu",
             debug: 0
         )
-        let vad = withUnsafePointer(to: &vadCfg) { ptr in
+        return withUnsafePointer(to: &vadCfg) { ptr in
             SherpaOnnxVoiceActivityDetectorWrapper(config: ptr, buffer_size_in_seconds: 60.0)
         }
+    }
 
-        // CAM++ speaker embedding extractor.
+    private static func makeSpeakerEmbeddingExtractor(modelPath: String) -> SherpaOnnxSpeakerEmbeddingExtractorWrapper {
         var embCfg = sherpaOnnxSpeakerEmbeddingExtractorConfig(
-            model: embPath,
+            model: modelPath,
             numThreads: 1,
             debug: 0,
             provider: "cpu"
         )
-        let emb = withUnsafePointer(to: &embCfg) { ptr in
+        return withUnsafePointer(to: &embCfg) { ptr in
             SherpaOnnxSpeakerEmbeddingExtractorWrapper(config: ptr)
         }
-
-        return SherpaOnnxRuntime(recognizer: recognizer, vad: vad, embeddingExtractor: emb)
     }
 
     func acceptWaveform(_ samples: [Float]) {

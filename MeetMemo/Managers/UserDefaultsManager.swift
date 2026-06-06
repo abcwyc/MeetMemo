@@ -11,11 +11,7 @@ enum NotesOutputFormat: String, CaseIterable {
 enum STTEngine: String, CaseIterable {
     case appleSpeechAnalyzer = "apple"
     case sherpaSenseVoice = "sherpa"
-}
-
-enum SenseVoiceModelVariant: String, CaseIterable {
-    case quantized = "int8"
-    case fullPrecision = "fp32"
+    case funASRNano = "funasr"
 }
 
 /// Manages non-sensitive app settings using UserDefaults
@@ -41,7 +37,6 @@ class UserDefaultsManager {
         static let sttLocaleIdentifier = "sttLocaleIdentifier"
         static let enableSystemAudioSTT = "enableSystemAudioSTT"
         static let sttEngine = "sttEngine"
-        static let senseVoiceModelVariant = "senseVoiceModelVariant"
         static let sherpaSTTDebugLogging = "sherpaSTTDebugLogging"
         static let voiceInputEnabled = "voiceInputEnabled"
         static let voiceInputTriggerMode = "voiceInputTriggerMode"
@@ -171,15 +166,6 @@ class UserDefaultsManager {
             return STTEngine(rawValue: raw) ?? .sherpaSenseVoice
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.sttEngine) }
-    }
-
-    // MARK: - SenseVoice Model Variant
-    var senseVoiceModelVariant: SenseVoiceModelVariant {
-        get {
-            let raw = userDefaults.string(forKey: Keys.senseVoiceModelVariant) ?? SenseVoiceModelVariant.quantized.rawValue
-            return SenseVoiceModelVariant(rawValue: raw) ?? .quantized
-        }
-        set { userDefaults.set(newValue.rawValue, forKey: Keys.senseVoiceModelVariant) }
     }
 
     // MARK: - Dual STT (mic + system audio)

@@ -91,6 +91,7 @@ class MeetingViewModel: ObservableObject {
         recordingSessionManager.isRecoveringSTT
             && recordingSessionManager.activeMeetingId == meeting.id
     }
+
     @Published var selectedTab: MeetingViewTab
     @Published var aiNotesSubTab: AINotesSubTab = .notes
 
@@ -179,6 +180,22 @@ class MeetingViewModel: ObservableObject {
                 }
                 // Toggle the dummy property to trigger SwiftUI re-render
                 self.recordingStateChanged.toggle()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .meetingSaved)
+            .compactMap { $0.object as? Meeting }
+            .sink { [weak self] savedMeeting in
+                guard let self,
+                      savedMeeting.id == self.meeting.id,
+                      !self.recordingSessionManager.isRecordingMeeting(savedMeeting.id),
+                      !self.hasLocalUnsavedChanges else {
+                    return
+                }
+
+                self.meeting = savedMeeting
+                self.refreshTranscriptDisplayChunks()
+                self.refreshToolbarSnapshot()
             }
             .store(in: &cancellables)
         
@@ -544,6 +561,12 @@ class MeetingViewModel: ObservableObject {
                     try await SpeechModelInstaller.shared.ensureReadyForUse()
                 case .sherpaSenseVoice:
                     try await SherpaModelManager.shared.ensureReadyForUse()
+                case .funASRNano:
+                    // 不在录音前自动下载 ~1GB；未就绪则提示去设置下载。
+                    await FunASRNanoModelManager.shared.refreshReadiness()
+                    guard FunASRNanoModelManager.shared.isReady else {
+                        throw FunASRNanoError.modelsNotReady
+                    }
                 }
                 self.hasStartedRecordingSession = true
                 self.toolbarHasStartedRecordingSession = true

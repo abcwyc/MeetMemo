@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject private var appearanceMgr = AppearanceManager.shared
     @ObservedObject private var speechInstaller = SpeechModelInstaller.shared
     @ObservedObject private var sherpaModel = SherpaModelManager.shared
+    @ObservedObject private var funASRNanoModel = FunASRNanoModelManager.shared
     @ObservedObject private var audioManager = AudioManager.shared
     @ObservedObject private var voiceInputHotkey = VoiceInputHotkeyManager.shared
     @ObservedObject private var voiceInputManager = VoiceInputManager.shared
@@ -18,7 +19,6 @@ struct SettingsView: View {
     @State private var inputMonitoringPermissionGranted = false
     @State private var audioRecordingPermission = AudioRecordingPermission()
     @State private var sttEngine: STTEngine = UserDefaultsManager.shared.sttEngine
-    @State private var senseVoiceModelVariant: SenseVoiceModelVariant = UserDefaultsManager.shared.senseVoiceModelVariant
     @State private var voiceInputEnabled = UserDefaultsManager.shared.voiceInputEnabled
     @State private var voiceInputTriggerMode = UserDefaultsManager.shared.voiceInputTriggerMode
     @State private var voiceInputTriggerKey = VoiceInputTriggerKey.resolve(from: UserDefaultsManager.shared.voiceInputShortcut)
@@ -69,11 +69,11 @@ struct SettingsView: View {
                 sttEngine = .sherpaSenseVoice
                 UserDefaultsManager.shared.sttEngine = .sherpaSenseVoice
             }
-            senseVoiceModelVariant = UserDefaultsManager.shared.senseVoiceModelVariant
             reloadVoiceInputSettings()
             VoiceInputHotkeyManager.shared.refresh()
             Task { await speechInstaller.checkModelAvailability() }
             Task { await sherpaModel.refreshReadiness() }
+            Task { await funASRNanoModel.refreshReadiness() }
         }
         .onChange(of: audioRecordingPermission.status) { _, newValue in
             systemAudioPermissionGranted = (newValue == .authorized)
@@ -86,6 +86,7 @@ struct SettingsView: View {
             }
             Task { await speechInstaller.checkModelAvailability() }
             Task { await sherpaModel.refreshReadiness() }
+            Task { await funASRNanoModel.refreshReadiness() }
         }
         .onDisappear {
             DispatchQueue.main.async {
@@ -181,13 +182,14 @@ struct SettingsView: View {
                     .foregroundColor(.primary)
 
                 Picker("", selection: $sttEngine) {
-                    Text(langMgr.t("本地 SenseVoice", "Local SenseVoice")).tag(STTEngine.sherpaSenseVoice)
+                    Text("SenseVoice").tag(STTEngine.sherpaSenseVoice)
+                    Text("Fun-ASR-Nano").tag(STTEngine.funASRNano)
                     Text(langMgr.t("macOS 内置", "macOS Built-in")).tag(STTEngine.appleSpeechAnalyzer)
                         .disabled(!isAppleSpeechAnalyzerAvailable)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 320, alignment: .leading)
+                .frame(width: 420, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .disabled(audioManager.isRecording)
                 .onChange(of: sttEngine) { _, newValue in
@@ -213,6 +215,8 @@ struct SettingsView: View {
 
                 if sttEngine == .appleSpeechAnalyzer {
                     appleSpeechEngineCard
+                } else if sttEngine == .funASRNano {
+                    funASRNanoEngineCard
                 } else {
                     sherpaSenseVoiceEngineCard
                 }
@@ -475,8 +479,13 @@ struct SettingsView: View {
             )
         case .sherpaSenseVoice:
             return langMgr.t(
-                "推荐使用，兼容 macOS 15.5 及以上，支持区分不同发言人；首次启用前需要先下载本地模型，下载完成后即可离线使用。",
-                "Recommended. Compatible with macOS 15.5 or later and supports speaker separation. Download the local models before first use; recognition works offline after setup."
+                "本地小模型（约 240MB），速度快、资源占用低，兼容 macOS 15.5 及以上，支持区分不同发言人；首次启用前需先下载，下载后离线使用。准确率不如 Fun-ASR-Nano——若更看重识别准确率，请选择 Fun-ASR-Nano（模型更大、占用更高）。",
+                "A small on-device model (~240 MB): fast and light on resources, compatible with macOS 15.5 or later, with speaker separation. Download once before first use, then runs offline. Accuracy is lower than Fun-ASR-Nano—if accuracy matters more, choose Fun-ASR-Nano (larger model, higher resource use)."
+            )
+        case .funASRNano:
+            return langMgr.t(
+                "高精度多语言/方言识别，支持区分发言人；模型约 1GB，需先下载，下载后离线运行。基于 LLM，CPU 上比 SenseVoice 略慢、内存占用更高，转写会在每句说完后稍有延迟。",
+                "High-accuracy multilingual/dialect recognition with speaker separation. ~1 GB model, download required, runs offline afterward. LLM-based: slightly slower than SenseVoice on CPU, uses more memory, and text appears with a short delay after each utterance."
             )
         }
     }
@@ -488,38 +497,62 @@ struct SettingsView: View {
         return false
     }
 
+    private var funASRNanoEngineCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(langMgr.t("引擎", "Engine"))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("sherpa-onnx · Fun-ASR-Nano int8")
+                    .font(.system(.body, design: .monospaced))
+            }
+
+            HStack(spacing: 10) {
+                Image(systemName: funASRNanoModel.isReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                    .foregroundColor(funASRNanoModel.isReady ? .green : .secondary)
+                Text(funASRNanoModelStatusText)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    Task { await funASRNanoModel.prepareModels() }
+                } label: {
+                    if funASRNanoModel.isPreparing {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text(funASRNanoModel.isReady ? langMgr.t("重新检查", "Check Again") : langMgr.t("下载模型", "Download Models"))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(audioManager.isRecording || funASRNanoModel.isPreparing)
+            }
+
+            if funASRNanoModel.isPreparing, let progress = funASRNanoModel.downloadProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            }
+
+            if let error = funASRNanoModel.errorMessage {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(8)
+    }
+
     private var sherpaSenseVoiceEngineCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(langMgr.t("引擎", "Engine"))
                     .foregroundColor(.secondary)
                 Spacer()
-                Text("sherpa-onnx · \(senseVoiceVariantTechnicalLabel(senseVoiceModelVariant))")
+                Text("sherpa-onnx · SenseVoice-Small INT8")
                     .font(.system(.body, design: .monospaced))
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text(langMgr.t("模型规格", "Model Variant"))
-                    .foregroundColor(.secondary)
-
-                Picker("", selection: $senseVoiceModelVariant) {
-                    ForEach(SenseVoiceModelVariant.allCases, id: \.self) { variant in
-                        Text(senseVoiceVariantPickerLabel(variant)).tag(variant)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 360, alignment: .leading)
-                .disabled(audioManager.isRecording || sherpaModel.isDownloading)
-                .onChange(of: senseVoiceModelVariant) { _, newValue in
-                    UserDefaultsManager.shared.senseVoiceModelVariant = newValue
-                    Task { await sherpaModel.refreshReadiness() }
-                }
-
-                Text(senseVoiceVariantDescription(senseVoiceModelVariant))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 10) {
@@ -581,44 +614,37 @@ struct SettingsView: View {
         )
     }
 
+    private var funASRNanoModelStatusText: String {
+        if funASRNanoModel.isPreparing {
+            if let progress = funASRNanoModel.downloadProgress {
+                let pct = Int(progress * 100)
+                return langMgr.t("正在下载 Fun-ASR-Nano 模型（约 1GB）… \(pct)%", "Downloading Fun-ASR-Nano models (~1 GB)… \(pct)%")
+            }
+            return langMgr.t("正在准备 Fun-ASR-Nano 模型…", "Preparing Fun-ASR-Nano models…")
+        }
+        if funASRNanoModel.isReady {
+            if let device = funASRNanoModel.lastDevice {
+                return langMgr.t(
+                    "Fun-ASR-Nano 模型已就绪（\(device)，缓存 \(funASRNanoModel.cacheSizeText)）",
+                    "Fun-ASR-Nano models are ready (\(device), cache \(funASRNanoModel.cacheSizeText))"
+                )
+            }
+            return langMgr.t(
+                "Fun-ASR-Nano 模型可能已就绪（缓存 \(funASRNanoModel.cacheSizeText)）",
+                "Fun-ASR-Nano models may be ready (cache \(funASRNanoModel.cacheSizeText))"
+            )
+        }
+        return langMgr.t(
+            "Fun-ASR-Nano 模型尚未下载或尚未检查",
+            "Fun-ASR-Nano models are not downloaded or not checked yet"
+        )
+    }
+
     private var senseVoiceInstallSizeText: String {
         let formatter = ByteCountFormatter()
         formatter.allowedUnits = [.useMB, .useGB]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: sherpaModel.activeApproximateBytes)
-    }
-
-    private func senseVoiceVariantPickerLabel(_ variant: SenseVoiceModelVariant) -> String {
-        switch variant {
-        case .quantized:
-            return langMgr.t("轻量版", "Lite")
-        case .fullPrecision:
-            return langMgr.t("高准确率", "High Accuracy")
-        }
-    }
-
-    private func senseVoiceVariantTechnicalLabel(_ variant: SenseVoiceModelVariant) -> String {
-        switch variant {
-        case .quantized:
-            return "SenseVoice-Small INT8"
-        case .fullPrecision:
-            return "SenseVoice-Small FP32"
-        }
-    }
-
-    private func senseVoiceVariantDescription(_ variant: SenseVoiceModelVariant) -> String {
-        switch variant {
-        case .quantized:
-            return langMgr.t(
-                "量化版，下载更小、运行更轻，适合多数设备。",
-                "Quantized model. Smaller download and lighter runtime, suitable for most devices."
-            )
-        case .fullPrecision:
-            return langMgr.t(
-                "非量化版，体积和内存占用更高，适合优先追求识别准确率。",
-                "Full-precision model. Larger download and memory use, best when recognition accuracy matters most."
-            )
-        }
     }
 
     private var promptSettings: some View {

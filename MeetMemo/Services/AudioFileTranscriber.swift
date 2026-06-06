@@ -35,6 +35,13 @@ final class AudioFileTranscriber {
                 url: url,
                 progress: progress
             )
+        case .funASRNano:
+            return try await transcribeWithProvider(
+                SherpaSTTProviderFactory(kind: .funASRNano).makeProvider(),
+                config: config,
+                url: url,
+                progress: progress
+            )
         }
     }
 

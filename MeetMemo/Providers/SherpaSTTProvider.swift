@@ -15,6 +15,13 @@ import Foundation
 /// EmbeddingExtractor compute) are gated behind the `SherpaOnnxRuntime` adapter and
 /// activated only when the prebuilt xcframework is integrated into the Xcode project.
 /// Until then, `connect` throws a friendly error so the host can fall back gracefully.
+/// Which sherpa-onnx offline recognizer the provider drives. Both share the same
+/// VAD-segment → decode → CAM++ diarization pipeline; only the recognizer differs.
+enum SherpaRecognizerKind {
+    case senseVoice
+    case funASRNano
+}
+
 final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     var capabilities: STTProviderCapabilities {
         STTProviderCapabilities(
@@ -57,22 +64,38 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     private var emptyDecodeCount = 0
     private var fallbackDecodeCount = 0
 
+    private let kind: SherpaRecognizerKind
+
+    init(kind: SherpaRecognizerKind = .senseVoice) {
+        self.kind = kind
+    }
+
     func connect(config: STTProviderConfig) async throws {
         disconnect()
 
-        let runtimeConfig: (modelDirectory: URL, modelFileName: String) = try await Task { @MainActor in
-            try await SherpaModelManager.shared.ensureReadyForUse()
-            return (
-                SherpaModelManager.shared.modelDirectory,
-                SherpaModelManager.shared.activeSenseVoiceModelFileName
-            )
-        }.value
-
         do {
-            runtime = try SherpaOnnxRuntime.make(
-                modelDirectory: runtimeConfig.modelDirectory,
-                senseVoiceModelFileName: runtimeConfig.modelFileName
-            )
+            switch kind {
+            case .senseVoice:
+                let runtimeConfig = try await Task { @MainActor in
+                    try await SherpaModelManager.shared.ensureReadyForUse()
+                    return (
+                        SherpaModelManager.shared.modelDirectory,
+                        SherpaModelManager.shared.activeSenseVoiceModelFileName
+                    )
+                }.value
+                runtime = try SherpaOnnxRuntime.make(
+                    modelDirectory: runtimeConfig.0,
+                    senseVoiceModelFileName: runtimeConfig.1
+                )
+            case .funASRNano:
+                let modelDir = try await Task { @MainActor () throws -> URL in
+                    guard SherpaModelManager.shared.modelFilesReady(SherpaModelManager.funASRNanoModelFiles) else {
+                        throw FunASRNanoError.modelsNotReady
+                    }
+                    return SherpaModelManager.shared.modelDirectory
+                }.value
+                runtime = try SherpaOnnxRuntime.makeFunASRNano(modelDirectory: modelDir)
+            }
         } catch {
             onError?(error.localizedDescription)
             throw error
@@ -299,7 +322,13 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
 }
 
 final class SherpaSTTProviderFactory: STTProviderFactory {
+    private let kind: SherpaRecognizerKind
+
+    init(kind: SherpaRecognizerKind = .senseVoice) {
+        self.kind = kind
+    }
+
     func makeProvider() -> STTProvider {
-        SherpaSTTProvider()
+        SherpaSTTProvider(kind: kind)
     }
 }
