@@ -1356,6 +1356,21 @@ struct MeetingDetailContentView: View {
             if !isEnhancedNotesEditing {
                 notesStatusCard
             }
+            if !isEnhancedNotesEditing, let notice = viewModel.transcriptCompressionNotice {
+                HStack(spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                .padding(.bottom, 8)
+            }
             if isEnhancedNotesEditing {
                 IMESafeTextEditor(text: Binding(
                     get: { viewModel.meeting.generatedNotes },

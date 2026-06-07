@@ -181,7 +181,7 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
         config: LLMProviderConfig,
         messages: [ChatMessage],
         stream: Bool,
-        maxTokens: Int = 4096
+        maxTokens: Int = 8192
     ) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = []
@@ -369,7 +369,7 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
         config: LLMProviderConfig,
         messages: [ChatMessage],
         stream: Bool,
-        maxTokens: Int = 4096
+        maxTokens: Int = 8192
     ) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = []

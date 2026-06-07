@@ -7,6 +7,8 @@ import Foundation
 enum GenerationResult {
     case content(String)
     case error(String)
+    /// 非错误的一次性提示（如转录被压缩），供 UI 温和展示，不打断生成。
+    case notice(String)
 }
 
 /// Generates meeting notes using the configured LLM provider
@@ -63,7 +65,10 @@ final class NotesGenerator {
                     return
                 }
 
-                if meeting.formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // 压缩超长转录，避免 prompt 超出模型上下文窗口导致请求失败。
+                let fitted = TranscriptBudget.fit(meeting.formattedTranscript)
+                let fittedTranscript = fitted.text
+                if fittedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     continuation.yield(.error(ErrorMessage.noTranscript))
                     continuation.finish()
                     return
@@ -76,7 +81,7 @@ final class NotesGenerator {
                 let templateVariables: [String: String] = [
                     "meeting_title": meeting.title.isEmpty ? "Untitled Meeting" : meeting.title,
                     "meeting_date": dateFormatter.string(from: meeting.date),
-                    "transcript": meeting.formattedTranscript,
+                    "transcript": fittedTranscript,
                     "user_blurb": userBlurb,
                     "meeting_context": meeting.formattedMeetingContext,
                     "user_notes": meeting.formattedMeetingContext,
@@ -91,6 +96,13 @@ final class NotesGenerator {
                         content: "请根据系统提示和会议记录生成会议纪要。直接以 Markdown 标题、列表或分隔线开头，不要任何寒暄、引导语或「以下是…」「好的」「作为您的助理」之类的说明文字。"
                     )
                 ]
+
+                if fitted.didCompress {
+                    continuation.yield(.notice(LanguageManager.shared.t(
+                        "转录较长，已压缩中间内容后再生成纪要。",
+                        "The transcript was long; its middle was compressed before generating notes."
+                    )))
+                }
 
                 do {
                     let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)

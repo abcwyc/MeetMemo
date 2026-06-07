@@ -45,7 +45,10 @@ final class MeetingStructuredExtractor {
     static let defaultTimeout: TimeInterval = 60
 
     func extract(from meeting: Meeting, timeout: TimeInterval = defaultTimeout) async throws -> StructuredSummaryResult {
-        let transcript = meeting.compactTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 压缩超长转录，避免结构化提取的 prompt 超出模型上下文窗口。
+        let transcript = TranscriptBudget.fit(
+            meeting.compactTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        ).text
         guard !transcript.isEmpty else {
             throw StructuredExtractionError.missingNotes
         }

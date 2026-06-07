@@ -49,6 +49,8 @@ class MeetingViewModel: ObservableObject {
     @Published var meeting: Meeting
     @Published var isGeneratingNotes = false
     @Published var errorMessage: String?
+    /// 转录因过长被压缩时的温和提示（非错误），仅在 AI 纪要页展示。
+    @Published var transcriptCompressionNotice: String?
     @Published private var recordingStateChanged = false // Trigger SwiftUI updates
     @Published var isValidatingKey = false // Indicates API key validation in progress
     @Published var isStartingRecording = false // Indicates recording start in progress
@@ -316,6 +318,7 @@ class MeetingViewModel: ObservableObject {
         isApplyingLoadedMeeting = false
 
         errorMessage = nil
+        transcriptCompressionNotice = nil
         isValidatingKey = false
         isStartingRecording = false
         isLoadingMeeting = false
@@ -641,6 +644,7 @@ class MeetingViewModel: ObservableObject {
         isGeneratingNotes = true
         isStreamingGeneratedNotes = true
         errorMessage = nil
+        transcriptCompressionNotice = nil
         generationCounter += 1
         let myGeneration = generationCounter
         let meetingId = meeting.id
@@ -691,6 +695,10 @@ class MeetingViewModel: ObservableObject {
             }
 
             switch result {
+            case .notice(let message):
+                if meeting.id == meetingId {
+                    transcriptCompressionNotice = message
+                }
             case .content(let chunk):
                 if !receivedContent {
                     generatedMeeting.generatedNotes = ""
