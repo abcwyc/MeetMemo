@@ -80,7 +80,11 @@ final class VoiceInputTextInserter {
             return false
         }
 
-        let element = focusedElement as! AXUIElement
+        guard CFGetTypeID(focusedElement) == AXUIElementGetTypeID() else {
+            return false
+        }
+        // AXUIElement is a CoreFoundation type; the type ID check keeps this bridge bounded.
+        let element = unsafeBitCast(focusedElement, to: AXUIElement.self)
         if insertViaSelectedText(text, into: element) {
             return true
         }
