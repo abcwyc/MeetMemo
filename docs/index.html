@@ -228,45 +228,17 @@
     .chip { padding: 8px 10px; border-radius: 99px; background: var(--green-soft); color: var(--green); font-size: 12px; font-weight: 760; }
 
     .screenshot-stage { margin-top: 34px; }
-    .screen-carousel { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 24px; align-items: center; }
-    .screen-stack { position: relative; min-height: 640px; perspective: 1400px; }
-    .screen-card {
-      position: absolute;
-      inset: 0;
-      border: 1px solid var(--line);
-      border-radius: 34px;
-      overflow: hidden;
-      background: var(--panel-solid);
-      box-shadow: var(--shadow);
-      transform: translateX(30px) scale(.92) rotate(-1.2deg);
-      opacity: 0;
-      pointer-events: none;
-      transition: transform .58s cubic-bezier(.2,.75,.2,1), opacity .36s ease, filter .36s ease;
-      filter: saturate(.88) contrast(.98);
-    }
-    .screen-card.is-active { opacity: 1; transform: translateX(0) scale(1) rotate(0); pointer-events: auto; z-index: 3; filter: none; }
-    .screen-card.is-next { opacity: .42; transform: translateX(46px) translateY(28px) scale(.94) rotate(1.8deg); z-index: 2; }
-    .screen-card.is-prev { opacity: .25; transform: translateX(88px) translateY(56px) scale(.88) rotate(3deg); z-index: 1; }
-    .screen-card .titlebar { height: 42px; }
-    .screen-frame { height: 520px; overflow: hidden; background: var(--bg); border-top: 1px solid var(--line); }
-    .screen-frame img { width: 100%; height: 100%; object-fit: cover; object-position: top left; }
-    .screen-card[data-crop="detail"] .screen-frame img { transform: scale(1.2); transform-origin: top left; }
-    .screen-caption { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: end; padding: 21px 24px 23px; }
-    .screen-caption h3 { font-size: 24px; letter-spacing: -.035em; margin-bottom: 7px; }
-    .screen-caption p { color: var(--muted); line-height: 1.55; font-size: 15px; max-width: 620px; }
-    .screen-kicker { color: var(--green); font: 800 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
-    .carousel-panel { border: 1px solid var(--line); border-radius: 26px; background: var(--panel); padding: 18px; box-shadow: var(--shadow-soft); }
-    .carousel-panel h3 { font-size: 18px; letter-spacing: -.025em; margin-bottom: 8px; }
-    .carousel-panel p { color: var(--muted); font-size: 14px; line-height: 1.58; margin-bottom: 16px; }
-    .screen-tabs { display: grid; gap: 8px; }
-    .screen-tab { width: 100%; min-height: 50px; border: 1px solid var(--line); border-radius: 15px; background: color-mix(in oklab, var(--panel-solid) 64%, transparent); color: var(--muted); text-align: left; padding: 0 13px; font: 730 14px/1.2 var(--sans); cursor: pointer; }
-    .screen-tab span { display: block; margin-top: 4px; color: var(--subtle); font: 650 11px/1 var(--mono); letter-spacing: .05em; }
-    .screen-tab[aria-selected="true"] { background: var(--ink); color: var(--bg); border-color: transparent; }
-    .screen-tab[aria-selected="true"] span { color: color-mix(in oklab, var(--bg) 68%, transparent); }
-    .carousel-controls { display: flex; gap: 9px; margin-top: 14px; }
-    .carousel-arrow { flex: 1; min-height: 42px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-solid); color: var(--ink); cursor: pointer; font-size: 18px; }
-    .carousel-progress { height: 3px; margin-top: 15px; border-radius: 99px; background: var(--line); overflow: hidden; }
-    .carousel-progress span { display: block; width: 33.333%; height: 100%; background: var(--green); transform: translateX(0); transition: transform .45s ease; }
+    .simple-carousel { position: relative; }
+    .carousel-viewport { position: relative; overflow: hidden; border-radius: 18px; background: transparent; }
+    .simple-slide { display: none; }
+    .simple-slide.is-active { display: block; }
+    .simple-slide img { width: 100%; height: auto; display: block; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+    .simple-caption { display: flex; justify-content: space-between; gap: 18px; align-items: baseline; margin-top: 14px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .simple-caption b { color: var(--ink); font-size: 16px; letter-spacing: -.02em; }
+    .simple-controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 18px; }
+    .simple-arrow { width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink); cursor: pointer; font-size: 19px; }
+    .simple-dot { width: 9px; height: 9px; border: 0; border-radius: 999px; background: var(--line-strong); cursor: pointer; padding: 0; }
+    .simple-dot[aria-selected="true"] { width: 28px; background: var(--green); }
 
     .mac-story { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
     .story-card { border: 1px solid var(--line); border-radius: 24px; background: var(--panel); padding: 24px; min-height: 220px; }
@@ -297,9 +269,6 @@
       .summary-pane { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
       .problem, .flow-step { grid-template-columns: 1fr; }
       .audience, .faq, .mac-story { grid-template-columns: 1fr 1fr; }
-      .screen-carousel { grid-template-columns: 1fr; }
-      .carousel-panel { order: -1; }
-      .screen-stack { min-height: 610px; }
       .final-panel { grid-template-columns: 1fr; }
     }
     @media (max-width: 720px) {
@@ -314,11 +283,6 @@
       .app-sidebar { display: none; }
       .summary-pane { grid-template-columns: 1fr; }
       .showcase { padding-bottom: 38px; }
-      .screen-stack { min-height: 520px; }
-      .screen-card.is-next { transform: translateX(22px) translateY(24px) scale(.94) rotate(1.2deg); }
-      .screen-card.is-prev { transform: translateX(42px) translateY(48px) scale(.88) rotate(2deg); }
-      .screen-frame { height: 360px; }
-      .screen-caption { grid-template-columns: 1fr; padding: 18px; }
       .audience, .faq, .mac-story { grid-template-columns: 1fr; }
       footer { flex-direction: column; }
     }
@@ -409,38 +373,28 @@
       <h2>真实界面，放在能看清的位置。</h2>
       <p class="lead">完整截图不再作为首屏小插图，而是作为产品展示区域。你可以直接看到转录、模板和会议内容组织方式。</p>
       <div class="screenshot-stage">
-        <div class="screen-carousel" data-carousel>
-          <div class="screen-stack" aria-live="polite">
-            <article class="screen-card is-active" data-slide="0">
-              <div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="window-title">Transcript view</span></div>
-              <div class="screen-frame"><img src="assets/transcript.png" alt="MeetMemo 转录原文完整界面截图"></div>
-              <div class="screen-caption"><div><div class="screen-kicker">01 · Transcript</div><h3>转录原文</h3><p>完整保留会议讨论脉络，适合会后回看、搜索和继续生成纪要。</p></div></div>
-            </article>
-            <article class="screen-card is-next" data-slide="1" data-crop="detail">
-              <div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="window-title">Readable detail</span></div>
-              <div class="screen-frame"><img src="assets/transcript.png" alt="MeetMemo 转录内容局部放大截图"></div>
-              <div class="screen-caption"><div><div class="screen-kicker">02 · Detail</div><h3>局部放大</h3><p>小图不再塞完整页面，而是展示能读清的转录细节和会议上下文。</p></div></div>
-            </article>
-            <article class="screen-card is-prev" data-slide="2" data-crop="detail">
-              <div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="window-title">Prompt templates</span></div>
-              <div class="screen-frame"><img src="assets/prompt-template.png" alt="MeetMemo 自定义提示词模板界面截图"></div>
-              <div class="screen-caption"><div><div class="screen-kicker">03 · Templates</div><h3>自定义模板</h3><p>根据会议类型调整总结结构，不同场景输出不同纪要。</p></div></div>
-            </article>
+        <div class="simple-carousel" data-simple-carousel>
+          <div class="carousel-viewport" aria-live="polite">
+            <figure class="simple-slide is-active" data-slide="0">
+              <img src="assets/transcript.png" alt="MeetMemo 转录原文截图">
+              <figcaption class="simple-caption"><b>转录原文</b><span>按 README 顺序展示的第一张产品截图。</span></figcaption>
+            </figure>
+            <figure class="simple-slide" data-slide="1">
+              <img src="assets/meeting-summary.png" alt="MeetMemo 会议纪要截图">
+              <figcaption class="simple-caption"><b>会议纪要</b><span>按 README 顺序展示的第二张产品截图。</span></figcaption>
+            </figure>
+            <figure class="simple-slide" data-slide="2">
+              <img src="assets/prompt-template.png" alt="MeetMemo 自定义会议总结提示词截图">
+              <figcaption class="simple-caption"><b>自定义会议总结提示词</b><span>按 README 顺序展示的第三张产品截图。</span></figcaption>
+            </figure>
           </div>
-          <aside class="carousel-panel" aria-label="产品截图切换">
-            <h3>产品界面预览</h3>
-            <p>三张图改为叠放展示，默认自动切换，也可以手动选择要看的界面。</p>
-            <div class="screen-tabs" role="tablist" aria-label="切换产品截图">
-              <button class="screen-tab" type="button" role="tab" aria-selected="true" data-go="0">转录原文<span>完整界面</span></button>
-              <button class="screen-tab" type="button" role="tab" aria-selected="false" data-go="1">局部放大<span>可读细节</span></button>
-              <button class="screen-tab" type="button" role="tab" aria-selected="false" data-go="2">自定义模板<span>总结结构</span></button>
-            </div>
-            <div class="carousel-controls">
-              <button class="carousel-arrow" type="button" data-prev aria-label="上一张">‹</button>
-              <button class="carousel-arrow" type="button" data-next aria-label="下一张">›</button>
-            </div>
-            <div class="carousel-progress" aria-hidden="true"><span></span></div>
-          </aside>
+          <div class="simple-controls" role="tablist" aria-label="切换产品截图">
+            <button class="simple-arrow" type="button" data-prev aria-label="上一张">‹</button>
+            <button class="simple-dot" type="button" aria-selected="true" data-go="0" aria-label="转录原文"></button>
+            <button class="simple-dot" type="button" aria-selected="false" data-go="1" aria-label="会议纪要"></button>
+            <button class="simple-dot" type="button" aria-selected="false" data-go="2" aria-label="自定义会议总结提示词"></button>
+            <button class="simple-arrow" type="button" data-next aria-label="下一张">›</button>
+          </div>
         </div>
       </div>
     </section>
@@ -503,28 +457,22 @@
     });
 
 
-    const carousel = document.querySelector('[data-carousel]');
+    const carousel = document.querySelector('[data-simple-carousel]');
     if (carousel) {
-      const slides = [...carousel.querySelectorAll('.screen-card')];
-      const tabs = [...carousel.querySelectorAll('.screen-tab')];
-      const progress = carousel.querySelector('.carousel-progress span');
+      const slides = [...carousel.querySelectorAll('.simple-slide')];
+      const dots = [...carousel.querySelectorAll('.simple-dot')];
       let current = 0;
       let timer;
       const render = (index) => {
         current = (index + slides.length) % slides.length;
-        slides.forEach((slide, i) => {
-          slide.classList.toggle('is-active', i === current);
-          slide.classList.toggle('is-next', i === (current + 1) % slides.length);
-          slide.classList.toggle('is-prev', i === (current + 2) % slides.length);
-        });
-        tabs.forEach((tab, i) => tab.setAttribute('aria-selected', String(i === current)));
-        if (progress) progress.style.transform = `translateX(${current * 100}%)`;
+        slides.forEach((slide, i) => slide.classList.toggle('is-active', i === current));
+        dots.forEach((dot, i) => dot.setAttribute('aria-selected', String(i === current)));
       };
       const restart = () => {
         clearInterval(timer);
-        timer = setInterval(() => render(current + 1), 5200);
+        timer = setInterval(() => render(current + 1), 4800);
       };
-      tabs.forEach((tab) => tab.addEventListener('click', () => { render(Number(tab.dataset.go)); restart(); }));
+      dots.forEach((dot) => dot.addEventListener('click', () => { render(Number(dot.dataset.go)); restart(); }));
       carousel.querySelector('[data-prev]')?.addEventListener('click', () => { render(current - 1); restart(); });
       carousel.querySelector('[data-next]')?.addEventListener('click', () => { render(current + 1); restart(); });
       carousel.addEventListener('mouseenter', () => clearInterval(timer));
