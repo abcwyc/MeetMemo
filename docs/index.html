@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MeetMemo｜为 Mac 工作流设计的会议记录工具</title>
-  <meta name="description" content="MeetMemo 是一款为 Mac 用户设计的会议记录与总结工具：录音、转写、结构化总结、行动项整理，把每场会议变成可回看的结论。" />
-  <meta name="theme-color" content="#f5f2eb" media="(prefers-color-scheme: light)" />
-  <meta name="theme-color" content="#101113" media="(prefers-color-scheme: dark)" />
-  <meta property="og:title" content="MeetMemo｜为 Mac 工作流设计的会议记录工具" />
+  <title>MeetMemo｜为 Mac 打造的会议记录与总结工具</title>
+  <meta name="description" content="MeetMemo 是为 Mac 打造的会议记录与总结工具。录下会议，转写内容，整理重点和行动项，把每次讨论变成可回看的资产。" />
+  <meta name="theme-color" content="#f6f6f4" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#101114" media="(prefers-color-scheme: dark)" />
+  <meta property="og:title" content="MeetMemo｜为 Mac 打造的会议记录与总结工具" />
   <meta property="og:description" content="录下会议，整理重点，把每次讨论变成可回看的资产。免费、源码公开、Mac 本地优先。" />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://abcwyc.github.io/MeetMemo/" />
@@ -16,59 +16,50 @@
   <style>
     :root {
       color-scheme: light dark;
-      --bg: #f5f2eb;
-      --bg-2: #ebe6da;
-      --surface: rgba(255,255,255,.74);
-      --surface-solid: #fffdf8;
-      --ink: #171717;
-      --muted: #6b6760;
-      --faint: #918b82;
-      --line: rgba(23,23,23,.12);
-      --line-strong: rgba(23,23,23,.22);
-      --accent: #1a8f6f;
-      --accent-2: #bf6b4f;
-      --accent-soft: rgba(26,143,111,.12);
-      --shadow: 0 24px 90px rgba(35,32,26,.13);
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
-      --serif: ui-serif, "New York", "Iowan Old Style", Georgia, "Songti SC", serif;
-      --max: 1180px;
-      --radius-xl: 34px;
-      --radius-lg: 24px;
-      --radius-md: 16px;
+      --bg: #f6f6f4;
+      --bg-soft: #eeece7;
+      --panel: rgba(255,255,255,.82);
+      --panel-solid: #ffffff;
+      --ink: #111215;
+      --muted: #64676d;
+      --subtle: #989a9f;
+      --line: rgba(17,18,21,.105);
+      --line-strong: rgba(17,18,21,.18);
+      --green: #1d8a68;
+      --green-soft: rgba(29,138,104,.10);
+      --blue: #3b78c8;
+      --orange: #c87144;
+      --shadow: 0 24px 80px rgba(17,18,21,.11);
+      --shadow-soft: 0 14px 42px rgba(17,18,21,.075);
+      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --max: 1120px;
+      --r-xl: 32px;
+      --r-lg: 22px;
+      --r-md: 14px;
     }
 
     @media (prefers-color-scheme: dark) {
       :root {
-        --bg: #101113;
-        --bg-2: #17191c;
-        --surface: rgba(31,33,36,.72);
-        --surface-solid: #1d1f22;
-        --ink: #f4f1eb;
-        --muted: #b6afa4;
-        --faint: #8f887d;
-        --line: rgba(244,241,235,.12);
-        --line-strong: rgba(244,241,235,.22);
-        --accent: #69d2b3;
-        --accent-2: #e29a7f;
-        --accent-soft: rgba(105,210,179,.13);
-        --shadow: 0 26px 100px rgba(0,0,0,.38);
+        --bg: #101114;
+        --bg-soft: #17191e;
+        --panel: rgba(28,30,35,.78);
+        --panel-solid: #1c1e23;
+        --ink: #f6f3ec;
+        --muted: #b4b0a8;
+        --subtle: #85817b;
+        --line: rgba(246,243,236,.11);
+        --line-strong: rgba(246,243,236,.20);
+        --green: #68d7b4;
+        --green-soft: rgba(104,215,180,.12);
+        --blue: #8ab8ff;
+        --orange: #f0a37a;
+        --shadow: 0 24px 90px rgba(0,0,0,.35);
+        --shadow-soft: 0 14px 44px rgba(0,0,0,.24);
       }
     }
-
-    html[data-theme="light"] {
-      color-scheme: light;
-      --bg: #f5f2eb; --bg-2: #ebe6da; --surface: rgba(255,255,255,.74); --surface-solid: #fffdf8;
-      --ink: #171717; --muted: #6b6760; --faint: #918b82; --line: rgba(23,23,23,.12); --line-strong: rgba(23,23,23,.22);
-      --accent: #1a8f6f; --accent-2: #bf6b4f; --accent-soft: rgba(26,143,111,.12); --shadow: 0 24px 90px rgba(35,32,26,.13);
-    }
-
-    html[data-theme="dark"] {
-      color-scheme: dark;
-      --bg: #101113; --bg-2: #17191c; --surface: rgba(31,33,36,.72); --surface-solid: #1d1f22;
-      --ink: #f4f1eb; --muted: #b6afa4; --faint: #8f887d; --line: rgba(244,241,235,.12); --line-strong: rgba(244,241,235,.22);
-      --accent: #69d2b3; --accent-2: #e29a7f; --accent-soft: rgba(105,210,179,.13); --shadow: 0 26px 100px rgba(0,0,0,.38);
-    }
+    html[data-theme="light"] { color-scheme: light; --bg:#f6f6f4; --bg-soft:#eeece7; --panel:rgba(255,255,255,.82); --panel-solid:#fff; --ink:#111215; --muted:#64676d; --subtle:#989a9f; --line:rgba(17,18,21,.105); --line-strong:rgba(17,18,21,.18); --green:#1d8a68; --green-soft:rgba(29,138,104,.10); --blue:#3b78c8; --orange:#c87144; --shadow:0 24px 80px rgba(17,18,21,.11); --shadow-soft:0 14px 42px rgba(17,18,21,.075); }
+    html[data-theme="dark"] { color-scheme: dark; --bg:#101114; --bg-soft:#17191e; --panel:rgba(28,30,35,.78); --panel-solid:#1c1e23; --ink:#f6f3ec; --muted:#b4b0a8; --subtle:#85817b; --line:rgba(246,243,236,.11); --line-strong:rgba(246,243,236,.20); --green:#68d7b4; --green-soft:rgba(104,215,180,.12); --blue:#8ab8ff; --orange:#f0a37a; --shadow:0 24px 90px rgba(0,0,0,.35); --shadow-soft:0 14px 44px rgba(0,0,0,.24); }
 
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
@@ -77,29 +68,20 @@
       font-family: var(--sans);
       color: var(--ink);
       background:
-        radial-gradient(circle at 8% 0%, color-mix(in oklab, var(--accent) 14%, transparent), transparent 34rem),
-        radial-gradient(circle at 88% 10%, color-mix(in oklab, var(--accent-2) 13%, transparent), transparent 31rem),
-        linear-gradient(180deg, var(--bg), var(--bg-2) 56%, var(--bg));
+        radial-gradient(circle at 12% -20%, color-mix(in oklab, var(--green) 11%, transparent), transparent 520px),
+        radial-gradient(circle at 84% 0%, color-mix(in oklab, var(--orange) 8%, transparent), transparent 500px),
+        linear-gradient(180deg, var(--bg), var(--bg-soft) 58%, var(--bg));
       -webkit-font-smoothing: antialiased;
       text-rendering: geometricPrecision;
     }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background-image: linear-gradient(rgba(127,127,127,.045) 1px, transparent 1px), linear-gradient(90deg, rgba(127,127,127,.04) 1px, transparent 1px);
-      background-size: 56px 56px;
-      mask-image: linear-gradient(to bottom, black, transparent 70%);
-    }
     a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; }
     p, h1, h2, h3 { margin: 0; }
-    img { max-width: 100%; display: block; }
 
-    .site-nav {
+    .nav {
       position: sticky;
       top: 0;
-      z-index: 50;
+      z-index: 20;
       border-bottom: 1px solid var(--line);
       background: color-mix(in oklab, var(--bg) 78%, transparent);
       backdrop-filter: blur(18px) saturate(1.2);
@@ -113,433 +95,330 @@
       justify-content: space-between;
       gap: 18px;
     }
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      min-width: max-content;
-      font-weight: 760;
-      letter-spacing: -.02em;
-    }
-    .brand img { width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 10px 26px rgba(0,0,0,.16); }
-    .nav-links { display: flex; align-items: center; gap: 19px; color: var(--muted); font-size: 14px; font-weight: 620; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 760; letter-spacing: -.02em; }
+    .brand img { width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 8px 22px rgba(0,0,0,.14); }
+    .nav-links { display: flex; align-items: center; gap: 18px; color: var(--muted); font-size: 14px; font-weight: 620; }
     .nav-links a:hover { color: var(--ink); }
     .theme-button {
-      width: 40px; height: 40px; border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--surface);
-      color: var(--ink);
-      cursor: pointer;
-      font-size: 15px;
+      width: 38px; height: 38px; border: 1px solid var(--line); border-radius: 99px;
+      background: var(--panel); color: var(--ink); cursor: pointer;
     }
-    .button, .download-button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 46px;
-      border-radius: 999px;
-      padding: 0 18px;
-      border: 1px solid var(--line-strong);
-      font-weight: 730;
-      letter-spacing: -.01em;
-      transition: transform .2s ease, border-color .2s ease, background .2s ease, box-shadow .2s ease;
+    .pill-button, .download {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      min-height: 44px; padding: 0 18px; border-radius: 99px;
+      border: 1px solid var(--line-strong); font-weight: 730; letter-spacing: -.01em;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
     }
-    .button:hover, .download-button:hover { transform: translateY(-2px); }
-    .download-button { background: var(--ink); color: var(--bg); border-color: transparent; box-shadow: 0 14px 40px rgba(0,0,0,.16); }
-    .button.secondary { background: var(--surface); }
-    .button.ghost { border-color: var(--line); color: var(--muted); }
+    .pill-button { background: color-mix(in oklab, var(--panel-solid) 70%, transparent); }
+    .download { background: var(--ink); color: var(--bg); border-color: transparent; box-shadow: var(--shadow-soft); }
+    .pill-button:hover, .download:hover { transform: translateY(-2px); }
 
     .hero {
       max-width: var(--max);
       margin: 0 auto;
-      padding: 84px 22px 66px;
-      display: grid;
-      grid-template-columns: minmax(0, .9fr) minmax(420px, 1.1fr);
-      gap: 54px;
-      align-items: center;
+      padding: 78px 22px 54px;
+      text-align: center;
     }
-    .micro {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 8px 12px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--muted);
-      background: var(--surface);
-      font-size: 13px;
-      font-weight: 700;
+    .eyebrow {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border: 1px solid var(--line); border-radius: 99px;
+      background: var(--panel); color: var(--muted); font-size: 13px; font-weight: 720;
     }
-    .micro::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px var(--accent-soft); }
+    .eyebrow::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 5px var(--green-soft); }
     h1 {
-      margin: 22px 0 20px;
-      max-width: 760px;
-      font-family: var(--serif);
-      font-size: clamp(52px, 7.4vw, 92px);
-      line-height: .95;
-      letter-spacing: -.07em;
+      margin: 22px auto 18px;
+      max-width: 780px;
+      font-size: clamp(40px, 6.2vw, 68px);
+      line-height: 1.04;
+      letter-spacing: -.06em;
+      font-weight: 720;
       text-wrap: balance;
     }
     .hero-copy {
+      max-width: 720px;
+      margin: 0 auto;
       color: var(--muted);
-      max-width: 640px;
       font-size: clamp(18px, 2vw, 22px);
-      line-height: 1.64;
-      letter-spacing: -.02em;
+      line-height: 1.58;
+      letter-spacing: -.018em;
       text-wrap: pretty;
     }
-    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
-    .hero-actions .button, .hero-actions .download-button { min-height: 54px; padding-inline: 24px; }
-    .trust-row { margin-top: 24px; display: grid; gap: 10px; color: var(--faint); font-size: 14px; }
-    .trust-row span { display: flex; align-items: center; gap: 9px; }
-    .trust-row span::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+    .hero-actions { margin-top: 30px; display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; }
+    .hero-actions .download, .hero-actions .pill-button { min-height: 52px; padding-inline: 23px; }
+    .trust { margin-top: 20px; color: var(--subtle); font-size: 13px; display: flex; justify-content: center; flex-wrap: wrap; gap: 12px 18px; }
 
-    .mac-stage { position: relative; perspective: 1400px; }
-    .browser-frame {
+    .showcase {
+      max-width: 1180px;
+      margin: 30px auto 0;
+      padding: 0 22px 62px;
+    }
+    .mockup-shell {
+      border: 1px solid var(--line);
+      border-radius: 38px;
+      background: linear-gradient(180deg, color-mix(in oklab, var(--panel-solid) 88%, var(--green-soft)), var(--panel-solid));
+      box-shadow: var(--shadow);
+      padding: 12px;
+      position: relative;
+      overflow: hidden;
+    }
+    .mockup-shell::before {
+      content: ""; position: absolute; inset: auto 8% -110px; height: 200px;
+      background: radial-gradient(ellipse, color-mix(in oklab, var(--green) 20%, transparent), transparent 68%);
+      pointer-events: none;
+    }
+    .mock-window {
+      border: 1px solid var(--line);
       border-radius: 28px;
       overflow: hidden;
-      background: var(--surface-solid);
-      border: 1px solid var(--line);
-      box-shadow: var(--shadow);
-      transform: rotateX(2deg) rotateY(-4deg) rotateZ(1deg);
-    }
-    .titlebar {
-      height: 42px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 0 15px;
-      border-bottom: 1px solid var(--line);
-      background: color-mix(in oklab, var(--surface-solid) 72%, var(--bg));
-    }
-    .dot { width: 11px; height: 11px; border-radius: 50%; }
-    .red { background: #ff605c; } .yellow { background: #ffbd44; } .green { background: #00ca4e; }
-    .titlebar .title { margin-left: auto; margin-right: auto; color: var(--faint); font-size: 12px; font-weight: 650; }
-    .product-shot { padding: 14px; background: linear-gradient(180deg, color-mix(in oklab, var(--surface-solid) 86%, var(--accent-soft)), var(--surface-solid)); }
-    .shot-image {
-      border-radius: 18px;
-      border: 1px solid var(--line);
-      overflow: hidden;
-      background: var(--bg);
-      min-height: 360px;
-    }
-    .shot-image img { width: 100%; height: 100%; object-fit: cover; object-position: top left; }
-    .inspector-card {
-      position: absolute;
-      right: -18px;
-      bottom: -28px;
-      width: 250px;
-      padding: 18px;
-      border-radius: 22px;
-      background: color-mix(in oklab, var(--surface-solid) 88%, transparent);
-      backdrop-filter: blur(16px);
-      border: 1px solid var(--line);
-      box-shadow: 0 22px 70px rgba(0,0,0,.18);
-    }
-    .inspector-card b { display: block; margin-bottom: 10px; font-size: 14px; }
-    .inspector-card p { color: var(--muted); font-size: 13px; line-height: 1.55; }
-    .summary-lines { display: grid; gap: 7px; margin-top: 13px; }
-    .summary-lines i { height: 7px; border-radius: 999px; background: var(--accent-soft); }
-    .summary-lines i:nth-child(2) { width: 82%; } .summary-lines i:nth-child(3) { width: 62%; }
-
-    .section { max-width: var(--max); margin: 0 auto; padding: 76px 22px; }
-    .section-label { color: var(--accent); font: 800 12px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; margin-bottom: 13px; }
-    h2 { max-width: 820px; font-family: var(--serif); font-size: clamp(36px, 5vw, 62px); line-height: 1.04; letter-spacing: -.055em; text-wrap: balance; }
-    .section-lead { margin-top: 18px; max-width: 760px; color: var(--muted); font-size: 18px; line-height: 1.7; letter-spacing: -.01em; }
-
-    .problem-board {
-      margin-top: 34px;
-      display: grid;
-      grid-template-columns: .95fr 1.05fr;
-      gap: 18px;
-      align-items: stretch;
-    }
-    .problem-note, .answer-panel {
-      border: 1px solid var(--line);
-      border-radius: var(--radius-lg);
-      background: var(--surface);
-      padding: 28px;
-    }
-    .problem-note { display: grid; align-content: space-between; min-height: 320px; }
-    .problem-note .quote { font-family: var(--serif); font-size: clamp(28px, 4vw, 45px); line-height: 1.08; letter-spacing: -.05em; }
-    .problem-note p { color: var(--muted); line-height: 1.72; margin-top: 22px; }
-    .answer-list { display: grid; gap: 12px; }
-    .answer-item { display: grid; grid-template-columns: 40px 1fr; gap: 14px; padding: 16px; border-radius: 18px; border: 1px solid var(--line); background: color-mix(in oklab, var(--surface-solid) 66%, transparent); }
-    .answer-index { font: 800 12px/40px var(--mono); color: var(--accent); text-align: center; border-radius: 12px; background: var(--accent-soft); }
-    .answer-item h3 { font-size: 18px; letter-spacing: -.02em; margin-bottom: 5px; }
-    .answer-item p { color: var(--muted); font-size: 14px; line-height: 1.6; }
-
-    .capability {
-      margin-top: 38px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius-xl);
-      background: var(--surface);
-      overflow: hidden;
-      box-shadow: 0 18px 80px rgba(0,0,0,.08);
-    }
-    .capability-row { display: grid; grid-template-columns: 240px 1fr 300px; gap: 24px; padding: 26px; border-bottom: 1px solid var(--line); align-items: center; }
-    .capability-row:last-child { border-bottom: 0; }
-    .capability-row .step-name { font: 800 13px/1 var(--mono); letter-spacing: .04em; color: var(--accent); }
-    .capability-row h3 { font-size: 24px; letter-spacing: -.035em; margin-bottom: 8px; }
-    .capability-row p { color: var(--muted); line-height: 1.68; }
-    .mini-ui { min-height: 96px; border: 1px solid var(--line); border-radius: 18px; background: color-mix(in oklab, var(--surface-solid) 72%, var(--bg)); padding: 14px; }
-    .wave { display: flex; align-items: center; gap: 5px; height: 68px; }
-    .wave span { flex: 1; min-width: 3px; border-radius: 999px; background: var(--accent); opacity: .75; }
-    .mini-lines { display: grid; gap: 9px; padding-top: 8px; }
-    .mini-lines i { height: 8px; border-radius: 999px; background: var(--accent-soft); }
-    .mini-lines i:nth-child(2) { width: 86%; } .mini-lines i:nth-child(3) { width: 64%; }
-    .task-chip { display: inline-flex; margin: 5px; padding: 9px 11px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 700; }
-
-    .workflow {
-      margin-top: 38px;
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 14px;
-    }
-    .flow-card {
-      min-height: 280px;
-      padding: 26px;
-      border-radius: var(--radius-lg);
-      border: 1px solid var(--line);
-      background: var(--surface);
+      background: var(--panel-solid);
+      min-height: 610px;
       position: relative;
-      overflow: hidden;
     }
-    .flow-card::after { content: attr(data-step); position: absolute; right: 18px; bottom: 8px; font: 900 76px/1 var(--serif); color: color-mix(in oklab, var(--ink) 5%, transparent); }
-    .flow-card h3 { font-size: 24px; letter-spacing: -.035em; margin: 42px 0 14px; }
-    .flow-card p { color: var(--muted); line-height: 1.68; }
-    .flow-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 8px var(--accent-soft); }
+    .titlebar { height: 42px; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid var(--line); background: color-mix(in oklab, var(--panel-solid) 74%, var(--bg)); }
+    .dot { width: 11px; height: 11px; border-radius: 50%; }
+    .red { background:#ff5f57; } .yellow { background:#febc2e; } .green { background:#28c840; }
+    .window-title { margin-left: auto; margin-right: auto; color: var(--subtle); font-size: 12px; font-weight: 650; }
+    .app-preview { display: grid; grid-template-columns: 240px 1fr 310px; min-height: 568px; }
+    .app-sidebar { border-right: 1px solid var(--line); background: color-mix(in oklab, var(--bg) 54%, var(--panel-solid)); padding: 18px; }
+    .sidebar-title { color: var(--subtle); font: 700 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 14px; }
+    .meeting { padding: 12px; border-radius: 14px; margin-bottom: 8px; color: var(--muted); font-size: 13px; line-height: 1.25; }
+    .meeting.active { color: var(--ink); background: var(--panel-solid); box-shadow: 0 8px 24px rgba(0,0,0,.06); border: 1px solid var(--line); }
+    .meeting b { display: block; margin-bottom: 4px; font-size: 14px; }
+    .meeting small { color: var(--subtle); }
+    .transcript-pane { padding: 26px 28px; }
+    .pane-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+    .pane-head h3 { font-size: 24px; letter-spacing: -.035em; }
+    .recording { display: inline-flex; align-items: center; gap: 8px; color: var(--orange); font-size: 13px; font-weight: 720; }
+    .recording::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 5px color-mix(in oklab, var(--orange) 13%, transparent); }
+    .message { display: grid; grid-template-columns: 72px 1fr; gap: 14px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+    .speaker { color: var(--subtle); font: 700 12px/1.4 var(--mono); }
+    .message p { color: var(--muted); line-height: 1.64; font-size: 15px; }
+    .message strong { color: var(--ink); }
+    .wave-row { display: flex; align-items: center; gap: 5px; height: 64px; margin-top: 22px; }
+    .wave-row i { flex: 1; border-radius: 99px; background: var(--green); opacity: .72; }
+    .summary-pane { border-left: 1px solid var(--line); background: color-mix(in oklab, var(--bg) 42%, var(--panel-solid)); padding: 22px; }
+    .summary-card { border: 1px solid var(--line); border-radius: 22px; padding: 18px; background: var(--panel-solid); box-shadow: 0 10px 28px rgba(0,0,0,.06); margin-bottom: 14px; }
+    .summary-card h4 { margin: 0 0 10px; font-size: 15px; letter-spacing: -.02em; }
+    .summary-card ul { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.68; }
+    .task { display: flex; align-items: flex-start; gap: 10px; color: var(--muted); font-size: 13px; line-height: 1.5; padding: 10px 0; border-top: 1px solid var(--line); }
+    .checkbox { width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--green); margin-top: 2px; flex: 0 0 auto; }
 
-    .mac-section {
-      display: grid;
-      grid-template-columns: .86fr 1.14fr;
-      gap: 30px;
-      align-items: center;
-    }
-    .mac-copy { padding: 10px 0; }
-    .mac-stack { position: relative; min-height: 560px; }
-    .stack-window { position: absolute; border: 1px solid var(--line); border-radius: 24px; overflow: hidden; background: var(--surface-solid); box-shadow: var(--shadow); }
-    .stack-window.one { left: 0; top: 10px; width: 82%; }
-    .stack-window.two { right: 0; bottom: 0; width: 72%; }
-    .stack-window .titlebar { height: 34px; }
-    .stack-window img { width: 100%; height: 320px; object-fit: cover; object-position: top left; }
-    .mac-points { margin-top: 26px; display: grid; gap: 12px; }
-    .mac-points div { padding: 14px 0; border-bottom: 1px solid var(--line); color: var(--muted); line-height: 1.55; }
-    .mac-points b { color: var(--ink); }
+    .section { max-width: var(--max); margin: 0 auto; padding: 86px 22px; }
+    .label { color: var(--green); font: 800 12px/1 var(--mono); letter-spacing: .09em; text-transform: uppercase; margin-bottom: 14px; }
+    h2 { max-width: 760px; font-size: clamp(30px, 4.1vw, 50px); line-height: 1.11; letter-spacing: -.052em; font-weight: 720; text-wrap: balance; }
+    .lead { max-width: 720px; margin-top: 17px; color: var(--muted); font-size: 18px; line-height: 1.65; letter-spacing: -.01em; }
 
-    .audience-grid { margin-top: 34px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-    .audience { border: 1px solid var(--line); background: var(--surface); border-radius: 22px; padding: 20px; min-height: 178px; }
-    .audience b { display: block; font-size: 18px; letter-spacing: -.02em; margin-bottom: 12px; }
-    .audience p { color: var(--muted); line-height: 1.62; font-size: 14px; }
+    .problem { display: grid; grid-template-columns: .88fr 1.12fr; gap: 38px; align-items: start; }
+    .problem-list { display: grid; gap: 10px; }
+    .problem-item { border-bottom: 1px solid var(--line); padding: 18px 0; }
+    .problem-item b { display: block; font-size: 18px; letter-spacing: -.025em; margin-bottom: 6px; }
+    .problem-item p { color: var(--muted); line-height: 1.6; }
+
+    .flow-strip { margin-top: 34px; border: 1px solid var(--line); border-radius: var(--r-xl); overflow: hidden; background: var(--panel); }
+    .flow-step { display: grid; grid-template-columns: 210px 1fr 260px; gap: 28px; align-items: center; padding: 28px; border-bottom: 1px solid var(--line); }
+    .flow-step:last-child { border-bottom: 0; }
+    .flow-index { font: 800 13px/1 var(--mono); color: var(--green); letter-spacing: .08em; }
+    .flow-step h3 { font-size: 25px; letter-spacing: -.035em; margin-bottom: 7px; }
+    .flow-step p { color: var(--muted); line-height: 1.62; }
+    .flow-visual { min-height: 92px; border-radius: 18px; background: var(--panel-solid); border: 1px solid var(--line); display: grid; place-items: center; padding: 14px; }
+    .mini-lines { width: 100%; display: grid; gap: 9px; }
+    .mini-lines span { height: 8px; border-radius: 99px; background: var(--green-soft); }
+    .mini-lines span:nth-child(1) { width: 92%; } .mini-lines span:nth-child(2) { width: 74%; } .mini-lines span:nth-child(3) { width: 56%; }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip { padding: 8px 10px; border-radius: 99px; background: var(--green-soft); color: var(--green); font-size: 12px; font-weight: 760; }
+
+    .screenshot-stage { margin-top: 34px; display: grid; gap: 18px; }
+    .shot-large { border: 1px solid var(--line); border-radius: var(--r-xl); overflow: hidden; background: var(--panel-solid); box-shadow: var(--shadow-soft); }
+    .shot-large .titlebar { height: 38px; }
+    .shot-canvas { height: 560px; overflow: hidden; background: var(--bg); }
+    .shot-canvas img { width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+    .shot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .crop-card { border: 1px solid var(--line); border-radius: 24px; overflow: hidden; background: var(--panel-solid); }
+    .crop-card h3 { padding: 18px 20px 0; font-size: 20px; letter-spacing: -.03em; }
+    .crop-card p { padding: 7px 20px 18px; color: var(--muted); line-height: 1.55; font-size: 14px; }
+    .crop-window { height: 300px; overflow: hidden; border-top: 1px solid var(--line); background: var(--bg); }
+    .crop-window img { width: 100%; height: 100%; object-fit: cover; object-position: top left; transform: scale(1.28); transform-origin: top left; }
+
+    .mac-story { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 34px; }
+    .story-card { border: 1px solid var(--line); border-radius: 24px; background: var(--panel); padding: 24px; min-height: 220px; }
+    .story-card b { display: block; margin-bottom: 12px; font-size: 20px; letter-spacing: -.03em; }
+    .story-card p { color: var(--muted); line-height: 1.65; }
+
+    .audience { margin-top: 34px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .audience-card { border: 1px solid var(--line); border-radius: 22px; background: var(--panel); padding: 20px; min-height: 168px; }
+    .audience-card b { display: block; margin-bottom: 10px; font-size: 18px; letter-spacing: -.02em; }
+    .audience-card p { color: var(--muted); line-height: 1.58; font-size: 14px; }
 
     .faq { margin-top: 34px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    details { border: 1px solid var(--line); border-radius: 20px; background: var(--surface); padding: 20px; }
-    summary { cursor: pointer; font-weight: 760; letter-spacing: -.02em; list-style: none; }
+    details { border: 1px solid var(--line); border-radius: 18px; background: var(--panel); padding: 19px; }
+    summary { list-style: none; cursor: pointer; font-weight: 760; letter-spacing: -.02em; }
     summary::-webkit-details-marker { display: none; }
-    details p { color: var(--muted); line-height: 1.65; margin-top: 12px; font-size: 14px; }
+    details p { color: var(--muted); line-height: 1.62; margin-top: 11px; font-size: 14px; }
 
-    .bottom-cta {
-      max-width: var(--max);
-      margin: 40px auto 0;
-      padding: 0 22px 84px;
-    }
-    .cta-panel {
-      border: 1px solid var(--line);
-      border-radius: 36px;
-      background: var(--ink);
-      color: var(--bg);
-      padding: 42px;
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 28px;
-      align-items: center;
-      overflow: hidden;
-      position: relative;
-    }
-    .cta-panel::after { content: "MeetMemo"; position: absolute; right: -20px; bottom: -22px; font-family: var(--serif); font-size: 118px; letter-spacing: -.08em; opacity: .06; }
-    .cta-panel h2 { color: inherit; font-size: clamp(34px, 4.8vw, 56px); }
-    .cta-panel p { color: color-mix(in oklab, var(--bg) 76%, transparent); max-width: 680px; line-height: 1.65; margin-top: 14px; }
-    .cta-panel .download-button { background: var(--bg); color: var(--ink); min-height: 54px; padding-inline: 24px; position: relative; z-index: 1; }
+    .final { max-width: var(--max); margin: 0 auto; padding: 42px 22px 90px; }
+    .final-panel { border: 1px solid var(--line); border-radius: 34px; background: var(--panel-solid); box-shadow: var(--shadow-soft); padding: 42px; display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; }
+    .final-panel h2 { font-size: clamp(31px, 4.2vw, 52px); }
+    .final-panel p { margin-top: 12px; color: var(--muted); line-height: 1.62; max-width: 670px; }
 
-    footer { max-width: var(--max); margin: 0 auto; padding: 28px 22px 48px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 22px; color: var(--faint); font-size: 13px; line-height: 1.6; }
+    footer { max-width: var(--max); margin: 0 auto; padding: 28px 22px 48px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 20px; color: var(--subtle); font-size: 13px; line-height: 1.6; }
     footer a { color: var(--muted); font-weight: 720; }
 
     @media (max-width: 980px) {
-      .hero, .problem-board, .mac-section { grid-template-columns: 1fr; }
-      .hero { padding-top: 58px; }
-      .browser-frame { transform: none; }
-      .capability-row { grid-template-columns: 1fr; }
-      .workflow, .audience-grid, .faq { grid-template-columns: 1fr 1fr; }
-      .mac-stack { min-height: 520px; }
-      .cta-panel { grid-template-columns: 1fr; }
+      .app-preview { grid-template-columns: 200px 1fr; }
+      .summary-pane { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .problem, .flow-step { grid-template-columns: 1fr; }
+      .audience, .faq, .mac-story { grid-template-columns: 1fr 1fr; }
+      .final-panel { grid-template-columns: 1fr; }
     }
-    @media (max-width: 680px) {
-      .nav-links a:not(.download-button), .theme-button { display: none; }
-      .nav-inner, .hero, .section, .bottom-cta, footer { padding-left: 16px; padding-right: 16px; }
-      h1 { font-size: 54px; }
-      .hero { grid-template-columns: 1fr; gap: 32px; }
+    @media (max-width: 720px) {
+      .nav-links a:not(.download), .theme-button { display: none; }
+      .nav-inner, .hero, .showcase, .section, .final, footer { padding-left: 16px; padding-right: 16px; }
+      .hero { padding-top: 54px; }
+      h1 { font-size: 48px; }
       .hero-actions { flex-direction: column; }
-      .button, .download-button { width: 100%; }
-      .inspector-card { display: none; }
-      .shot-image { min-height: 260px; }
-      .workflow, .audience-grid, .faq { grid-template-columns: 1fr; }
-      .mac-stack { min-height: auto; display: grid; gap: 16px; }
-      .stack-window { position: relative; width: 100% !important; left: auto !important; right: auto !important; top: auto !important; bottom: auto !important; }
+      .hero-actions .download, .hero-actions .pill-button { width: 100%; }
+      .mock-window { min-height: auto; }
+      .app-preview { grid-template-columns: 1fr; }
+      .app-sidebar { display: none; }
+      .summary-pane { grid-template-columns: 1fr; }
+      .showcase { padding-bottom: 38px; }
+      .shot-canvas { height: 360px; }
+      .shot-grid, .audience, .faq, .mac-story { grid-template-columns: 1fr; }
       footer { flex-direction: column; }
     }
-    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; } }
+    @media (prefers-reduced-motion: reduce) { *,*::before,*::after { transition: none !important; scroll-behavior: auto !important; } }
   </style>
 </head>
 <body>
-  <nav class="site-nav" aria-label="主导航">
+  <nav class="nav" aria-label="主导航">
     <div class="nav-inner">
       <a class="brand" href="#top"><img src="assets/meetmemo-icon.png" alt="MeetMemo 图标"><span>MeetMemo</span></a>
       <div class="nav-links">
         <a href="#why">为什么需要</a>
-        <a href="#features">功能</a>
         <a href="#workflow">工作流</a>
+        <a href="#screens">界面</a>
         <a href="#faq">FAQ</a>
         <button class="theme-button" id="themeToggle" type="button" aria-label="切换深浅色">◐</button>
-        <a class="download-button" href="https://github.com/abcwyc/MeetMemo/releases/latest" target="_blank" rel="noreferrer">下载 Mac 版</a>
+        <a class="download" href="https://github.com/abcwyc/MeetMemo/releases/latest" target="_blank" rel="noreferrer">下载</a>
       </div>
     </div>
   </nav>
 
   <main id="top">
     <section class="hero">
+      <span class="eyebrow">真正放进 Mac 工作流的会议工具</span>
+      <h1>把每场会议，变成可回看的结论。</h1>
+      <p class="hero-copy">MeetMemo 在 Mac 上完成会议录音、语音转写、结构化总结与行动项整理。让会后的回顾、同步和跟进，不再从重听录音开始。</p>
+      <div class="hero-actions">
+        <a class="download" href="https://github.com/abcwyc/MeetMemo/releases/download/0.61/MeetMemo.0.61.zip" target="_blank" rel="noreferrer">下载 Mac 版</a>
+        <a class="pill-button" href="https://github.com/abcwyc/MeetMemo" target="_blank" rel="noreferrer">在 GitHub 查看项目</a>
+      </div>
+      <div class="trust"><span>免费使用</span><span>源码公开</span><span>本地语音识别</span><span>macOS 15.5+</span></div>
+    </section>
+
+    <section class="showcase" aria-label="MeetMemo 产品界面示意">
+      <div class="mockup-shell">
+        <div class="mock-window">
+          <div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="window-title">MeetMemo · Product Weekly</span></div>
+          <div class="app-preview">
+            <aside class="app-sidebar">
+              <div class="sidebar-title">Meetings</div>
+              <div class="meeting active"><b>产品周会</b><small>今天 14:00 · 正在记录</small></div>
+              <div class="meeting"><b>客户访谈</b><small>昨天 · 已生成纪要</small></div>
+              <div class="meeting"><b>需求评审</b><small>周一 · 4 个行动项</small></div>
+              <div class="meeting"><b>1on1</b><small>上周五 · 私密记录</small></div>
+            </aside>
+            <section class="transcript-pane">
+              <div class="pane-head"><h3>产品周会</h3><span class="recording">Recording</span></div>
+              <div class="message"><span class="speaker">自己</span><p><strong>今天先确认版本发布范围，</strong>然后梳理需要跟进的行动项。</p></div>
+              <div class="message"><span class="speaker">Speaker 2</span><p>模型下载和权限引导需要放在首次启动流程里，避免用户不知道下一步。</p></div>
+              <div class="message"><span class="speaker">自己</span><p>我会把发布检查表同步到提醒事项，周五前完成。</p></div>
+              <div class="wave-row" aria-hidden="true"><i style="height:26%"></i><i style="height:60%"></i><i style="height:38%"></i><i style="height:78%"></i><i style="height:45%"></i><i style="height:64%"></i><i style="height:32%"></i><i style="height:86%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:36%"></i><i style="height:56%"></i></div>
+            </section>
+            <aside class="summary-pane">
+              <div class="summary-card"><h4>AI 纪要</h4><ul><li>确认 v0.61 发布范围</li><li>优化首次启动配置路径</li><li>周五前完成发布检查表</li></ul></div>
+              <div class="summary-card"><h4>行动项</h4><div class="task"><span class="checkbox"></span><span>补充模型下载提示和权限说明</span></div><div class="task"><span class="checkbox"></span><span>同步发布检查表到提醒事项</span></div></div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section problem" id="why">
       <div>
-        <span class="micro">为 macOS 工作流而设计</span>
-        <h1>把每场会议，变成可回看的结论。</h1>
-        <p class="hero-copy">MeetMemo 帮你在 Mac 上完成会议录音、语音转写、结构化总结与行动项整理。少补记录，多回到真正需要推进的工作。</p>
-        <div class="hero-actions">
-          <a class="download-button" href="https://github.com/abcwyc/MeetMemo/releases/download/0.61/MeetMemo.0.61.zip" target="_blank" rel="noreferrer">下载 Mac 版</a>
-          <a class="button secondary" href="https://github.com/abcwyc/MeetMemo" target="_blank" rel="noreferrer">在 GitHub 查看项目</a>
-        </div>
-        <div class="trust-row" aria-label="产品特点">
-          <span>会议录音、转写、总结和行动项整理，一条链路完成</span>
-          <span>本地语音识别，会议文件保存在你的 Mac</span>
-          <span>免费使用，源码公开，适合长期沉淀会议知识资产</span>
-        </div>
+        <div class="label">Why</div>
+        <h2>会议不是缺少记录，而是缺少可以继续使用的上下文。</h2>
+        <p class="lead">很多工具最后只留下一段录音或一份长转录。真正需要回看时，用户还是要自己找重点、补结论、追待办。</p>
       </div>
-      <div class="mac-stage" aria-label="MeetMemo 产品截图">
-        <div class="browser-frame">
-          <div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">MeetMemo · Transcript</span></div>
-          <div class="product-shot"><div class="shot-image"><img src="assets/transcript.png" alt="MeetMemo 转录原文界面截图"></div></div>
-        </div>
-        <aside class="inspector-card" aria-label="AI 纪要示意">
-          <b>会后不用重听录音</b>
-          <p>从转录中提炼结论、决策点和待办，保留可检索的上下文。</p>
-          <div class="summary-lines"><i></i><i></i><i></i></div>
-        </aside>
-      </div>
-    </section>
-
-    <section class="section" id="why">
-      <div class="section-label">Problem</div>
-      <h2>会议结束了，真正麻烦的部分才刚开始。</h2>
-      <p class="section-lead">录音、聊天记录、零散笔记和待办经常分散在不同地方。过几天再回头看，很难快速知道当时讨论了什么、决定了什么、下一步谁负责。</p>
-      <div class="problem-board">
-        <article class="problem-note">
-          <div>
-            <p class="quote">很多会议不是没有记录，而是没有留下可继续使用的结论。</p>
-            <p>MeetMemo 的目标不是生成一段漂亮摘要，而是把会议内容变成之后仍能查找、引用和跟进的工作资产。</p>
-          </div>
-        </article>
-        <article class="answer-panel">
-          <div class="answer-list">
-            <div class="answer-item"><span class="answer-index">01</span><div><h3>不用边听边补笔记</h3><p>会议过程中先保留完整讨论，降低边听边记带来的认知负担。</p></div></div>
-            <div class="answer-item"><span class="answer-index">02</span><div><h3>不用会后从头回听</h3><p>把长录音和长转录整理成重点、结论、决策和行动项。</p></div></div>
-            <div class="answer-item"><span class="answer-index">03</span><div><h3>不用担心待办丢失</h3><p>行动项可以继续进入系统提醒事项，让会议结论变成可跟踪任务。</p></div></div>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <section class="section" id="features">
-      <div class="section-label">Core capability</div>
-      <h2>从记录到总结，一条完整链路。</h2>
-      <p class="section-lead">MeetMemo 围绕真实会议流程组织能力：先完整留下内容，再把它变成可浏览、可总结、可跟进的资料。</p>
-      <div class="capability">
-        <div class="capability-row">
-          <div class="step-name">RECORD</div>
-          <div><h3>会议录音</h3><p>同时记录麦克风与系统音频，适合线上会议、客户访谈、站会、需求评审等真实讨论场景。</p></div>
-          <div class="mini-ui"><div class="wave"><span style="height:38%"></span><span style="height:72%"></span><span style="height:52%"></span><span style="height:84%"></span><span style="height:42%"></span><span style="height:68%"></span><span style="height:91%"></span><span style="height:48%"></span></div></div>
-        </div>
-        <div class="capability-row">
-          <div class="step-name">TRANSCRIBE</div>
-          <div><h3>本地语音转写</h3><p>使用 SenseVoice、Fun-ASR-Nano 或 macOS SpeechAnalyzer，把录音转成可浏览、可处理的文本。模型下载后可在本机运行。</p></div>
-          <div class="mini-ui"><div class="mini-lines"><i></i><i></i><i></i><i style="width:72%"></i></div></div>
-        </div>
-        <div class="capability-row">
-          <div class="step-name">SUMMARIZE</div>
-          <div><h3>结构化总结</h3><p>用模板提炼重点、结论、决策与待办，而不是只留下原始文本。支持自定义提示词与不同会议类型。</p></div>
-          <div class="mini-ui"><span class="task-chip">结论</span><span class="task-chip">决策</span><span class="task-chip">待办</span><span class="task-chip">风险</span></div>
-        </div>
-        <div class="capability-row">
-          <div class="step-name">FOLLOW UP</div>
-          <div><h3>行动项整理</h3><p>把纪要中的待办转成系统「提醒事项」，帮助你更快知道谁要做什么、下一步是什么。</p></div>
-          <div class="mini-ui"><span class="task-chip">周五前确认版本范围</span><span class="task-chip">同步客户问题</span></div>
-        </div>
+      <div class="problem-list">
+        <div class="problem-item"><b>录了音，但没人想重听</b><p>一小时的录音很完整，但它不是适合会后快速同步的材料。</p></div>
+        <div class="problem-item"><b>有转录，但结论仍然分散</b><p>长文本解决了“有没有记录”，却没有解决“如何快速理解”。</p></div>
+        <div class="problem-item"><b>有待办，但容易丢在聊天里</b><p>会议行动项如果不能进入日常工作流，就很容易失去跟踪。</p></div>
       </div>
     </section>
 
     <section class="section" id="workflow">
-      <div class="section-label">Workflow</div>
-      <h2>为真实会议流程设计。</h2>
-      <p class="section-lead">好的会议工具应该在会前、会中、会后都减少阻力，而不是在会议结束后再制造新的整理工作。</p>
-      <div class="workflow">
-        <article class="flow-card" data-step="01"><div class="flow-dot"></div><h3>会前</h3><p>准备会议背景、专有名词和补充资料，让后续纪要理解当前业务语境，而不是只处理一段孤立文本。</p></article>
-        <article class="flow-card" data-step="02"><div class="flow-dot"></div><h3>会中</h3><p>保留讨论原貌，减少边听边记。麦克风和系统音频双路记录，更贴近线上会议的真实场景。</p></article>
-        <article class="flow-card" data-step="03"><div class="flow-dot"></div><h3>会后</h3><p>快速获得总结、决策点和行动项，把会议内容沉淀为之后还能搜索、回看和复用的资料。</p></article>
+      <div class="label">Workflow</div>
+      <h2>从会前到会后，减少每一步整理成本。</h2>
+      <p class="lead">MeetMemo 不是单点转写工具，而是一条围绕会议场景设计的工作流。</p>
+      <div class="flow-strip">
+        <div class="flow-step"><div class="flow-index">01 · BEFORE</div><div><h3>会前准备上下文</h3><p>加入项目背景、专有名词或补充资料，让后续纪要更懂这场会议的业务语境。</p></div><div class="flow-visual"><div class="chips"><span class="chip">项目背景</span><span class="chip">专有名词</span><span class="chip">参考资料</span></div></div></div>
+        <div class="flow-step"><div class="flow-index">02 · DURING</div><div><h3>会中专注讨论</h3><p>同时记录麦克风与系统音频，保留讨论原貌，降低边听边记的认知负担。</p></div><div class="flow-visual"><div class="mini-lines"><span></span><span></span><span></span></div></div></div>
+        <div class="flow-step"><div class="flow-index">03 · AFTER</div><div><h3>会后得到结论和行动项</h3><p>选择模板生成结构化纪要，提取待办，并同步到系统提醒事项继续跟进。</p></div><div class="flow-visual"><div class="chips"><span class="chip">结论</span><span class="chip">决策</span><span class="chip">行动项</span></div></div></div>
       </div>
     </section>
 
-    <section class="section mac-section" id="mac">
-      <div class="mac-copy">
-        <div class="section-label">Mac native feeling</div>
-        <h2>这不是一个套壳网页，而是一款放进 Mac 工作方式里的工具。</h2>
-        <p class="section-lead">MeetMemo 面向桌面端长期使用：权限、模型、会议列表、转录、模板、提醒事项都围绕 Mac 的使用路径组织，而不是把一次性网页工具搬到桌面上。</p>
-        <div class="mac-points">
-          <div><b>原生桌面心智：</b>会议、转录和摘要长期保存在本机，适合持续回看。</div>
-          <div><b>Apple 生态衔接：</b>行动项可写入系统提醒事项，语音输入可进入前台应用。</div>
-          <div><b>隐私边界清晰：</b>语音识别本地运行，LLM 服务由你自己配置。</div>
+    <section class="section" id="screens">
+      <div class="label">Product</div>
+      <h2>真实界面，放在能看清的位置。</h2>
+      <p class="lead">完整截图不再作为首屏小插图，而是作为产品展示区域。你可以直接看到转录、模板和会议内容组织方式。</p>
+      <div class="screenshot-stage">
+        <div class="shot-large"><div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="window-title">Transcript view</span></div><div class="shot-canvas"><img src="assets/transcript.png" alt="MeetMemo 转录原文完整界面截图"></div></div>
+        <div class="shot-grid">
+          <article class="crop-card"><h3>转录原文</h3><p>保留会议讨论脉络，并按发言内容继续生成纪要。</p><div class="crop-window"><img src="assets/transcript.png" alt="转录界面截图局部"></div></article>
+          <article class="crop-card"><h3>自定义模板</h3><p>根据会议类型调整总结结构，不同场景输出不同纪要。</p><div class="crop-window"><img src="assets/prompt-template.png" alt="提示词模板界面截图局部"></div></article>
         </div>
       </div>
-      <div class="mac-stack" aria-label="MeetMemo 更多界面截图">
-        <div class="stack-window one"><div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">Meeting transcript</span></div><img src="assets/transcript.png" alt="MeetMemo 会议转录截图"></div>
-        <div class="stack-window two"><div class="titlebar"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span><span class="title">Prompt templates</span></div><img src="assets/prompt-template.png" alt="MeetMemo 自定义提示词模板截图"></div>
+    </section>
+
+    <section class="section" id="mac">
+      <div class="label">Mac App</div>
+      <h2>这是一款 Mac 应用，不是一次性网页工具。</h2>
+      <p class="lead">MeetMemo 的价值在于长期使用：会议、转录、摘要、模板和行动项都留在你的桌面工作流里。</p>
+      <div class="mac-story">
+        <article class="story-card"><b>本地优先的数据边界</b><p>会议、摘要和模板保存在本机；语音识别模型下载后可本地运行。生成纪要时，你自行选择 LLM 服务商。</p></article>
+        <article class="story-card"><b>接入 Apple 工作方式</b><p>行动项可进入系统提醒事项，语音输入可插入前台应用，让会议结果继续进入你的日常工作。</p></article>
+        <article class="story-card"><b>可检索的会议资产</b><p>会议内容不是一次性消费，而是之后可以回看、复制、导出和复用的上下文。</p></article>
+        <article class="story-card"><b>为独立使用者设计</b><p>免费、源码公开，不需要注册项目方云账号，适合个人和小团队把会议记录掌握在自己手里。</p></article>
       </div>
     </section>
 
     <section class="section" id="audience">
-      <div class="section-label">Audience</div>
+      <div class="label">People</div>
       <h2>适合会议密集型知识工作者。</h2>
-      <div class="audience-grid">
-        <article class="audience"><b>产品经理</b><p>需求会、评审会、复盘会后快速整理结论和下一步。</p></article>
-        <article class="audience"><b>销售与顾问</b><p>留存客户沟通上下文，回看需求、异议和承诺事项。</p></article>
-        <article class="audience"><b>研究与运营</b><p>把访谈、讨论和复盘沉淀为可持续积累的资料。</p></article>
-        <article class="audience"><b>开发与远程协作</b><p>追踪技术讨论、决策背景和会后执行任务。</p></article>
+      <div class="audience">
+        <article class="audience-card"><b>产品经理</b><p>需求会、评审会、复盘会后快速整理结论和下一步。</p></article>
+        <article class="audience-card"><b>销售与顾问</b><p>留存客户沟通上下文，回看需求、异议和承诺事项。</p></article>
+        <article class="audience-card"><b>研究与运营</b><p>把访谈、讨论和复盘沉淀为可持续积累的资料。</p></article>
+        <article class="audience-card"><b>开发与远程协作</b><p>追踪技术讨论、决策背景和会后执行任务。</p></article>
       </div>
     </section>
 
     <section class="section" id="faq">
-      <div class="section-label">FAQ</div>
+      <div class="label">FAQ</div>
       <h2>下载前你可能想确认这些问题。</h2>
       <div class="faq">
-        <details open><summary>MeetMemo 适合哪些会议场景？</summary><p>适合日常会议、站会、1on1、客户访谈、需求评审、招聘面试、复盘会等需要留存上下文和行动项的场景。</p></details>
-        <details><summary>这是 Mac app 还是网页工具？</summary><p>MeetMemo 是 macOS 原生应用，不是浏览器网页工具。当前支持 macOS 15.5 及以上。</p></details>
-        <details><summary>语音识别是否必须联网？</summary><p>首次下载本地模型需要网络；模型准备完成后，SenseVoice / Fun-ASR-Nano 等转录可在本机运行，无需 STT API Key。</p></details>
+        <details open><summary>MeetMemo 适合哪些会议场景？</summary><p>日常会议、站会、1on1、客户访谈、需求评审、招聘面试、复盘会等需要留存上下文和行动项的场景。</p></details>
+        <details><summary>这是 Mac app 还是网页工具？</summary><p>MeetMemo 是 macOS 应用，不是浏览器网页工具。当前支持 macOS 15.5 及以上。</p></details>
+        <details><summary>语音识别是否必须联网？</summary><p>首次下载模型需要网络；模型准备完成后，SenseVoice / Fun-ASR-Nano 等转录可在本机运行，无需 STT API Key。</p></details>
         <details><summary>我的会议数据会上传到项目方服务器吗？</summary><p>不会。会议文件、摘要和模板保存在你的 Mac。生成纪要时，会把必要文本发送给你自己配置的 LLM 服务商。</p></details>
         <details><summary>是否支持自定义总结格式？</summary><p>支持。你可以使用内置会议模板，也可以创建自己的提示词模板，适配不同会议类型。</p></details>
         <details><summary>这个项目是否开源？</summary><p>项目源码公开，采用 PolyForm Noncommercial License 1.0.0。个人、学习、研究、教育等非商业目的可以使用。</p></details>
       </div>
     </section>
 
-    <section class="bottom-cta">
-      <div class="cta-panel">
-        <div><h2>让下一场会议，不再只留下一段录音。</h2><p>下载 MeetMemo，在 Mac 上完成会议记录、转写、总结和行动项整理。把每次讨论变成可回看的结论。</p></div>
-        <a class="download-button" href="https://github.com/abcwyc/MeetMemo/releases/latest" target="_blank" rel="noreferrer">免费下载</a>
-      </div>
+    <section class="final">
+      <div class="final-panel"><div><h2>让下一场会议，不再只留下一段录音。</h2><p>下载 MeetMemo，在 Mac 上完成会议记录、转写、总结和行动项整理。把每次讨论变成可回看的结论。</p></div><a class="download" href="https://github.com/abcwyc/MeetMemo/releases/latest" target="_blank" rel="noreferrer">免费下载</a></div>
     </section>
   </main>
 
