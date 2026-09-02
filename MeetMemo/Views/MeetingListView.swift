@@ -968,6 +968,13 @@ struct MeetingDetailContentView: View {
             }
             .disabled(!viewModel.canExportCurrentTabHTML)
 
+            Button {
+                viewModel.exportMarkdown()
+            } label: {
+                Label(langMgr.t("导出 Markdown", "Export as Markdown"), systemImage: "doc.text")
+            }
+            .disabled(!viewModel.canExportMarkdown)
+
             Divider()
 
             Button(langMgr.t("删除会议", "Delete Meeting"), role: .destructive) {

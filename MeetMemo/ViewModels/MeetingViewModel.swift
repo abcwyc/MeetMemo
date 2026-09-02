@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 // Add notification name for meeting saved events
 extension Notification.Name {
@@ -430,6 +431,10 @@ class MeetingViewModel: ObservableObject {
         case .summary:
             return !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
+
+    var canExportMarkdown: Bool {
+        hasGeneratedNotes
     }
     
     func toggleRecording() {
@@ -910,6 +915,27 @@ class MeetingViewModel: ObservableObject {
         }
     }
 
+    func exportMarkdown() {
+        guard canExportMarkdown else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "\(sanitizedExportBaseName(fallback: "会议纪要")).md"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let markdown = MeetingMarkdownExporter.generateNotesMarkdown(for: meeting)
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.open(url)
+        } catch {
+            errorMessage = LanguageManager.shared.t(
+                "Markdown 导出失败：\(error.localizedDescription)",
+                "Markdown export failed: \(error.localizedDescription)"
+            )
+        }
+    }
+
     private func currentTabHTMLExport() -> (fileName: String, html: String) {
         let baseName = sanitizedExportBaseName()
 
@@ -948,16 +974,16 @@ class MeetingViewModel: ObservableObject {
         }
     }
 
-    private func sanitizedExportBaseName() -> String {
+    private func sanitizedExportBaseName(fallback: String? = nil) -> String {
         let title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = selectedTab == .transcript ? "转录原文" : (selectedTab == .context ? "会议资料" : "会议纪要")
-        let rawName = title.isEmpty ? fallback : title
+        let defaultFallback = selectedTab == .transcript ? "转录原文" : (selectedTab == .context ? "会议资料" : "会议纪要")
+        let rawName = title.isEmpty ? (fallback ?? defaultFallback) : title
         let invalidCharacters = CharacterSet(charactersIn: "/\\?%*|\"<>:")
         let cleaned = rawName
             .components(separatedBy: invalidCharacters)
             .joined(separator: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? fallback : cleaned
+        return cleaned.isEmpty ? (fallback ?? defaultFallback) : cleaned
     }
 
     func extractFollowUpTasks() async {
