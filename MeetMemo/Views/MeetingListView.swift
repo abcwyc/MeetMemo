@@ -2,6 +2,18 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private extension ToolbarContent {
+    @ToolbarContentBuilder
+    func withoutSharedBackground() -> some ToolbarContent {
+        if #available(macOS 26.0, *) {
+            // Custom capsules provide their own background instead of stacking it over toolbar glass.
+            self.sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
+    }
+}
+
 private enum SidebarLayout {
     static let horizontalPadding: CGFloat = 12
     static let actionCapsuleInset: CGFloat = 4
@@ -737,11 +749,13 @@ struct MeetingDetailContentView: View {
             ToolbarItem(placement: .navigation) {
                 detailActionButtons
             }
+            .withoutSharedBackground()
 
-            ToolbarItemGroup(placement: .primaryAction) {
-                if shouldShowToolbarTabs {
+            if shouldShowToolbarTabs {
+                ToolbarItem(placement: .primaryAction) {
                     detailTabBar
                 }
+                .withoutSharedBackground()
             }
 
             ToolbarItem(placement: .primaryAction) {
@@ -1092,11 +1106,16 @@ struct MeetingDetailContentView: View {
                 if !usesCompactToolbarActions {
                     Text(generateButtonTitle)
                 }
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .opacity(0.8)
+                    .accessibilityHidden(true)
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(generateButtonForegroundColor)
-            .frame(minWidth: usesCompactToolbarActions ? 30 : 106, minHeight: 30)
-            .padding(.horizontal, usesCompactToolbarActions ? 0 : 12)
+            .frame(minHeight: 30)
+            .padding(.horizontal, usesCompactToolbarActions ? 8 : 10)
             .background {
                 Capsule(style: .continuous)
                     .fill(generateButtonBackgroundColor)
@@ -1114,7 +1133,9 @@ struct MeetingDetailContentView: View {
                 }
             )
         }
+        .menuStyle(.button)
         .buttonStyle(.plain)
+        .menuIndicator(.hidden)
         .onHover { isGenerateButtonHovered = $0 }
         .disabled(!viewModel.toolbarHasFinalTranscript || viewModel.isGeneratingNotes || viewModel.isRecording || viewModel.isStartingRecording)
         .help(generateButtonHelp)
@@ -1141,8 +1162,8 @@ struct MeetingDetailContentView: View {
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundColor(recordingButtonForegroundColor)
-            .frame(minWidth: usesCompactToolbarActions ? 30 : 104, minHeight: 30)
-            .padding(.horizontal, usesCompactToolbarActions ? 0 : 12)
+            .frame(minHeight: 30)
+            .padding(.horizontal, usesCompactToolbarActions ? 8 : 10)
             .background {
                 Capsule(style: .continuous)
                     .fill(recordingButtonBackgroundColor)
