@@ -1393,7 +1393,7 @@ struct MeetingDetailContentView: View {
                 .padding(.bottom, 8)
             }
             if isEnhancedNotesEditing {
-                IMESafeTextEditor(text: Binding(
+                MarkdownLiveEditorView(text: Binding(
                     get: { viewModel.meeting.generatedNotes },
                     set: { viewModel.meeting.generatedNotes = $0 }
                 ))
