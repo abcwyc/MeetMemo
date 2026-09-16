@@ -301,8 +301,7 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
         context.coordinator.textView = textView
         context.coordinator.layoutManager = layoutManager
         layoutManager.delegate = context.coordinator
-        context.coordinator.applyStyledText(text, selection: nil)
-        context.coordinator.syncTableOverlays()
+        context.coordinator.applyStyledText(text, selection: nil) // also syncs table overlays
 
         scrollView.documentView = textView
         return scrollView
@@ -340,6 +339,19 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
         /// shifted it after the overlay view was created. See `syncTableOverlays()`.
         private var currentTableBlocks: [MarkdownLiveStyler.TableBlockInfo] = []
         private var tableOverlayViews: [NSHostingView<MarkdownLiveTableOverlayView>] = []
+        /// Guards against reentrancy: `syncTableOverlays()` queries glyph
+        /// geometry (`boundingRect(forGlyphRange:in:)`), which can force
+        /// on-demand layout for ranges not yet laid out — and that layout
+        /// completing can synchronously re-invoke
+        /// `layoutManager(_:didCompleteLayoutFor:atEnd:)` below, which calls
+        /// back into `syncTableOverlays()` *while the outer call is still
+        /// running*. Without this guard, the reentrant call could tear down
+        /// and rebuild `tableOverlayViews` out from under the outer call's
+        /// in-flight loop over the pre-rebuild array, leaving orphaned
+        /// (never-removed) hosting views stacked on top of each other —
+        /// exactly the "table looks overlapped and won't respond to clicks"
+        /// symptom this fixes.
+        private var isSyncingTableOverlays = false
 
         init(text: Binding<String>, fontSize: CGFloat) {
             self.text = text
@@ -447,6 +459,10 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
         /// frame — cheap, and avoids losing in-progress cell-edit focus for
         /// tables the user isn't touching.
         func syncTableOverlays() {
+            guard !isSyncingTableOverlays else { return }
+            isSyncingTableOverlays = true
+            defer { isSyncingTableOverlays = false }
+
             guard let textView, let layoutManager, let container = textView.textContainer else { return }
             let newBlocks = MarkdownLiveStyler.tableBlocks(in: textView.string)
 

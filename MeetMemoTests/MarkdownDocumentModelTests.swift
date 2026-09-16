@@ -234,6 +234,21 @@ final class MarkdownDocumentModelTests: XCTestCase {
         }
     }
 
+    func testRepeatedAndInterleavedCallsDontLeakStateAcrossInputs() {
+        // parseInlineSpans caches compiled NSRegularExpression instances
+        // across calls (perf: it runs on every keystroke in the live
+        // editor); this guards against that cache accidentally leaking
+        // state between unrelated inputs.
+        for _ in 0..<3 {
+            let bold = MarkdownDocumentModel.parseInlineSpans(in: "**bold**")
+            XCTAssertEqual(bold.map(\.kind), [.bold])
+            let italic = MarkdownDocumentModel.parseInlineSpans(in: "*italic*")
+            XCTAssertEqual(italic.map(\.kind), [.italic])
+            let plain = MarkdownDocumentModel.parseInlineSpans(in: "no markup here")
+            XCTAssertEqual(plain, [])
+        }
+    }
+
     func testEmptyStringHasNoSpans() {
         XCTAssertEqual(MarkdownDocumentModel.parseInlineSpans(in: ""), [])
     }

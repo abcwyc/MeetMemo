@@ -378,6 +378,21 @@ enum MarkdownDocumentModel {
     /// spans are found first and their interiors excluded from further
     /// matching (matching CommonMark's "code spans bind tighter" rule), then
     /// links, then bold, then italic, then strikethrough.
+    ///
+    /// Called on every keystroke by the live-preview editor's restyle pass,
+    /// so this is a hot path: `NSRegularExpression` compilation (not just
+    /// matching) is expensive enough to be noticeable per-line, per-edit —
+    /// `cachedRegex` compiles each of the fixed pattern strings below once
+    /// and reuses it for the process's lifetime.
+    private static nonisolated(unsafe) var regexCache: [String: NSRegularExpression] = [:]
+
+    private static func cachedRegex(_ pattern: String) -> NSRegularExpression? {
+        if let cached = regexCache[pattern] { return cached }
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        regexCache[pattern] = regex
+        return regex
+    }
+
     static func parseInlineSpans(in text: String) -> [InlineSpan] {
         let ns = text as NSString
         guard ns.length > 0 else { return [] }
@@ -396,7 +411,7 @@ enum MarkdownDocumentModel {
         }
 
         func scan(pattern: String, makeSpan: (NSTextCheckingResult) -> InlineSpan?) {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+            guard let regex = cachedRegex(pattern) else { return }
             let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length))
             for match in matches {
                 guard isFree(match.range) else { continue }
