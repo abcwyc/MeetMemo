@@ -164,6 +164,114 @@ final class MarkdownLiveStylerTests: XCTestCase {
             XCTAssertNil(attrs[MarkdownEditorAttribute.syntax], "tables are out of scope for the text-based live styler (index \(i))")
         }
     }
+
+    // MARK: - P2: thematic break rule
+
+    func testThematicBreakDashesAreAlwaysHiddenAndTaggedAsRule() {
+        let source = "above\n---\nbelow"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        let ns = source as NSString
+        let ruleLineLoc = ns.range(of: "---").location
+
+        let attrs = attributed.attributes(at: ruleLineLoc, effectiveRange: nil)
+        XCTAssertEqual(attrs[MarkdownEditorAttribute.syntax] as? Bool, true)
+        XCTAssertEqual(attrs[MarkdownEditorAttribute.alwaysHidden] as? Bool, true)
+        XCTAssertEqual(attrs[MarkdownEditorAttribute.rule] as? Bool, true)
+        // A rule is not caret-revealable, so it must not carry line/span tags
+        // that would otherwise make it conditionally visible.
+        XCTAssertNil(attrs[MarkdownEditorAttribute.lineCommand])
+        XCTAssertNil(attrs[MarkdownEditorAttribute.commandSpan])
+    }
+
+    func testSurroundingParagraphsUnaffectedByThematicBreak() {
+        let source = "above\n---\nbelow"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        let ns = source as NSString
+        for word in ["above", "below"] {
+            let attrs = attributed.attributes(at: ns.range(of: word).location, effectiveRange: nil)
+            XCTAssertNil(attrs[MarkdownEditorAttribute.syntax])
+            XCTAssertNil(attrs[MarkdownEditorAttribute.rule])
+        }
+    }
+
+    // MARK: - P2: checkbox click-to-toggle tagging
+
+    func testUncheckedCheckboxRangeIsExactlyTheThreeBracketCharacters() {
+        let source = "- [ ] Todo item"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        let ns = source as NSString
+        let checkboxRange = ns.range(of: "[ ]")
+
+        var effective = NSRange()
+        let attrs = attributed.attributes(at: checkboxRange.location, effectiveRange: &effective)
+        XCTAssertEqual(attrs[MarkdownEditorAttribute.checkbox] as? Bool, true)
+        XCTAssertEqual(effective, checkboxRange)
+
+        // Never tagged as collapsible syntax — checkboxes are always shown.
+        XCTAssertNil(attrs[MarkdownEditorAttribute.syntax])
+
+        let contentAttrs = attributed.attributes(at: ns.range(of: "Todo").location, effectiveRange: nil)
+        XCTAssertNil(contentAttrs[MarkdownEditorAttribute.checkbox])
+    }
+
+    func testCheckedCheckboxIsTaggedAndAccentColored() {
+        let source = "- [x] Done item"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        let ns = source as NSString
+        let checkboxRange = ns.range(of: "[x]")
+
+        let attrs = attributed.attributes(at: checkboxRange.location, effectiveRange: nil)
+        XCTAssertEqual(attrs[MarkdownEditorAttribute.checkbox] as? Bool, true)
+        XCTAssertEqual(attrs[.foregroundColor] as? NSColor, NSColor.controlAccentColor)
+    }
+
+    func testUppercaseCheckedCheckboxIsAlsoTagged() {
+        let source = "- [X] Done item"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        let ns = source as NSString
+        let attrs = attributed.attributes(at: ns.range(of: "[X]").location, effectiveRange: nil)
+        XCTAssertEqual(attrs[MarkdownEditorAttribute.checkbox] as? Bool, true)
+    }
+
+    func testPlainListItemWithoutCheckboxHasNoCheckboxTag() {
+        let source = "- plain item, no brackets"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        for i in 0..<attributed.length {
+            XCTAssertNil(attributed.attributes(at: i, effectiveRange: nil)[MarkdownEditorAttribute.checkbox], "index \(i)")
+        }
+    }
+
+    // MARK: - P2: blockquote bar
+
+    func testBlockquoteBarTagCoversFullLineIncludingCollapsedPrefix() {
+        let source = "> a quoted line"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        for i in 0..<attributed.length {
+            XCTAssertEqual(attributed.attributes(at: i, effectiveRange: nil)[MarkdownEditorAttribute.blockquoteBar] as? Bool, true, "index \(i)")
+        }
+    }
+
+    func testBlockquoteBarDoesNotLeakIntoFollowingParagraph() {
+        let source = "> quoted\n\nnot quoted"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        let ns = source as NSString
+        let loc = ns.range(of: "not quoted").location
+        XCTAssertNil(attributed.attributes(at: loc, effectiveRange: nil)[MarkdownEditorAttribute.blockquoteBar])
+    }
+}
+
+final class MarkdownCheckboxToggleTests: XCTestCase {
+    func testUncheckedTogglesToChecked() {
+        XCTAssertEqual(MarkdownCheckboxToggle.toggledText(for: "[ ]"), "[x]")
+    }
+
+    func testCheckedLowercaseTogglesToUnchecked() {
+        XCTAssertEqual(MarkdownCheckboxToggle.toggledText(for: "[x]"), "[ ]")
+    }
+
+    func testCheckedUppercaseTogglesToUnchecked() {
+        XCTAssertEqual(MarkdownCheckboxToggle.toggledText(for: "[X]"), "[ ]")
+    }
 }
 
 final class MarkdownLiveVisibilityTests: XCTestCase {

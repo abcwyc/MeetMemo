@@ -62,6 +62,9 @@ final class MarkdownLiveLayoutManager: NSLayoutManager {
         let attrs = storage.attributes(at: charIndex, effectiveRange: &effective)
         guard attrs[MarkdownEditorAttribute.syntax] != nil else { return false }
 
+        if attrs[MarkdownEditorAttribute.alwaysHidden] as? Bool == true {
+            return true
+        }
         if attrs[MarkdownEditorAttribute.lineCommand] != nil {
             return !MarkdownLiveVisibility.isLineCommandVisible(charIndex: charIndex, caretLineRange: caretLineRange())
         }
@@ -116,6 +119,55 @@ final class MarkdownLiveLayoutManager: NSLayoutManager {
         }
     }
 
+    /// Draws a horizontal rule over each thematic-break line (whose literal
+    /// "---" is always zero-width via `setGlyphs`, so nothing else would be
+    /// visible there) and a vertical bar at the left edge of each blockquote
+    /// line. Runs after `super` so it layers on top of the normal selection/
+    /// background fill.
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        guard let storage = textStorage, let container = textContainers.first else { return }
+        let charRange = characterRange(forGlyphRange: glyphsToShow, actualGlyphRange: nil)
+        drawRuleLines(in: charRange, storage: storage, container: container, origin: origin)
+        drawBlockquoteBars(in: charRange, storage: storage, container: container, origin: origin)
+    }
+
+    private func drawRuleLines(in charRange: NSRange, storage: NSTextStorage, container: NSTextContainer, origin: NSPoint) {
+        storage.enumerateAttribute(MarkdownEditorAttribute.rule, in: charRange, options: []) { value, subrange, _ in
+            guard value as? Bool == true else { return }
+            let glyphRange = self.glyphRange(forCharacterRange: subrange, actualCharacterRange: nil)
+            guard glyphRange.length > 0 else { return }
+            let rect = self.boundingRect(forGlyphRange: glyphRange, in: container)
+            let y = origin.y + rect.midY
+            let inset: CGFloat = 4
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: origin.x + inset, y: y))
+            path.line(to: NSPoint(x: origin.x + max(container.size.width - inset, inset), y: y))
+            path.lineWidth = 1
+            NSColor.separatorColor.setStroke()
+            path.stroke()
+        }
+    }
+
+    private func drawBlockquoteBars(in charRange: NSRange, storage: NSTextStorage, container: NSTextContainer, origin: NSPoint) {
+        storage.enumerateAttribute(MarkdownEditorAttribute.blockquoteBar, in: charRange, options: []) { value, subrange, _ in
+            guard value as? Bool == true else { return }
+            let glyphRange = self.glyphRange(forCharacterRange: subrange, actualCharacterRange: nil)
+            guard glyphRange.length > 0 else { return }
+            let rect = self.boundingRect(forGlyphRange: glyphRange, in: container)
+            let barWidth: CGFloat = 3
+            let barInset: CGFloat = 6
+            let barRect = NSRect(
+                x: origin.x + rect.minX - barInset,
+                y: origin.y + rect.minY,
+                width: barWidth,
+                height: rect.height
+            )
+            NSColor.secondaryLabelColor.withAlphaComponent(0.5).setFill()
+            NSBezierPath(roundedRect: barRect, xRadius: 1.5, yRadius: 1.5).fill()
+        }
+    }
+
     /// Character ranges whose visibility can change when the caret moves to
     /// `selection`: the line(s) it touches, plus any inline command span
     /// adjacent to it. The caller invalidates glyphs/layout/display over the
@@ -139,6 +191,62 @@ final class MarkdownLiveLayoutManager: NSLayoutManager {
             return nil
         }
         return value.rangeValue
+    }
+}
+
+/// An `NSTextView` that intercepts clicks on a task-list checkbox range
+/// (tagged via `MarkdownEditorAttribute.checkbox`) and reports them through
+/// `onCheckboxToggle` instead of placing the caret — this is the
+/// "editing inside the rendered view" affordance for task items: clicking
+/// "[ ]"/"[x]" flips it in the source text, no separate edit mode needed.
+final class MarkdownLiveTextView: NSTextView {
+    var onCheckboxToggle: ((NSRange) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if let range = checkboxRange(at: event) {
+            onCheckboxToggle?(range)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let layoutManager, let textContainer, let storage = textStorage else { return }
+        storage.enumerateAttribute(MarkdownEditorAttribute.checkbox, in: NSRange(location: 0, length: storage.length), options: []) { value, subrange, _ in
+            guard value as? Bool == true else { return }
+            let glyphRange = layoutManager.glyphRange(forCharacterRange: subrange, actualCharacterRange: nil)
+            guard glyphRange.length > 0 else { return }
+            var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            rect.origin.x += textContainerOrigin.x
+            rect.origin.y += textContainerOrigin.y
+            addCursorRect(rect, cursor: .pointingHand)
+        }
+    }
+
+    private func checkboxRange(at event: NSEvent) -> NSRange? {
+        guard let layoutManager, let textContainer, let storage = textStorage else { return nil }
+        let viewPoint = convert(event.locationInWindow, from: nil)
+        let containerPoint = NSPoint(x: viewPoint.x - textContainerOrigin.x, y: viewPoint.y - textContainerOrigin.y)
+
+        var fraction: CGFloat = 0
+        let glyphIndex = layoutManager.glyphIndex(for: containerPoint, in: textContainer, fractionOfDistanceThroughGlyph: &fraction)
+        guard layoutManager.numberOfGlyphs > 0, glyphIndex < layoutManager.numberOfGlyphs else { return nil }
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard charIndex < storage.length else { return nil }
+
+        var effective = NSRange(location: 0, length: 0)
+        guard storage.attribute(MarkdownEditorAttribute.checkbox, at: charIndex, effectiveRange: &effective) as? Bool == true else {
+            return nil
+        }
+
+        // glyphIndex(for:in:) returns the *closest* glyph even for a click far
+        // outside any line — confirm the click actually landed within this
+        // checkbox's own bounding rect before treating it as a hit.
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: effective, actualCharacterRange: nil)
+        let rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        guard rect.insetBy(dx: -2, dy: -2).contains(containerPoint) else { return nil }
+        return effective
     }
 }
 
@@ -169,8 +277,11 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
         textContainer.widthTracksTextView = true
         layoutManager.addTextContainer(textContainer)
 
-        let textView = NSTextView(frame: .zero, textContainer: textContainer)
+        let textView = MarkdownLiveTextView(frame: .zero, textContainer: textContainer)
         textView.delegate = context.coordinator
+        textView.onCheckboxToggle = { [weak coordinator = context.coordinator] range in
+            coordinator?.toggleCheckbox(at: range)
+        }
         textView.isEditable = true
         textView.isSelectable = true
         textView.isRichText = false
@@ -271,6 +382,20 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
         func textDidEndEditing(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             commit(textView.string)
+        }
+
+        /// Flips the "[ ]"/"[x]" text at `range` in place, as a normal
+        /// undoable edit (`shouldChangeText`/`didChangeText`) so it restyles,
+        /// commits to the binding, and folds into the undo stack exactly like
+        /// a typed edit would.
+        func toggleCheckbox(at range: NSRange) {
+            guard let textView, let storage = textView.textStorage,
+                  range.location >= 0, NSMaxRange(range) <= storage.length else { return }
+            let current = (storage.string as NSString).substring(with: range)
+            let replacement = MarkdownCheckboxToggle.toggledText(for: current)
+            guard textView.shouldChangeText(in: range, replacementString: replacement) else { return }
+            storage.replaceCharacters(in: range, with: replacement)
+            textView.didChangeText()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

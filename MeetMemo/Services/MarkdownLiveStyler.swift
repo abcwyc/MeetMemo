@@ -14,6 +14,31 @@ enum MarkdownEditorAttribute {
     /// delimiter ranges ("**", "`", "[", "](url)"): visible while the caret
     /// intersects (or sits just after) the wrapped full-span range.
     static let commandSpan = NSAttributedString.Key("MeetMemoMarkdownCommandSpan")
+    /// Present (value `true`) on a range that is hidden unconditionally,
+    /// regardless of caret position (a thematic break's literal "---"): the
+    /// layout manager draws a replacement graphic (see `.rule`) in its place
+    /// instead of ever revealing the source characters.
+    static let alwaysHidden = NSAttributedString.Key("MeetMemoMarkdownAlwaysHidden")
+    /// Present (value `true`) on a thematic-break line's full range. The
+    /// layout manager draws a horizontal rule across this line.
+    static let rule = NSAttributedString.Key("MeetMemoMarkdownRule")
+    /// Present (value `true`) on a blockquote line's full range (including
+    /// its collapsed "> " prefix). The layout manager draws a vertical bar
+    /// at the line's left edge.
+    static let blockquoteBar = NSAttributedString.Key("MeetMemoMarkdownBlockquoteBar")
+    /// Present (value `true`) on exactly the 3-character "[ ]"/"[x]" range of
+    /// a task-list item. Never hidden — this only marks the range as
+    /// click-to-toggle for `MarkdownLiveTextView`.
+    static let checkbox = NSAttributedString.Key("MeetMemoMarkdownCheckbox")
+}
+
+/// Pure string transform for clicking a task-list checkbox: flips "[ ]" to
+/// "[x]" and any case of "[x]" back to "[ ]". Extracted as a standalone pure
+/// function so the toggle logic is unit-testable without an NSTextView.
+enum MarkdownCheckboxToggle {
+    static func toggledText(for current: String) -> String {
+        current.lowercased() == "[x]" ? "[ ]" : "[x]"
+    }
 }
 
 /// Pure decision logic for whether a tagged markdown-syntax range should be
@@ -46,12 +71,13 @@ enum MarkdownLiveVisibility {
 /// them (Obsidian/Typora-style live preview).
 ///
 /// Scope for this phase: headings, list markers (always shown, not
-/// collapsible), single-line blockquote collapse (subsequent lines of a
-/// multi-line quote keep their "> " visible — a follow-up refinement),
-/// fenced code blocks (monospace + background, fences not yet collapsible),
-/// and inline bold/italic/strikethrough/inline-code/link. Tables and
-/// thematic breaks are left as plain text in this phase (see the table
-/// attachment-view plan).
+/// collapsible) with click-to-toggle task checkboxes, single-line blockquote
+/// collapse with a drawn left bar (subsequent lines of a multi-line quote
+/// keep their "> " visible — a follow-up refinement), fenced code blocks
+/// (monospace + background, fences not yet collapsible), thematic breaks
+/// (drawn as a rule, source dashes always hidden), and inline
+/// bold/italic/strikethrough/inline-code/link. Tables are left as plain text
+/// in this phase (see the table attachment-view plan).
 enum MarkdownLiveStyler {
     struct Configuration {
         var baseFont: NSFont
@@ -98,7 +124,9 @@ enum MarkdownLiveStyler {
                 styleBlockquote(block: block, lines: lines, lineOffsets: lineOffsets, into: result, configuration: configuration)
             case .codeBlock:
                 styleCodeBlock(block: block, lineOffsets: lineOffsets, into: result, configuration: configuration)
-            case .table, .thematicBreak, .blank:
+            case .thematicBreak:
+                styleThematicBreak(block: block, lineOffsets: lineOffsets, into: result, configuration: configuration)
+            case .table, .blank:
                 break
             }
         }
@@ -160,13 +188,26 @@ enum MarkdownLiveStyler {
     ) {
         let lineIndex = block.lineRange.lowerBound
         let line = lines[lineIndex]
-        guard !line.isEmpty, let prefixCharCount = listMarkerPrefixCharCount(line) else { return }
+        guard !line.isEmpty, let (prefixCharCount, checkboxCharRange) = listItemPrefixComponents(line) else { return }
         let lineOffset = lineOffsets[lineIndex]
         let prefixUTF16Length = String(line.prefix(prefixCharCount)).utf16.count
         let markerRange = NSRange(location: lineOffset, length: prefixUTF16Length)
         // Markers are always shown (never tagged `.syntax`) — Obsidian-style
         // persistent structure markers, not collapsible delimiters.
         add(.foregroundColor, configuration.syntaxColor, markerRange, in: result)
+
+        if let checkboxCharRange {
+            let beforeCheckboxUTF16Length = String(line.prefix(checkboxCharRange.lowerBound)).utf16.count
+            let checkboxText = String(
+                line[line.index(line.startIndex, offsetBy: checkboxCharRange.lowerBound)..<line.index(line.startIndex, offsetBy: checkboxCharRange.upperBound)]
+            )
+            let checkboxRange = NSRange(location: lineOffset + beforeCheckboxUTF16Length, length: checkboxText.utf16.count)
+            add(MarkdownEditorAttribute.checkbox, true, checkboxRange, in: result)
+            add(.font, NSFont.monospacedSystemFont(ofSize: configuration.baseFont.pointSize, weight: .semibold), checkboxRange, in: result)
+            if checkboxText.lowercased() == "[x]" {
+                add(.foregroundColor, NSColor.controlAccentColor, checkboxRange, in: result)
+            }
+        }
 
         let contentText = String(line.dropFirst(prefixCharCount))
         styleInlineSpans(in: contentText, offset: lineOffset + prefixUTF16Length, into: result, configuration: configuration)
@@ -183,6 +224,7 @@ enum MarkdownLiveStyler {
             let prefixUTF16Length = String(line.prefix(prefixCharCount)).utf16.count
             let prefixRange = NSRange(location: lineOffset, length: prefixUTF16Length)
             add(.foregroundColor, configuration.quoteColor, prefixRange, in: result)
+            add(MarkdownEditorAttribute.blockquoteBar, true, NSRange(location: lineOffset, length: line.utf16.count), in: result)
 
             if lineIndex == block.lineRange.lowerBound {
                 // Only the first line's ">" collapses on caret-away for now;
@@ -210,6 +252,22 @@ enum MarkdownLiveStyler {
         // Fence markers ("```") are left visible in this phase — see the
         // type-level doc comment; a code-block "chrome" pass (language
         // label, copy button) is a natural place to revisit this.
+    }
+
+    private static func styleThematicBreak(
+        block: Block, lineOffsets: [Int],
+        into result: NSMutableAttributedString, configuration: Configuration
+    ) {
+        let lineIndex = block.lineRange.lowerBound
+        let length = block.rawText.utf16.count
+        guard length > 0 else { return }
+        let range = NSRange(location: lineOffsets[lineIndex], length: length)
+        // Unlike headings/blockquotes, the literal "---" never reappears on
+        // caret — there's nothing useful to edit character-by-character in a
+        // rule; the layout manager draws a horizontal line in its place.
+        add(MarkdownEditorAttribute.syntax, true, range, in: result)
+        add(MarkdownEditorAttribute.alwaysHidden, true, range, in: result)
+        add(MarkdownEditorAttribute.rule, true, range, in: result)
     }
 
     // MARK: - Inline styling
@@ -289,7 +347,11 @@ enum MarkdownLiveStyler {
         return 1
     }
 
-    private static func listMarkerPrefixCharCount(_ line: String) -> Int? {
+    /// Returns the list item's marker-prefix character count (dash/asterisk/
+    /// "N." plus optional "[ ]"/"[x]" checkbox, plus the trailing space(s)),
+    /// and, if present, the checkbox's own character range within `line`
+    /// (start..<end, exactly 3 characters: "[ ]" or "[x]"/"[X]").
+    private static func listItemPrefixComponents(_ line: String) -> (prefixCharCount: Int, checkboxCharRange: Range<Int>?)? {
         let leadingSpaces = line.prefix(while: { $0 == " " }).count
         var idx = line.index(line.startIndex, offsetBy: leadingSpaces)
         var count = leadingSpaces
@@ -316,17 +378,22 @@ enum MarkdownLiveStyler {
         }
 
         let rest = line[idx...]
+        var checkboxCharRange: Range<Int>?
         if rest.hasPrefix("[ ] ") {
+            checkboxCharRange = count..<(count + 3)
             count += 4
         } else if rest == "[ ]" {
+            checkboxCharRange = count..<(count + 3)
             count += 3
         } else if rest.lowercased().hasPrefix("[x] ") {
+            checkboxCharRange = count..<(count + 3)
             count += 4
         } else if rest.lowercased() == "[x]" {
+            checkboxCharRange = count..<(count + 3)
             count += 3
         }
 
-        return count
+        return (count, checkboxCharRange)
     }
 
     private static func headingFont(level: Int, base: NSFont) -> NSFont {
