@@ -26,26 +26,27 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     let documentId: String
     var readOnly: Bool
 
+    /// Custom scheme the bundled web editor loads under, instead of
+    /// `file://` — WKWebView's `file://` origin is unreliable for
+    /// `<script type="module">` (our entry point), and a custom
+    /// `WKURLSchemeHandler` origin is treated as a real web origin instead,
+    /// which is the standard fix for embedding a built web app bundle in a
+    /// WKWebView.
+    static let scheme = "meetmemo-editor"
+
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        configuration.setURLSchemeHandler(BundleResourceSchemeHandler(), forURLScheme: Self.scheme)
         configuration.userContentController.add(context.coordinator, name: "markdownChanged")
         configuration.userContentController.add(context.coordinator, name: "linkClicked")
+        configuration.userContentController.add(context.coordinator, name: "editorReady")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.underPageBackgroundColor = .clear
         context.coordinator.webView = webView
 
-        // No `subdirectory:` — Xcode's synchronized resource group copies
-        // loose files into Contents/Resources/ as a flat directory (any
-        // MarkdownEditorWeb/ nesting from the source tree is flattened
-        // away at build time), and the web bundle itself is built flat to
-        // match (see web/markdown-editor/vite.config.ts).
-        if let indexURL = Bundle.main.url(forResource: "index", withExtension: "html") {
-            webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
-        } else {
-            assertionFailure("index.html (the notes web editor bundle) not found in the app bundle — did it get built? See web/markdown-editor/README.md.")
-        }
+        webView.load(URLRequest(url: URL(string: "\(Self.scheme)://local/index.html")!))
 
         return webView
     }
@@ -58,6 +59,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "markdownChanged")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "linkClicked")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "editorReady")
     }
 
     func makeCoordinator() -> Coordinator {
@@ -68,7 +70,21 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         var text: Binding<String>
         weak var webView: WKWebView?
 
-        private var isPageReady = false
+        /// True once the JS side's `editorReady` message has arrived —
+        /// meaning `window.__meetmemoBridge` genuinely exists and it's safe
+        /// to call `.load(...)` on it. Deliberately *not* set from
+        /// `didFinish navigation`: that fires as soon as the page/module
+        /// script finishes loading, which can race ahead of React's
+        /// `useEffect` (where the bridge object gets attached) by a few
+        /// milliseconds. A push that lands in that window calls a
+        /// nonexistent `window.__meetmemoBridge.load` — silently, since the
+        /// call site defensively no-ops rather than throwing — and because
+        /// `push()` unconditionally records the state as delivered, it was
+        /// never retried: the editor stayed permanently blank for that
+        /// document. Waiting for the JS side's own readiness signal instead
+        /// of inferring it from a page-load event closes that race
+        /// entirely, rather than papering over it with a retry/delay.
+        private var isBridgeReady = false
         private var pendingLoad: LoadState?
         private var lastLoaded: LoadState?
 
@@ -80,14 +96,6 @@ struct MarkdownWebEditorView: NSViewRepresentable {
 
         init(text: Binding<String>) {
             self.text = text
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            isPageReady = true
-            if let pending = pendingLoad {
-                push(pending)
-                pendingLoad = nil
-            }
         }
 
         /// Called on every SwiftUI update pass (including ones triggered by
@@ -103,7 +111,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
             let state = LoadState(documentId: documentId, markdown: markdown, readOnly: readOnly)
             guard state.documentId != lastLoaded?.documentId || state.readOnly != lastLoaded?.readOnly else { return }
 
-            guard isPageReady else {
+            guard isBridgeReady else {
                 pendingLoad = state
                 return
             }
@@ -132,9 +140,61 @@ struct MarkdownWebEditorView: NSViewRepresentable {
             case "linkClicked":
                 guard let urlString = message.body as? String, let url = URL(string: urlString) else { return }
                 NSWorkspace.shared.open(url)
+            case "editorReady":
+                isBridgeReady = true
+                if let pending = pendingLoad {
+                    push(pending)
+                    pendingLoad = nil
+                }
             default:
                 break
             }
         }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            NSLog("[MarkdownWebEditorView] navigation failed: %@", error.localizedDescription)
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            NSLog("[MarkdownWebEditorView] provisional navigation failed: %@", error.localizedDescription)
+        }
     }
+}
+
+/// Serves the bundled web editor's files (flat in Contents/Resources/, see
+/// vite.config.ts) over a custom scheme instead of `file://`. Requests are
+/// matched by filename only (via `Bundle.main.url(forResource:withExtension:)`),
+/// independent of the request path, since Xcode's synchronized resource
+/// group already flattens any source-tree nesting away at build time.
+private final class BundleResourceSchemeHandler: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url else {
+            urlSchemeTask.didFailWithError(URLError(.badURL))
+            return
+        }
+        let filename = (url.path as NSString).lastPathComponent
+        let ext = (filename as NSString).pathExtension
+        let base = (filename as NSString).deletingPathExtension
+        guard let fileURL = Bundle.main.url(forResource: base, withExtension: ext),
+              let data = try? Data(contentsOf: fileURL) else {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+
+        let mimeType: String
+        switch ext {
+        case "html": mimeType = "text/html"
+        case "js": mimeType = "application/javascript"
+        case "css": mimeType = "text/css"
+        case "json": mimeType = "application/json"
+        default: mimeType = "application/octet-stream"
+        }
+
+        let response = URLResponse(url: url, mimeType: mimeType, expectedContentLength: data.count, textEncodingName: "utf-8")
+        urlSchemeTask.didReceive(response)
+        urlSchemeTask.didReceive(data)
+        urlSchemeTask.didFinish()
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
 }

@@ -36,6 +36,7 @@ declare global {
       messageHandlers?: {
         markdownChanged?: { postMessage: (body: string) => void };
         linkClicked?: { postMessage: (url: string) => void };
+        editorReady?: { postMessage: (body: string) => void };
       };
     };
     __meetmemoBridge?: {
@@ -69,6 +70,14 @@ function App() {
         setDoc(payload);
       },
     };
+    // Tell Swift the bridge object actually exists now, so it knows it's
+    // safe to call window.__meetmemoBridge.load(...) — see
+    // MarkdownWebEditorView.swift's isBridgeReady for why this can't just
+    // be "the page finished loading" (didFinish navigation): that fires
+    // before this effect is guaranteed to have run, and a push that races
+    // ahead of it silently no-ops (the bridge object isn't there yet) with
+    // no retry, permanently blanking the editor.
+    window.webkit?.messageHandlers?.editorReady?.postMessage('');
 
     return () => {
       media.removeEventListener('change', onChange);
@@ -82,8 +91,8 @@ function App() {
     window.webkit?.messageHandlers?.markdownChanged?.postMessage(text);
   };
 
-  // Nothing to render until Swift's first load() call arrives (typically
-  // milliseconds after didFinish navigation).
+  // Nothing to render until Swift's first load() call arrives — which it
+  // sends once it receives our editorReady message above.
   if (!doc) return null;
 
   return (
