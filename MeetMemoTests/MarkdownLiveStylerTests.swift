@@ -156,13 +156,82 @@ final class MarkdownLiveStylerTests: XCTestCase {
 
     // MARK: - Table / thematic break left untouched (P1 scope)
 
-    func testTableCellsAreNotTaggedAsSyntaxInThisPhase() {
+    // MARK: - P3: table hidden + reserved height
+
+    func testTableSourceIsAlwaysHiddenLikeAThematicBreak() {
         let source = "| A | B |\n| --- | --- |\n| 1 | 2 |"
         let attributed = MarkdownLiveStyler.attributedString(for: source)
         for i in 0..<attributed.length {
             let attrs = attributed.attributes(at: i, effectiveRange: nil)
-            XCTAssertNil(attrs[MarkdownEditorAttribute.syntax], "tables are out of scope for the text-based live styler (index \(i))")
+            XCTAssertEqual(attrs[MarkdownEditorAttribute.syntax] as? Bool, true, "index \(i)")
+            XCTAssertEqual(attrs[MarkdownEditorAttribute.alwaysHidden] as? Bool, true, "index \(i)")
+            XCTAssertNil(attrs[MarkdownEditorAttribute.lineCommand], "a table is not caret-revealable, index \(i)")
         }
+    }
+
+    func testTableReservesLineHeightViaParagraphStyle() {
+        let source = "| A | B |\n| --- | --- |\n| 1 | 2 |"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        guard let style = attributed.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle else {
+            return XCTFail("expected a paragraphStyle attribute on the table's first character")
+        }
+        let expected = MarkdownLiveStyler.reservedLineHeight(forTableRowCount: 1, rowHeight: MarkdownLiveStyler.Configuration.standard().tableRowHeight)
+        XCTAssertEqual(style.minimumLineHeight, expected, accuracy: 0.001)
+    }
+
+    func testSurroundingTextUnaffectedByHiddenTable() {
+        let source = "before\n| A | B |\n| --- | --- |\n| 1 | 2 |\nafter"
+        let attributed = MarkdownLiveStyler.attributedString(for: source)
+        let ns = source as NSString
+        for word in ["before", "after"] {
+            let attrs = attributed.attributes(at: ns.range(of: word).location, effectiveRange: nil)
+            XCTAssertNil(attrs[MarkdownEditorAttribute.syntax])
+            XCTAssertNil(attrs[MarkdownEditorAttribute.alwaysHidden])
+        }
+    }
+
+    // MARK: - P3: reservedLineHeight formula
+
+    func testReservedLineHeightFormulaSumsToExpectedTotal() {
+        // header + rows get `rowHeight` each; separator gets none; the total
+        // across all N=(rows+2) source lines must equal that sum exactly.
+        for dataRowCount in [0, 1, 3, 10] {
+            let rowHeight: CGFloat = 34
+            let perLine = MarkdownLiveStyler.reservedLineHeight(forTableRowCount: dataRowCount, rowHeight: rowHeight)
+            let totalLines = CGFloat(dataRowCount + 2)
+            let expectedTotal = CGFloat(dataRowCount + 1) * rowHeight
+            XCTAssertEqual(perLine * totalLines, expectedTotal, accuracy: 0.001, "dataRowCount=\(dataRowCount)")
+        }
+    }
+
+    // MARK: - P3: tableBlocks(in:) query
+
+    func testTableBlocksReturnsRangeAndParsedTable() {
+        let source = "before\n\n| Q | A |\n| --- | --- |\n| x | y |\n\nafter"
+        let blocks = MarkdownLiveStyler.tableBlocks(in: source)
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(blocks[0].table.headers, ["Q", "A"])
+        XCTAssertEqual(blocks[0].table.rows, [["x", "y"]])
+
+        let ns = source as NSString
+        let expectedRange = ns.range(of: "| Q | A |\n| --- | --- |\n| x | y |")
+        XCTAssertEqual(blocks[0].range, expectedRange)
+    }
+
+    func testTableBlocksReturnsEmptyForNoTables() {
+        XCTAssertEqual(MarkdownLiveStyler.tableBlocks(in: "just a paragraph, no pipes"), [])
+    }
+
+    func testTableBlocksFindsMultipleTablesInOrder() {
+        // MarkdownDocumentModel's table detection requires >= 2 columns
+        // (matching parseCells' isTableRow check), so single-column tables
+        // are exercised elsewhere; use 2-column tables here.
+        let source = "| A | B |\n| --- | --- |\n| 1 | 2 |\n\ntext between\n\n| C | D |\n| --- | --- |\n| 3 | 4 |"
+        let blocks = MarkdownLiveStyler.tableBlocks(in: source)
+        XCTAssertEqual(blocks.count, 2)
+        XCTAssertEqual(blocks[0].table.headers, ["A", "B"])
+        XCTAssertEqual(blocks[1].table.headers, ["C", "D"])
+        XCTAssertLessThan(blocks[0].range.location, blocks[1].range.location)
     }
 
     // MARK: - P2: thematic break rule
@@ -315,5 +384,41 @@ final class MarkdownLiveVisibilityTests: XCTestCase {
         let span = NSRange(location: 5, length: 10) // [5, 15)
         let caret = NSRange(location: 15, length: 3) // [15, 18) — touches but doesn't overlap
         XCTAssertFalse(MarkdownLiveVisibility.spanIsActive(span, caret: caret))
+    }
+}
+
+final class MarkdownTableSerializerTests: XCTestCase {
+    func testSerializesHeaderSeparatorAndRows() {
+        let markdown = MarkdownTableSerializer.serialize(headers: ["Q", "A"], rows: [["x", "y"], ["1", "2"]])
+        XCTAssertEqual(markdown, "| Q | A |\n| --- | --- |\n| x | y |\n| 1 | 2 |")
+    }
+
+    func testRoundTripsThroughMarkdownDocumentModelParser() {
+        let markdown = MarkdownTableSerializer.serialize(headers: ["问题", "决策人"], rows: [["A 失真", "张三"]])
+        let blocks = MarkdownDocumentModel.parse(markdown)
+        XCTAssertEqual(blocks.count, 1)
+        guard case .table(let table) = blocks[0].kind else { return XCTFail("expected table") }
+        XCTAssertEqual(table.headers, ["问题", "决策人"])
+        XCTAssertEqual(table.rows, [["A 失真", "张三"]])
+    }
+
+    func testTrimsWhitespaceFromCells() {
+        let markdown = MarkdownTableSerializer.serialize(headers: ["  A  "], rows: [[" b "]])
+        XCTAssertEqual(markdown, "| A |\n| --- |\n| b |")
+    }
+
+    func testPadsShortRowToHeaderColumnCount() {
+        let markdown = MarkdownTableSerializer.serialize(headers: ["A", "B", "C"], rows: [["1"]])
+        XCTAssertEqual(markdown, "| A | B | C |\n| --- | --- | --- |\n| 1 |  |  |")
+    }
+
+    func testTruncatesLongRowToHeaderColumnCount() {
+        let markdown = MarkdownTableSerializer.serialize(headers: ["A"], rows: [["1", "extra", "more"]])
+        XCTAssertEqual(markdown, "| A |\n| --- |\n| 1 |")
+    }
+
+    func testEmptyRowsProducesHeaderAndSeparatorOnly() {
+        let markdown = MarkdownTableSerializer.serialize(headers: ["A", "B"], rows: [])
+        XCTAssertEqual(markdown, "| A | B |\n| --- | --- |")
     }
 }

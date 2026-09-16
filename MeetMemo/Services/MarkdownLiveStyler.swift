@@ -76,8 +76,11 @@ enum MarkdownLiveVisibility {
 /// keep their "> " visible — a follow-up refinement), fenced code blocks
 /// (monospace + background, fences not yet collapsible), thematic breaks
 /// (drawn as a rule, source dashes always hidden), and inline
-/// bold/italic/strikethrough/inline-code/link. Tables are left as plain text
-/// in this phase (see the table attachment-view plan).
+/// bold/italic/strikethrough/inline-code/link. Tables are hidden (source
+/// dashes/pipes always hidden, like a thematic break) and reserve vertical
+/// space via `.paragraphStyle` line-height, sized for `MarkdownLiveEditorView`
+/// to float a real, editable `MarkdownLiveTableOverlayView` over — see
+/// `tableBlocks(in:)`.
 enum MarkdownLiveStyler {
     struct Configuration {
         var baseFont: NSFont
@@ -87,6 +90,14 @@ enum MarkdownLiveStyler {
         var codeBackground: NSColor
         var quoteColor: NSColor
         var linkColor: NSColor
+        /// Approximate per-row height used to reserve vertical space for a
+        /// hidden table block (see `styleTable`). Not a measurement of the
+        /// actual overlay content — a cell whose text wraps to multiple
+        /// lines can need more height than this reserves, in which case the
+        /// overlay may visually overlap the text that follows it. Real
+        /// measurement-then-reflow is a follow-up; this covers the common
+        /// case of short, single-line meeting-notes table cells.
+        var tableRowHeight: CGFloat
 
         static func standard(baseFontSize: CGFloat = NSFont.systemFontSize) -> Configuration {
             Configuration(
@@ -96,9 +107,38 @@ enum MarkdownLiveStyler {
                 codeFont: .monospacedSystemFont(ofSize: baseFontSize - 1, weight: .regular),
                 codeBackground: NSColor.secondaryLabelColor.withAlphaComponent(0.12),
                 quoteColor: .secondaryLabelColor,
-                linkColor: .linkColor
+                linkColor: .linkColor,
+                tableRowHeight: 34
             )
         }
+    }
+
+    /// A table block's position in the source text plus its parsed content —
+    /// everything `MarkdownLiveEditorView` needs to float/position/render an
+    /// overlay view over the block's (hidden) source range.
+    struct TableBlockInfo: Equatable {
+        let range: NSRange
+        let table: MarkdownDocumentModel.Table
+    }
+
+    /// Locates every table block in `text` and its character range. A
+    /// second, independent parse from `attributedString(for:)` — kept
+    /// separate rather than threading a result type through the existing,
+    /// already-tested `attributedString(for:)` API. Cheap enough for
+    /// meeting-notes-sized documents.
+    static func tableBlocks(in text: String) -> [TableBlockInfo] {
+        guard !text.isEmpty else { return [] }
+        let lines = text.components(separatedBy: .newlines)
+        let lineOffsets = lineStartOffsets(for: lines)
+        let blocks = MarkdownDocumentModel.parse(text)
+
+        var result: [TableBlockInfo] = []
+        for block in blocks {
+            guard case .table(let table) = block.kind, let first = block.lineRange.first else { continue }
+            let range = NSRange(location: lineOffsets[first], length: block.rawText.utf16.count)
+            result.append(TableBlockInfo(range: range, table: table))
+        }
+        return result
     }
 
     static func attributedString(for text: String, configuration: Configuration = .standard()) -> NSAttributedString {
@@ -126,7 +166,9 @@ enum MarkdownLiveStyler {
                 styleCodeBlock(block: block, lineOffsets: lineOffsets, into: result, configuration: configuration)
             case .thematicBreak:
                 styleThematicBreak(block: block, lineOffsets: lineOffsets, into: result, configuration: configuration)
-            case .table, .blank:
+            case .table(let table):
+                styleTable(block: block, table: table, lineOffsets: lineOffsets, into: result, configuration: configuration)
+            case .blank:
                 break
             }
         }
@@ -268,6 +310,42 @@ enum MarkdownLiveStyler {
         add(MarkdownEditorAttribute.syntax, true, range, in: result)
         add(MarkdownEditorAttribute.alwaysHidden, true, range, in: result)
         add(MarkdownEditorAttribute.rule, true, range, in: result)
+    }
+
+    /// Hides a table block's raw pipe-table source (same unconditional-hide
+    /// treatment as a thematic break — there's no useful way to edit GFM
+    /// table syntax character-by-character) and reserves vertical space for
+    /// `MarkdownLiveEditorView`'s floating table overlay by giving every
+    /// line in the block the same `.paragraphStyle` line height, sized so
+    /// the N hidden source lines (header + separator + rows) together add up
+    /// to roughly `(rows.count + 1) * tableRowHeight` — the overlay's
+    /// expected rendered height for single-line cell content.
+    private static func styleTable(
+        block: Block, table: MarkdownDocumentModel.Table, lineOffsets: [Int],
+        into result: NSMutableAttributedString, configuration: Configuration
+    ) {
+        guard let first = block.lineRange.first else { return }
+        let range = NSRange(location: lineOffsets[first], length: block.rawText.utf16.count)
+        add(MarkdownEditorAttribute.syntax, true, range, in: result)
+        add(MarkdownEditorAttribute.alwaysHidden, true, range, in: result)
+
+        let perLineHeight = reservedLineHeight(forTableRowCount: table.rows.count, rowHeight: configuration.tableRowHeight)
+        let style = NSMutableParagraphStyle()
+        style.minimumLineHeight = perLineHeight
+        style.maximumLineHeight = perLineHeight
+        add(.paragraphStyle, style, range, in: result)
+    }
+
+    /// The per-source-line height that makes a table block's total N lines
+    /// (header + separator + `dataRowCount` rows) sum to the overlay's
+    /// expected rendered height: `(dataRowCount + 1) * rowHeight` (the
+    /// header row plus each data row get one row's height; the separator
+    /// contributes none of its own). A pure function so the reservation math
+    /// is unit-testable without laying out any text.
+    static func reservedLineHeight(forTableRowCount dataRowCount: Int, rowHeight: CGFloat) -> CGFloat {
+        let totalSourceLines = CGFloat(dataRowCount + 2) // header + separator + rows
+        let totalRenderedHeight = CGFloat(dataRowCount + 1) * rowHeight // header + rows
+        return totalRenderedHeight / totalSourceLines
     }
 
     // MARK: - Inline styling

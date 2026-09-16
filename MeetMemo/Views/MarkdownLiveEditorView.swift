@@ -300,7 +300,9 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
 
         context.coordinator.textView = textView
         context.coordinator.layoutManager = layoutManager
+        layoutManager.delegate = context.coordinator
         context.coordinator.applyStyledText(text, selection: nil)
+        context.coordinator.syncTableOverlays()
 
         scrollView.documentView = textView
         return scrollView
@@ -324,12 +326,20 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
         Coordinator(text: $text, fontSize: fontSize)
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, NSLayoutManagerDelegate {
         private var text: Binding<String>
         private let fontSize: CGFloat
         weak var textView: NSTextView?
         weak var layoutManager: MarkdownLiveLayoutManager?
         private(set) var lastAppliedText: String?
+
+        /// Kept in lockstep with the text on every restyle/layout pass — the
+        /// single source of truth an overlay's `onCommit` closure consults
+        /// (by index, not a captured range) so a commit always targets the
+        /// table's *current* position even if unrelated edits elsewhere
+        /// shifted it after the overlay view was created. See `syncTableOverlays()`.
+        private var currentTableBlocks: [MarkdownLiveStyler.TableBlockInfo] = []
+        private var tableOverlayViews: [NSHostingView<MarkdownLiveTableOverlayView>] = []
 
         init(text: Binding<String>, fontSize: CGFloat) {
             self.text = text
@@ -354,6 +364,7 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
                 textView.selectedRanges = selection
             }
             syncActiveRange()
+            syncTableOverlays()
         }
 
         /// Reapplies styling attributes only (characters are identical) after
@@ -376,6 +387,7 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
             let value = textView.string
             restyleInPlace(value)
             syncActiveRange()
+            syncTableOverlays()
             commit(value)
         }
 
@@ -415,6 +427,69 @@ struct MarkdownLiveEditorView: NSViewRepresentable {
         private func syncActiveRange() {
             guard let textView, let layoutManager else { return }
             layoutManager.activeCharacterRange = textView.selectedRange()
+        }
+
+        /// Fires whenever TextKit finishes a layout pass — text edits,
+        /// window/view resizes that reflow wrapped paragraphs, anything.
+        /// This is the one hook that reliably catches every reason a table
+        /// block's on-screen position could have moved, not just edits to
+        /// the table itself.
+        func layoutManager(_ layoutManager: NSLayoutManager, didCompleteLayoutFor textContainer: NSTextContainer?, atEnd layoutFinishedFlag: Bool) {
+            guard layoutFinishedFlag else { return }
+            syncTableOverlays()
+        }
+
+        /// Rebuilds or repositions the floating table overlay views so they
+        /// track their (hidden) source ranges. Table *content* changing
+        /// (edit, add/remove row) tears down and recreates the overlay for
+        /// that table; content staying the same but position shifting
+        /// (an edit elsewhere, a resize) just moves the existing view's
+        /// frame — cheap, and avoids losing in-progress cell-edit focus for
+        /// tables the user isn't touching.
+        func syncTableOverlays() {
+            guard let textView, let layoutManager, let container = textView.textContainer else { return }
+            let newBlocks = MarkdownLiveStyler.tableBlocks(in: textView.string)
+
+            let contentChanged = newBlocks.count != currentTableBlocks.count
+                || zip(newBlocks, currentTableBlocks).contains { $0.table != $1.table }
+
+            if contentChanged {
+                tableOverlayViews.forEach { $0.removeFromSuperview() }
+                tableOverlayViews = newBlocks.enumerated().map { index, info in
+                    let hosting = NSHostingView(
+                        rootView: MarkdownLiveTableOverlayView(table: info.table) { [weak self] headers, rows in
+                            self?.commitTableEdit(atIndex: index, headers: headers, rows: rows)
+                        }
+                    )
+                    textView.addSubview(hosting)
+                    return hosting
+                }
+            }
+            currentTableBlocks = newBlocks
+
+            for (info, view) in zip(newBlocks, tableOverlayViews) {
+                let glyphRange = layoutManager.glyphRange(forCharacterRange: info.range, actualCharacterRange: nil)
+                guard glyphRange.length > 0 else { continue }
+                var rect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: container)
+                rect.origin.x += textView.textContainerOrigin.x
+                rect.origin.y += textView.textContainerOrigin.y
+                rect.size.width = max(container.size.width, 0)
+                view.frame = rect
+            }
+        }
+
+        /// Re-serializes an edited table's grid and replaces the block's
+        /// *current* source range (looked up fresh via `currentTableBlocks`,
+        /// not a range captured when the overlay was created — see that
+        /// property's doc comment) as a normal undoable edit.
+        private func commitTableEdit(atIndex index: Int, headers: [String], rows: [[String]]) {
+            guard let textView, let storage = textView.textStorage, currentTableBlocks.indices.contains(index) else { return }
+            let range = currentTableBlocks[index].range
+            guard range.location >= 0, NSMaxRange(range) <= storage.length else { return }
+            let replacement = MarkdownTableSerializer.serialize(headers: headers, rows: rows)
+            guard textView.shouldChangeText(in: range, replacementString: replacement) else { return }
+            storage.replaceCharacters(in: range, with: replacement)
+            textView.didChangeText()
         }
 
         private func commit(_ value: String) {
