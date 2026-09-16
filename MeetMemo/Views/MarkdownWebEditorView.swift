@@ -26,6 +26,12 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     let documentId: String
     var readOnly: Bool
 
+    /// Drives the editor's palette. Read from the SwiftUI environment rather
+    /// than the web view's `effectiveAppearance` so it tracks the app's own
+    /// light/dark setting (`AppearanceManager` forces it app-wide) at the
+    /// same moment the rest of the UI does.
+    @Environment(\.colorScheme) private var colorScheme
+
     /// Custom scheme the bundled web editor loads under, instead of
     /// `file://` — WKWebView's `file://` origin is unreliable for
     /// `<script type="module">` (our entry point), and a custom
@@ -53,6 +59,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.text = $text
+        context.coordinator.syncTheme(isDark: colorScheme == .dark)
         context.coordinator.sync(documentId: documentId, markdown: text, readOnly: readOnly)
     }
 
@@ -87,6 +94,8 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         private var isBridgeReady = false
         private var pendingLoad: LoadState?
         private var lastLoaded: LoadState?
+        private var appliedThemeIsDark: Bool?
+        private var pendingThemeIsDark: Bool?
 
         private struct LoadState: Equatable {
             let documentId: String
@@ -118,6 +127,36 @@ struct MarkdownWebEditorView: NSViewRepresentable {
             push(state)
         }
 
+        /// Re-pushes the palette only when it actually changed. Called on
+        /// every SwiftUI update pass, so it has to be cheap in the common
+        /// (unchanged) case.
+        func syncTheme(isDark: Bool) {
+            guard isDark != appliedThemeIsDark else { return }
+            guard isBridgeReady else {
+                pendingThemeIsDark = isDark
+                return
+            }
+            applyTheme(isDark: isDark)
+        }
+
+        private func applyTheme(isDark: Bool) {
+            appliedThemeIsDark = isDark
+            let variables = MarkdownEditorTheme.cssVariables(isDark: isDark)
+            guard let data = try? JSONSerialization.data(withJSONObject: variables),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            // `data-theme` still matters for the handful of variables we
+            // don't override (code-syntax colors, find highlights): it picks
+            // which of the package's own palettes those fall back to.
+            let script = """
+            (function (theme, vars) {
+              document.documentElement.setAttribute('data-theme', theme);
+              var style = document.documentElement.style;
+              Object.keys(vars).forEach(function (key) { style.setProperty(key, vars[key]); });
+            })('\(isDark ? "dark" : "light")', \(json));
+            """
+            webView?.evaluateJavaScript(script)
+        }
+
         private func push(_ state: LoadState) {
             lastLoaded = state
             struct Payload: Encodable {
@@ -142,6 +181,12 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                 NSWorkspace.shared.open(url)
             case "editorReady":
                 isBridgeReady = true
+                // Theme first, so the editor's first paint is already in the
+                // right palette instead of flashing the package's defaults.
+                if let pendingThemeIsDark {
+                    applyTheme(isDark: pendingThemeIsDark)
+                    self.pendingThemeIsDark = nil
+                }
                 if let pending = pendingLoad {
                     push(pending)
                     pendingLoad = nil

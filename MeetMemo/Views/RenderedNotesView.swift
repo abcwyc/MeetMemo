@@ -25,7 +25,10 @@ private struct MarkdownTextView: NSViewRepresentable {
     let text: String
     let isScrollable: Bool
 
-    private static let contentInset = NSSize(width: 16, height: 16)
+    private static let contentInset = NSSize(
+        width: MeetingNotesTypography.contentInset,
+        height: MeetingNotesTypography.contentInset
+    )
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -121,7 +124,7 @@ private struct MarkdownTextView: NSViewRepresentable {
 // MARK: - Markdown → NSAttributedString
 
 private enum MarkdownAttributedStringBuilder {
-    static let bodyFontSize: CGFloat = 13
+    static let bodyFontSize = MeetingNotesTypography.bodyFontSize
 
     static func make(from text: String) -> NSAttributedString {
         let result = NSMutableAttributedString()
@@ -361,19 +364,11 @@ private enum MarkdownAttributedStringBuilder {
     }
 
     private static func headingSize(for level: Int) -> CGFloat {
-        switch level {
-        case 1: return 18
-        case 2: return 16
-        case 3: return 15
-        default: return 14
-        }
+        MeetingNotesTypography.headingSize(for: level)
     }
 
     private static func headingWeight(for level: Int) -> NSFont.Weight {
-        switch level {
-        case 1, 2: return .semibold
-        default: return .medium
-        }
+        MeetingNotesTypography.headingWeight(for: level)
     }
 
     private static func listItemInfo(for line: String) -> (indentLevel: Int, bullet: String, content: String)? {

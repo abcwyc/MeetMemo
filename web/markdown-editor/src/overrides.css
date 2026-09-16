@@ -1,0 +1,42 @@
+/* Structural overrides for the embedded notes editor.
+ *
+ * Imported *after* '@atomic-editor/editor/styles.css' in main.tsx so these
+ * land later in the bundled stylesheet and win on equal specificity — don't
+ * reorder those imports. Selectors deliberately mirror the package's own
+ * two-class specificity (.atomic-cm-editor .cm-content) so they also beat
+ * CodeMirror's generated theme rules, which CM6 injects at the *top* of
+ * <head> precisely so external CSS can override them.
+ *
+ * Purely structural values live here; anything that depends on the app's
+ * appearance or the user's accent color is injected natively instead — see
+ * MarkdownEditorTheme.swift.
+ */
+
+/* The package ships an 8px gutter. Match RenderedNotesView's 16pt
+ * textContainerInset so text doesn't sit flush against the rounded card
+ * edge — which matters more now that the column fills the full pane width
+ * (--atomic-editor-measure: 100%) instead of being centered in it. */
+.atomic-cm-editor .cm-content {
+  padding-inline: 16px;
+}
+
+/* The package reserves 40vh of trailing scroll room (typewriter-style
+ * centering). In a short embedded pane that's a lot of dead space below a
+ * two-paragraph note; half of it still lets the last line scroll clear of
+ * the bottom edge. */
+.atomic-cm-editor .cm-content {
+  padding-bottom: 20vh;
+}
+
+/* The app's own headings are semibold/medium (see
+ * MeetingNotesTypography.headingWeight); the package's are bold. Sizes need
+ * no override: they're em-relative (1.35/1.2/1.1), so pinning the body to
+ * 13px already lands them at ~17.6/15.6/14.3 against the native 18/16/15. */
+.cm-line.cm-atomic-h1,
+.cm-line.cm-atomic-h2 {
+  font-weight: 600;
+}
+
+.cm-line.cm-atomic-h3 {
+  font-weight: 500;
+}

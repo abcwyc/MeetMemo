@@ -2,6 +2,9 @@ import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AtomicCodeMirrorEditor } from '@atomic-editor/editor';
 import '@atomic-editor/editor/styles.css';
+// Must come after the package's stylesheet — see the header comment in
+// overrides.css for why the order is load-bearing.
+import './overrides.css';
 
 // Bridge contract with MarkdownWebEditorView.swift (WKScriptMessageHandler +
 // evaluateJavaScript):
@@ -45,11 +48,6 @@ declare global {
   }
 }
 
-function applySystemTheme() {
-  const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-}
-
 function App() {
   const [doc, setDoc] = useState<LoadPayload | null>(null);
   // Distinguishes "this text change came from the editor itself" (already
@@ -59,11 +57,10 @@ function App() {
   const lastEmittedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    applySystemTheme();
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const onChange = () => applySystemTheme();
-    media.addEventListener('change', onChange);
-
+    // Theme (palette + type scale) is pushed in natively by
+    // MarkdownEditorTheme.swift rather than derived from
+    // prefers-color-scheme: this app drives its own light/dark setting, so
+    // the system-level media query isn't the authority here.
     window.__meetmemoBridge = {
       load: (payload) => {
         lastEmittedRef.current = payload.markdown;
@@ -80,7 +77,6 @@ function App() {
     window.webkit?.messageHandlers?.editorReady?.postMessage('');
 
     return () => {
-      media.removeEventListener('change', onChange);
       delete window.__meetmemoBridge;
     };
   }, []);
