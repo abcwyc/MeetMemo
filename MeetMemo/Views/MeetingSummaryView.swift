@@ -62,6 +62,7 @@ struct MeetingSummaryView: View {
                 .padding()
             }
         }
+        .textSelection(.enabled)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.gray.opacity(0.05))
         .cornerRadius(8)

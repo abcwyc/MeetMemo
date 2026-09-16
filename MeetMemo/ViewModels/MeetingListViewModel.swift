@@ -20,8 +20,36 @@ class MeetingListViewModel: ObservableObject {
         guard !searchText.isEmpty else { return meetings }
         
         return meetings.filter { meeting in
-            meeting.searchableText.localizedCaseInsensitiveContains(searchText)
+            meeting.matches(searchText: searchText)
         }
+    }
+
+    /// Meetings grouped by calendar day, newest first. Days without meetings never appear.
+    var meetingsGroupedByDay: [(day: Date, meetings: [MeetingSummary])] {
+        let calendar = Calendar.current
+        let sorted = filteredMeetings.sorted { $0.date > $1.date }
+        var groups: [(day: Date, meetings: [MeetingSummary])] = []
+        for meeting in sorted {
+            let day = calendar.startOfDay(for: meeting.date)
+            if let lastIndex = groups.indices.last, groups[lastIndex].day == day {
+                groups[lastIndex].meetings.append(meeting)
+            } else {
+                groups.append((day: day, meetings: [meeting]))
+            }
+        }
+        return groups
+    }
+
+    /// All tags in use, ordered by how many meetings carry them.
+    var allTags: [String] {
+        var counts: [String: (tag: String, count: Int)] = [:]
+        for tag in meetings.flatMap(\.tags) {
+            let key = tag.lowercased()
+            counts[key] = (counts[key]?.tag ?? tag, (counts[key]?.count ?? 0) + 1)
+        }
+        return counts.values
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.tag.localizedStandardCompare($1.tag) == .orderedAscending }
+            .map(\.tag)
     }
     
     init() {
