@@ -628,6 +628,12 @@ struct MeetingDetailContentView: View {
     @State private var showDeleteAlert = false
     @State private var isContextEditing = false
     @State private var isEnhancedNotesEditing = false
+    /// Bumped on every genuine "new document" boundary for the notes web
+    /// editor (meeting switch, a fresh AI generation landing) — see
+    /// `MarkdownWebEditorView`'s doc comment for why this can't just be
+    /// derived from the notes text itself (that would remount on every
+    /// keystroke).
+    @State private var notesEditorDocumentRevision = 0
     @State private var showCopyConfirmation = false
     @State private var isImportingContextFile = false
     @State private var speakerNamingWindow: NSWindow?
@@ -742,6 +748,7 @@ struct MeetingDetailContentView: View {
             hoveredTab = nil
             isContextEditing = false
             isEnhancedNotesEditing = false
+            notesEditorDocumentRevision += 1
             showCopyConfirmation = false
         }
         .background(WindowWidthReader(width: $windowWidth))
@@ -1278,6 +1285,10 @@ struct MeetingDetailContentView: View {
 
         if viewModel.selectedTemplateId == templateId {
             await viewModel.generateNotes()
+            // Fresh content landed — remount the web editor onto it rather
+            // than leaving it pointed at whatever (stale, pre-generation)
+            // document it last mounted.
+            notesEditorDocumentRevision += 1
         } else {
             viewModel.selectedTemplateId = templateId
         }
@@ -1392,21 +1403,30 @@ struct MeetingDetailContentView: View {
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.bottom, 8)
             }
-            if isEnhancedNotesEditing {
-                MarkdownLiveEditorView(text: Binding(
-                    get: { viewModel.meeting.generatedNotes },
-                    set: { viewModel.meeting.generatedNotes = $0 }
-                ))
-                .frame(minHeight: 110)
-                .background(Color.gray.opacity(0.05))
-                .cornerRadius(8)
-                .frame(maxHeight: .infinity)
-            } else {
+            if viewModel.isGeneratingNotes {
+                // The web editor's markdownSource is read only at mount —
+                // pushing a new document per streamed chunk would mean
+                // constant remounts. RenderedNotesView is a plain SwiftUI
+                // view that just re-renders cheaply on every published
+                // update, which is what streaming actually needs.
                 RenderedNotesView(text: viewModel.meeting.generatedNotes)
                     .font(.body)
                     .background(Color.gray.opacity(0.05))
                     .cornerRadius(8)
                     .frame(maxHeight: .infinity)
+            } else {
+                MarkdownWebEditorView(
+                    text: Binding(
+                        get: { viewModel.meeting.generatedNotes },
+                        set: { viewModel.meeting.generatedNotes = $0 }
+                    ),
+                    documentId: "\(viewModel.meeting.id.uuidString)-\(notesEditorDocumentRevision)",
+                    readOnly: !isEnhancedNotesEditing
+                )
+                .frame(minHeight: 110)
+                .background(Color.gray.opacity(0.05))
+                .cornerRadius(8)
+                .frame(maxHeight: .infinity)
             }
         }
     }
