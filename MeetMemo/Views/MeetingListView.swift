@@ -627,7 +627,6 @@ struct MeetingDetailContentView: View {
     @EnvironmentObject var langMgr: LanguageManager
     @State private var showDeleteAlert = false
     @State private var isContextEditing = false
-    @State private var isEnhancedNotesEditing = false
     /// Bumped on every genuine "new document" boundary for the notes web
     /// editor (meeting switch, a fresh AI generation landing) — see
     /// `MarkdownWebEditorView`'s doc comment for why this can't just be
@@ -747,7 +746,6 @@ struct MeetingDetailContentView: View {
             )
             hoveredTab = nil
             isContextEditing = false
-            isEnhancedNotesEditing = false
             notesEditorDocumentRevision += 1
             showCopyConfirmation = false
         }
@@ -960,7 +958,10 @@ struct MeetingDetailContentView: View {
 
     private var moreMenu: some View {
         Menu {
-            if viewModel.selectedTab == .context || viewModel.selectedTab == .enhancedNotes {
+            // AI Notes has no separate edit/preview mode any more — the
+            // notes editor is directly editable in place at all times (see
+            // enhancedNotesView), so there's nothing to toggle there.
+            if viewModel.selectedTab == .context {
                 Button {
                     toggleCurrentEditingMode()
                 } label: {
@@ -1261,9 +1262,7 @@ struct MeetingDetailContentView: View {
         switch viewModel.selectedTab {
         case .context:
             return isContextEditing
-        case .enhancedNotes:
-            return isEnhancedNotesEditing
-        case .transcript, .summary:
+        case .enhancedNotes, .transcript, .summary:
             return false
         }
     }
@@ -1272,16 +1271,13 @@ struct MeetingDetailContentView: View {
         switch viewModel.selectedTab {
         case .context:
             isContextEditing.toggle()
-        case .enhancedNotes:
-            isEnhancedNotesEditing.toggle()
-        case .transcript, .summary:
+        case .enhancedNotes, .transcript, .summary:
             break
         }
     }
 
     private func generateNotesWithTemplate(_ templateId: UUID?) async {
         viewModel.selectedTab = .enhancedNotes
-        isEnhancedNotesEditing = false
 
         if viewModel.selectedTemplateId == templateId {
             await viewModel.generateNotes()
@@ -1384,11 +1380,15 @@ struct MeetingDetailContentView: View {
     }
 
     private var enhancedNotesView: some View {
+        // No separate edit/preview mode: the notes editor is directly
+        // editable in place at all times (Atomic Editor's own design
+        // principle — "the document you read is the document you edit").
+        // The one exception is while AI generation is actively streaming
+        // in, where editing the doc out from under the stream would be
+        // incoherent — see the isGeneratingNotes branch below.
         VStack(alignment: .leading, spacing: 0) {
-            if !isEnhancedNotesEditing {
-                notesStatusCard
-            }
-            if !isEnhancedNotesEditing, let notice = viewModel.transcriptCompressionNotice {
+            notesStatusCard
+            if let notice = viewModel.transcriptCompressionNotice {
                 HStack(spacing: 6) {
                     Image(systemName: "info.circle")
                         .font(.caption)
@@ -1421,7 +1421,7 @@ struct MeetingDetailContentView: View {
                         set: { viewModel.meeting.generatedNotes = $0 }
                     ),
                     documentId: "\(viewModel.meeting.id.uuidString)-\(notesEditorDocumentRevision)",
-                    readOnly: !isEnhancedNotesEditing
+                    readOnly: false
                 )
                 .frame(minHeight: 110)
                 .background(Color.gray.opacity(0.05))
