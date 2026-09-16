@@ -44,6 +44,12 @@ struct MeetingListView: View {
     @State private var deletingMeeting: MeetingSummary?
     @State private var renameText = ""
     @State private var isImportingAudioFile = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    /// Lightens the sidebar material instead of replacing it, so the subtle tint stays.
+    private var sidebarBackgroundColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.05) : Color.white.opacity(0.55)
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -110,10 +116,25 @@ struct MeetingListView: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
-                TextField(langMgr.t("搜索会议...", "Search meetings..."), text: $viewModel.searchText)
+                TextField(langMgr.t("搜索会议或 #标签", "Search meetings or #tag"), text: $viewModel.searchText)
                     .textFieldStyle(.plain)
+                if !viewModel.searchText.isEmpty {
+                    Button {
+                        viewModel.searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help(langMgr.t("清除搜索", "Clear search"))
+                }
             }
             .padding(EdgeInsets(top: 2, leading: 12, bottom: 10, trailing: 12))
+
+            if !viewModel.allTags.isEmpty {
+                sidebarTagFilterRow
+                    .padding(.bottom, 8)
+            }
 
             Divider()
 
@@ -121,11 +142,24 @@ struct MeetingListView: View {
                 .frame(height: SidebarLayout.listTopPadding)
 
             List(selection: $selectedMeeting) {
-                ForEach(sortedMeetings, id: \.id) { meeting in
-                    meetingRow(meeting)
+                ForEach(viewModel.meetingsGroupedByDay, id: \.day) { group in
+                    Section {
+                        ForEach(group.meetings, id: \.id) { meeting in
+                            meetingRow(meeting)
+                        }
+                        .onDelete { indexSet in
+                            for index in indexSet {
+                                deleteMeeting(group.meetings[index])
+                            }
+                        }
+                    } header: {
+                        Text(daySectionTitle(for: group.day))
+                            .font(.system(size: 11, weight: .regular))
+                            .foregroundColor(.secondary)
+                    }
                 }
-                .onDelete(perform: deleteMeetings)
             }
+            .scrollContentBackground(.hidden)
             .tint(.accentColor)
             .overlay {
                 if viewModel.filteredMeetings.isEmpty && !viewModel.isLoading {
@@ -139,6 +173,13 @@ struct MeetingListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
+        }
+        .background(sidebarBackgroundColor)
+        .overlay(alignment: .trailing) {
+            // Hairline separator between the sidebar and the detail pane.
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.6))
+                .frame(width: 0.5)
         }
         .navigationTitle(langMgr.t("会议", "Meetings"))
         .navigationSplitViewColumnWidth(
@@ -276,13 +317,51 @@ struct MeetingListView: View {
         }
     }
 
-    private var sortedMeetings: [MeetingSummary] {
-        viewModel.filteredMeetings.sorted { $0.date > $1.date }
+    private var sidebarTagFilterRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(viewModel.allTags, id: \.self) { tag in
+                    let isActive = isActiveTagFilter(tag)
+                    Button {
+                        viewModel.searchText = isActive ? "" : "#\(tag)"
+                    } label: {
+                        MeetingTagChip(tag: tag, isHighlighted: isActive)
+                    }
+                    .buttonStyle(.plain)
+                    .help(langMgr.t("按标签筛选", "Filter by tag"))
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+    }
+
+    private func isActiveTagFilter(_ tag: String) -> Bool {
+        let query = viewModel.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = query.first, first == "#" || first == "＃" else { return false }
+        return query.dropFirst().trimmingCharacters(in: .whitespaces).caseInsensitiveCompare(tag) == .orderedSame
+    }
+
+    private func daySectionTitle(for day: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(day) {
+            return langMgr.t("今天", "Today")
+        }
+        if calendar.isDateInYesterday(day) {
+            return langMgr.t("昨天", "Yesterday")
+        }
+
+        let locale = langMgr.language == .chinese ? Locale(identifier: "zh_CN") : Locale(identifier: "en_US")
+        var style = Date.FormatStyle.dateTime.locale(locale).month(.abbreviated).day().weekday(.abbreviated)
+        if !calendar.isDate(day, equalTo: Date(), toGranularity: .year) {
+            style = style.year()
+        }
+        return day.formatted(style)
     }
 
     private func meetingRow(_ meeting: MeetingSummary) -> some View {
         MeetingRowView(
             meeting: meeting,
+            onSelectTag: { tag in viewModel.searchText = "#\(tag)" },
             onRename: { beginRenaming(meeting) },
             onRevealSourceFile: { revealSourceFile(for: meeting) },
             onDelete: { deletingMeeting = meeting }
@@ -300,12 +379,6 @@ struct MeetingListView: View {
             selectedMeeting = nil
         }
         viewModel.deleteMeeting(meeting)
-    }
-
-    private func deleteMeetings(at indexSet: IndexSet) {
-        for index in indexSet {
-            deleteMeeting(sortedMeetings[index])
-        }
     }
 
     private func revealSourceFile(for meeting: MeetingSummary) {
@@ -474,6 +547,7 @@ private struct DetailHeaderActionButtonStyle: ButtonStyle {
 
 struct MeetingRowView: View {
     let meeting: MeetingSummary
+    var onSelectTag: (String) -> Void = { _ in }
     var onRename: () -> Void = {}
     var onRevealSourceFile: () -> Void = {}
     var onDelete: () -> Void = {}
@@ -481,22 +555,34 @@ struct MeetingRowView: View {
     @EnvironmentObject var langMgr: LanguageManager
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 4) {
                 if recordingSessionManager.isRecordingMeeting(meeting.id) {
                     Image(systemName: "record.circle")
                         .foregroundColor(.red)
-                        .font(.headline)
+                        .font(.body)
                 }
                 Text(meeting.title.isEmpty ? langMgr.t("未命名会议", "Untitled meeting") : meeting.title)
-                    .font(.headline)
+                    .font(.body)
+                    .fontWeight(.regular)
                     .lineLimit(1)
             }
-            HStack {
+            HStack(spacing: 6) {
                 Text(timestampText)
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Spacer()
+                    .fixedSize()
+                if !meeting.tags.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(meeting.tags, id: \.self) { tag in
+                            MeetingTagChip(tag: tag, isCompact: true)
+                                .onTapGesture { onSelectTag(tag) }
+                        }
+                    }
+                    .lineLimit(1)
+                    .clipped()
+                }
+                Spacer(minLength: 0)
             }
         }
         .padding(.vertical, 4)
@@ -522,10 +608,109 @@ struct MeetingRowView: View {
     }
 
     private var timestampText: String {
+        // The day is already shown by the section header.
         let locale = langMgr.language == .chinese ? Locale(identifier: "zh_CN") : Locale(identifier: "en_US")
-        let datePart = meeting.date.formatted(.dateTime.locale(locale).month(.abbreviated).day())
-        let timePart = meeting.date.formatted(.dateTime.locale(locale).hour().minute())
-        return "\(datePart) · \(timePart)"
+        return meeting.date.formatted(.dateTime.locale(locale).hour().minute())
+    }
+}
+
+// MARK: - Tags
+
+struct MeetingTagChip: View {
+    let tag: String
+    var isCompact = false
+    var isHighlighted = false
+    var onRemove: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text("#\(tag)")
+                .font(.system(size: isCompact ? 10 : 11, weight: .regular))
+                .lineLimit(1)
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .regular))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .foregroundColor(isHighlighted ? .white : .accentColor)
+        .padding(.horizontal, isCompact ? 5 : 7)
+        .padding(.vertical, isCompact ? 1 : 3)
+        .background {
+            Capsule(style: .continuous)
+                .fill(isHighlighted ? Color.accentColor : Color.accentColor.opacity(0.12))
+        }
+        .fixedSize()
+    }
+}
+
+private struct MeetingTagEditor: View {
+    @Binding var tags: [String]
+    @EnvironmentObject var langMgr: LanguageManager
+    @State private var draft = ""
+    @State private var isAdding = false
+    @FocusState private var isFieldFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "tag")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+
+            ForEach(tags, id: \.self) { tag in
+                MeetingTagChip(tag: tag) {
+                    tags.removeAll { $0 == tag }
+                }
+            }
+
+            if isAdding {
+                TextField(langMgr.t("输入标签后回车", "Type a tag, press Return"), text: $draft)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11))
+                    .frame(width: 140)
+                    .focused($isFieldFocused)
+                    .onSubmit(commitDraft)
+                    .onExitCommand {
+                        draft = ""
+                        isAdding = false
+                    }
+                    .onChange(of: isFieldFocused) { _, focused in
+                        if !focused { commitDraft(keepEditing: false) }
+                    }
+            } else {
+                Button {
+                    isAdding = true
+                    DispatchQueue.main.async { isFieldFocused = true }
+                } label: {
+                    Label(
+                        tags.isEmpty ? langMgr.t("添加标签", "Add Tag") : langMgr.t("添加", "Add"),
+                        systemImage: "plus"
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func commitDraft() {
+        commitDraft(keepEditing: true)
+    }
+
+    private func commitDraft(keepEditing: Bool) {
+        // Allow entering several tags at once, separated by commas.
+        let newTags = draft.components(separatedBy: CharacterSet(charactersIn: ",，"))
+        draft = ""
+        let merged = Meeting.normalizedTags(tags + newTags)
+        if merged != tags {
+            tags = merged
+        }
+        if !keepEditing {
+            isAdding = false
+        }
     }
 }
 
@@ -536,6 +721,11 @@ struct TranscriptChunkRowView: View {
     let chunk: TranscriptDisplayChunk
 
     var body: some View {
+        transcriptRow
+            .textSelection(.enabled)
+    }
+
+    private var transcriptRow: some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(spacing: 4) {
                 Image(systemName: chunk.source.icon)
@@ -853,6 +1043,9 @@ struct MeetingDetailContentView: View {
                 moreMenu
             }
 
+            MeetingTagEditor(tags: $viewModel.meeting.tags)
+                .environmentObject(langMgr)
+
             if viewModel.hasGeneratedNotes,
                let templateId = viewModel.selectedTemplateId,
                let template = viewModel.templates.first(where: { $0.id == templateId }) {
@@ -1025,6 +1218,19 @@ struct MeetingDetailContentView: View {
                     Label(langMgr.t("管理待办", "Tasks"), systemImage: "checklist")
                 }
                 .buttonStyle(DetailHeaderActionButtonStyle())
+            }
+
+            if viewModel.selectedTab == .enhancedNotes, viewModel.aiNotesSubTab == .notes {
+                Button {
+                    toggleCurrentEditingMode()
+                } label: {
+                    Label(
+                        isEnhancedNotesEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"),
+                        systemImage: isEnhancedNotesEditing ? "eye" : "pencil"
+                    )
+                }
+                .buttonStyle(DetailHeaderActionButtonStyle(isSelected: isEnhancedNotesEditing))
+                .help(langMgr.t("编辑会议纪要原文", "Edit the raw meeting notes"))
             }
 
             if viewModel.selectedTab == .context {
@@ -1266,6 +1472,8 @@ struct MeetingDetailContentView: View {
         case .context:
             isContextEditing.toggle()
         case .enhancedNotes:
+            // Editing always targets the notes body, never the action digest.
+            viewModel.aiNotesSubTab = .notes
             isEnhancedNotesEditing.toggle()
         case .transcript, .summary:
             break
@@ -1403,10 +1611,21 @@ struct MeetingDetailContentView: View {
                 .frame(maxHeight: .infinity)
             } else {
                 RenderedNotesView(text: viewModel.meeting.generatedNotes)
-                    .font(.body)
                     .background(Color.gray.opacity(0.05))
                     .cornerRadius(8)
                     .frame(maxHeight: .infinity)
+                    .contextMenu {
+                        Button {
+                            copyCurrentTabContent()
+                        } label: {
+                            Label(langMgr.t("复制全文", "Copy All"), systemImage: "doc.on.doc")
+                        }
+                        Button {
+                            toggleCurrentEditingMode()
+                        } label: {
+                            Label(langMgr.t("编辑", "Edit"), systemImage: "pencil")
+                        }
+                    }
             }
         }
     }
@@ -1857,7 +2076,8 @@ private struct ContextPreviewList: View {
                         ContextExtractionStatusView(item: item)
 
                         if !item.trimmedText.isEmpty {
-                            RenderedNotesView(text: item.trimmedText)
+                            // Sized to its content: it already sits in an outer ScrollView.
+                            RenderedNotesView(text: item.trimmedText, isScrollable: false)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -1869,6 +2089,7 @@ private struct ContextPreviewList: View {
                 }
             }
             .padding()
+            .textSelection(.enabled)
         }
     }
 }

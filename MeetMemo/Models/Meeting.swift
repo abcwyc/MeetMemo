@@ -689,6 +689,8 @@ struct Meeting: Codable, Identifiable, Hashable {
     var milestones: [MeetingMilestone]
     var host: String
     var location: String
+    /// User-defined labels shown in the sidebar and matched by search.
+    var tags: [String]
     var structuredSummarySourceHash: String
     var structuredSummaryGeneratedAt: Date?
     // MARK: - Data versioning
@@ -716,6 +718,7 @@ struct Meeting: Codable, Identifiable, Hashable {
          milestones: [MeetingMilestone] = [],
          host: String = "",
          location: String = "",
+         tags: [String] = [],
          structuredSummarySourceHash: String = "",
          structuredSummaryGeneratedAt: Date? = nil,
          dataVersion: Int = Meeting.currentDataVersion) {
@@ -738,6 +741,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         self.milestones = milestones
         self.host = host
         self.location = location
+        self.tags = Self.normalizedTags(tags)
         self.structuredSummarySourceHash = structuredSummarySourceHash
         self.structuredSummaryGeneratedAt = structuredSummaryGeneratedAt
         self.dataVersion = dataVersion
@@ -763,6 +767,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         case milestones
         case host
         case location
+        case tags
         case structuredSummarySourceHash
         case structuredSummaryGeneratedAt
         case dataVersion
@@ -794,6 +799,7 @@ struct Meeting: Codable, Identifiable, Hashable {
         milestones = try container.decodeIfPresent([MeetingMilestone].self, forKey: .milestones) ?? []
         host = try container.decodeIfPresent(String.self, forKey: .host) ?? ""
         location = try container.decodeIfPresent(String.self, forKey: .location) ?? ""
+        tags = Self.normalizedTags(try container.decodeIfPresent([String].self, forKey: .tags) ?? [])
         structuredSummarySourceHash = try container.decodeIfPresent(String.self, forKey: .structuredSummarySourceHash) ?? ""
         structuredSummaryGeneratedAt = try container.decodeIfPresent(Date.self, forKey: .structuredSummaryGeneratedAt)
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
@@ -836,6 +842,19 @@ struct Meeting: Codable, Identifiable, Hashable {
             return lines.joined(separator: "\n")
         }
         .joined(separator: "\n\n")
+    }
+
+    /// Trims whitespace and leading `#`, drops empty values, and removes case-insensitive duplicates.
+    static func normalizedTags(_ tags: [String]) -> [String] {
+        var seen = Set<String>()
+        return tags.compactMap { raw in
+            let tag = raw
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "#＃"))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !tag.isEmpty, seen.insert(tag.lowercased()).inserted else { return nil }
+            return tag
+        }
     }
 
     mutating func syncLegacyUserNotesFromContext() {
@@ -1179,18 +1198,48 @@ struct MeetingSummary: Codable, Identifiable, Hashable {
     var searchableText: String
     var hasTranscript: Bool
     var hasGeneratedNotes: Bool
+    var tags: [String]
     var dataVersion: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case date
+        case title
+        case templateId
+        case preview
+        case searchableText
+        case hasTranscript
+        case hasGeneratedNotes
+        case tags
+        case dataVersion
+    }
 
     init(meeting: Meeting) {
         id = meeting.id
         date = meeting.date
         title = meeting.title
         templateId = meeting.templateId
+        tags = meeting.tags
         preview = Self.makePreview(from: meeting)
         searchableText = Self.makeSearchableText(from: meeting)
         hasTranscript = meeting.hasFinalTranscript
         hasGeneratedNotes = !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         dataVersion = meeting.dataVersion
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        date = try c.decode(Date.self, forKey: .date)
+        title = try c.decode(String.self, forKey: .title)
+        templateId = try c.decodeIfPresent(UUID.self, forKey: .templateId)
+        preview = try c.decode(String.self, forKey: .preview)
+        searchableText = try c.decode(String.self, forKey: .searchableText)
+        hasTranscript = try c.decode(Bool.self, forKey: .hasTranscript)
+        hasGeneratedNotes = try c.decode(Bool.self, forKey: .hasGeneratedNotes)
+        // Summaries written before tags existed decode with no tags.
+        tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
+        dataVersion = try c.decode(Int.self, forKey: .dataVersion)
     }
 
     var placeholderMeeting: Meeting {
@@ -1199,8 +1248,24 @@ struct MeetingSummary: Codable, Identifiable, Hashable {
             date: date,
             title: title,
             templateId: templateId,
+            tags: tags,
             dataVersion: dataVersion
         )
+    }
+
+    /// Plain text matches title/content/tags; a query starting with `#` matches tags only.
+    func matches(searchText query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return true }
+
+        if let first = trimmed.first, first == "#" || first == "＃" {
+            let tagQuery = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+            guard !tagQuery.isEmpty else { return !tags.isEmpty }
+            return tags.contains { $0.localizedCaseInsensitiveContains(tagQuery) }
+        }
+
+        return searchableText.localizedCaseInsensitiveContains(trimmed)
+            || tags.contains { $0.localizedCaseInsensitiveContains(trimmed) }
     }
 
     private static func makePreview(from meeting: Meeting) -> String {

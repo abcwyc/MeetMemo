@@ -125,7 +125,8 @@ class MeetingViewModel: ObservableObject {
         return meeting.transcriptChunks.isEmpty && 
                !meeting.hasMeetingContext &&
                meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-               meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+               meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+               meeting.tags.isEmpty
     }
     
     init(
