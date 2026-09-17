@@ -116,6 +116,13 @@ class MeetingViewModel: ObservableObject {
     private var isStreamingGeneratedNotes = false
     private var generationTask: Task<Void, Never>?
     private var activeGenerationMeetingId: UUID?
+    /// Full text streamed so far by the in-flight generation. Lets a meeting
+    /// the user returns to mid-stream show the complete buffer instead of the
+    /// copy reloaded from disk.
+    private var activeGenerationNotes: String?
+    /// Notes the in-flight generation will replace. Persisted in place of the
+    /// half-streamed text if the user leaves the meeting before it finishes.
+    private var activeGenerationPreviousNotes: (notes: String, oneLiner: String)?
     private var generationCounter: Int = 0
     private var structuredExtractionToken: UUID?
     private var activeStructuredExtractionMeetingId: UUID?
@@ -198,7 +205,11 @@ class MeetingViewModel: ObservableObject {
                 guard let self,
                       savedMeeting.id == self.meeting.id,
                       !self.recordingSessionManager.isRecordingMeeting(savedMeeting.id),
-                      !self.hasLocalUnsavedChanges else {
+                      !self.hasLocalUnsavedChanges,
+                      // Our own save echoing back: reassigning it would publish
+                      // `meeting` again and re-arm the autosave, rewriting the
+                      // file every debounce interval forever.
+                      savedMeeting != self.meeting else {
                     return
                 }
 
@@ -318,12 +329,24 @@ class MeetingViewModel: ObservableObject {
     ) {
         guard meeting.id != self.meeting.id else { return }
 
+        if activeGenerationMeetingId == self.meeting.id, let previous = activeGenerationPreviousNotes {
+            // Leaving mid-generation: persist the notes as they were before it
+            // started, not a half-streamed document. The generation commits the
+            // finished notes itself (or leaves these intact if it fails).
+            self.meeting.generatedNotes = previous.notes
+            self.meeting.oneLiner = previous.oneLiner
+        }
+
         flushPendingChanges()
         deleteIfEmpty()
 
         print("🔁 Switching detail meeting: \(meeting.id)")
         isApplyingLoadedMeeting = true
         self.meeting = meeting
+        if activeGenerationMeetingId == meeting.id, let liveNotes = activeGenerationNotes {
+            self.meeting.generatedNotes = liveNotes
+            self.meeting.oneLiner = ""
+        }
         self.transcriptDisplayChunks = meeting.transcriptDisplayChunks
         isApplyingLoadedMeeting = false
 
@@ -410,6 +433,19 @@ class MeetingViewModel: ObservableObject {
 
     var isStructuredSummaryStale: Bool {
         meeting.isStructuredSummaryStale
+    }
+
+    /// 行动摘要入口：会议纪要生成完成后才出现。
+    var canShowActionDigestEntry: Bool {
+        toolbarHasGeneratedNotes && !isGeneratingNotes
+    }
+
+    /// 管理待办入口：行动摘要生成后才出现。已有待办的旧会议保留入口，避免数据无法访问。
+    var canShowFollowUpTasksEntry: Bool {
+        canShowActionDigestEntry
+            && (meeting.structuredSummaryGeneratedAt != nil
+                || hasStructuredSummaryContent
+                || !meeting.followUpTasks.isEmpty)
     }
 
     func showActionDigest() {
@@ -651,6 +687,8 @@ class MeetingViewModel: ObservableObject {
         generationTask?.cancel()
         generationTask = nil
         activeGenerationMeetingId = nil
+        activeGenerationNotes = nil
+        activeGenerationPreviousNotes = nil
         isGeneratingNotes = false
         isStreamingGeneratedNotes = false
     }
@@ -670,10 +708,14 @@ class MeetingViewModel: ObservableObject {
         let meetingId = meeting.id
         let meetingSnapshot = meeting
         activeGenerationMeetingId = meetingId
+        activeGenerationNotes = nil
+        activeGenerationPreviousNotes = (meetingSnapshot.generatedNotes, meetingSnapshot.oneLiner)
         let templateIdSnapshot = selectedTemplateId
         defer {
             if generationCounter == myGeneration {
                 activeGenerationMeetingId = nil
+                activeGenerationNotes = nil
+                activeGenerationPreviousNotes = nil
                 isGeneratingNotes = false
                 isStreamingGeneratedNotes = false
                 generationTask = nil
@@ -682,7 +724,7 @@ class MeetingViewModel: ObservableObject {
 
         let previousGeneratedNotes = meetingSnapshot.generatedNotes
         let previousOneLiner = meetingSnapshot.oneLiner
-        var generatedMeeting = meetingSnapshot
+        var streamedNotes = ""
         var receivedContent = false
 
         // Load settings for generation
@@ -720,22 +762,19 @@ class MeetingViewModel: ObservableObject {
                     transcriptCompressionNotice = message
                 }
             case .content(let chunk):
-                if !receivedContent {
-                    generatedMeeting.generatedNotes = ""
-                    // Drop the stale one-liner so the AI-notes header card disappears
-                    // immediately; extractStructuredSummary will repopulate after the
-                    // new notes finish. Other structured fields stay visible on the
-                    // digest tab until they're refreshed.
-                    generatedMeeting.oneLiner = ""
-                    if meeting.id == meetingId {
-                        meeting.generatedNotes = ""
+                receivedContent = true
+                streamedNotes += chunk
+                activeGenerationNotes = streamedNotes
+                if meeting.id == meetingId {
+                    // Assign the whole buffer rather than appending: if the user
+                    // left and came back mid-stream, the on-screen copy was
+                    // reloaded from disk and must not be appended to.
+                    meeting.generatedNotes = streamedNotes
+                    // Drop the stale one-liner so the AI-notes header card
+                    // disappears immediately; it belongs to the old notes.
+                    if !meeting.oneLiner.isEmpty {
                         meeting.oneLiner = ""
                     }
-                    receivedContent = true
-                }
-                generatedMeeting.generatedNotes += chunk
-                if meeting.id == meetingId {
-                    meeting.generatedNotes += chunk
                     toolbarHasGeneratedNotes = true
                 }
             case .error(let error):
@@ -743,39 +782,81 @@ class MeetingViewModel: ObservableObject {
                     meeting.generatedNotes = previousGeneratedNotes
                     meeting.oneLiner = previousOneLiner
                     toolbarHasGeneratedNotes = !previousGeneratedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }
-                if meeting.id == meetingId {
                     errorMessage = error
                 }
                 hasError = true
                 print("🚨 Note Generation Error: \(error)")
-                break
             }
         }
 
         if Task.isCancelled {
             hasError = true
         }
-        
-        // Only save if there was no error
-        if !hasError {
-            if generatedMeeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                if let generated = await NotesGenerator.shared.generateTitle(meeting: generatedMeeting) {
-                    guard generationCounter == myGeneration else { return }
-                    generatedMeeting.title = generated
-                }
-            }
-            guard generationCounter == myGeneration else { return }
-            isStreamingGeneratedNotes = false
-            savePersistedMeeting(generatedMeeting)
-            if meeting.id == meetingId {
-                meeting = generatedMeeting
-                refreshToolbarSnapshot()
-                selectedTab = .enhancedNotes
-                aiNotesSubTab = .notes
-            }
-            Task { await self.extractStructuredSummary(from: generatedMeeting) }
+
+        guard !hasError, receivedContent, generationCounter == myGeneration else { return }
+
+        // Commit the finished notes right away, onto the freshest copy of the
+        // meeting. Title generation used to run before this save, keeping the
+        // finished notes only in memory for another LLM round-trip; switching
+        // meetings in that window could leave the persisted copy without them.
+        isStreamingGeneratedNotes = false
+        let committedMeeting = commitBackgroundChange(to: meetingId, fallback: meetingSnapshot) { target in
+            target.generatedNotes = streamedNotes
+            target.oneLiner = ""
+            target.templateId = templateIdSnapshot ?? target.templateId
         }
+        if meeting.id == meetingId {
+            refreshToolbarSnapshot()
+            selectedTab = .enhancedNotes
+            aiNotesSubTab = .notes
+        }
+
+        if committedMeeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Task { await self.generateTitleIfNeeded(for: committedMeeting) }
+        }
+    }
+
+    /// Names a meeting that is still untitled once its notes exist. Falls back
+    /// to a locally derived title when the model call fails, so a finished
+    /// meeting never stays "未命名会议".
+    private func generateTitleIfNeeded(for source: Meeting) async {
+        let title = await NotesGenerator.shared.generateTitle(meeting: source)
+            ?? NotesGenerator.fallbackTitle(for: source)
+        guard !title.isEmpty else { return }
+
+        let meetingId = source.id
+        let latest = meeting.id == meetingId ? meeting : LocalStorageManager.shared.loadMeeting(id: meetingId)
+        // A title the user typed while the request was running wins.
+        guard let latest, latest.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        commitBackgroundChange(to: meetingId, fallback: latest) { target in
+            target.title = title
+        }
+    }
+
+    /// Applies a background result to the freshest copy of a meeting — the
+    /// on-screen one when it is still selected, otherwise the persisted file —
+    /// and saves it. Long-running work must never write back the snapshot it
+    /// started from: that silently reverts anything that changed meanwhile
+    /// (notes, title, edits) for a meeting the user may have left and revisited.
+    @discardableResult
+    private func commitBackgroundChange(
+        to meetingId: UUID,
+        fallback: Meeting,
+        _ change: (inout Meeting) -> Void
+    ) -> Meeting {
+        var target: Meeting
+        if meeting.id == meetingId {
+            target = meeting
+        } else {
+            target = LocalStorageManager.shared.loadMeeting(id: meetingId) ?? fallback
+        }
+        change(&target)
+        savePersistedMeeting(target)
+        if meeting.id == meetingId {
+            meeting = target
+        }
+        return target
     }
 
     func saveMeeting() {
@@ -890,31 +971,30 @@ class MeetingViewModel: ObservableObject {
 
         do {
             let result = try await MeetingStructuredExtractor.shared.extract(from: snapshot)
-            var updatedMeeting = snapshot
-            // Don't overwrite oneLiner with empty — the model occasionally returns ""
-            // despite the prompt rule, which would erase the header card entirely.
-            // Fall back to the current value, then to the title.
-            if !result.oneLiner.isEmpty {
-                updatedMeeting.oneLiner = result.oneLiner
-            } else if updatedMeeting.oneLiner.isEmpty {
-                let trimmedTitle = updatedMeeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !trimmedTitle.isEmpty {
-                    updatedMeeting.oneLiner = trimmedTitle
+            commitBackgroundChange(to: meetingId, fallback: snapshot) { updatedMeeting in
+                // Don't overwrite oneLiner with empty — the model occasionally returns ""
+                // despite the prompt rule, which would erase the header card entirely.
+                // Fall back to the current value, then to the title.
+                if !result.oneLiner.isEmpty {
+                    updatedMeeting.oneLiner = result.oneLiner
+                } else if updatedMeeting.oneLiner.isEmpty {
+                    let trimmedTitle = updatedMeeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmedTitle.isEmpty {
+                        updatedMeeting.oneLiner = trimmedTitle
+                    }
                 }
-            }
-            updatedMeeting.host = result.host
-            updatedMeeting.location = result.location
-            updatedMeeting.decisions = result.decisions
-            updatedMeeting.risks = result.risks
-            updatedMeeting.openQuestions = result.openQuestions
-            updatedMeeting.discussions = result.discussions
-            updatedMeeting.milestones = result.milestones
-            mergeExtractedFollowUpTasks(result.followUpTasks, into: &updatedMeeting)
-            updatedMeeting.structuredSummarySourceHash = updatedMeeting.structuredSummaryCurrentSourceHash
-            updatedMeeting.structuredSummaryGeneratedAt = Date()
-            savePersistedMeeting(updatedMeeting)
-            if meeting.id == meetingId {
-                meeting = updatedMeeting
+                updatedMeeting.host = result.host
+                updatedMeeting.location = result.location
+                updatedMeeting.decisions = result.decisions
+                updatedMeeting.risks = result.risks
+                updatedMeeting.openQuestions = result.openQuestions
+                updatedMeeting.discussions = result.discussions
+                updatedMeeting.milestones = result.milestones
+                mergeExtractedFollowUpTasks(result.followUpTasks, into: &updatedMeeting)
+                // Hash the notes the digest was extracted from, so edits made
+                // while the request ran still mark it as stale.
+                updatedMeeting.structuredSummarySourceHash = snapshot.structuredSummaryCurrentSourceHash
+                updatedMeeting.structuredSummaryGeneratedAt = Date()
             }
         } catch {
             if meeting.id == meetingId {
@@ -1025,11 +1105,8 @@ class MeetingViewModel: ObservableObject {
 
         do {
             let extractedTasks = try await FollowUpTaskExtractor.shared.extractTasks(from: snapshot)
-            var updatedMeeting = snapshot
-            mergeExtractedFollowUpTasks(extractedTasks, into: &updatedMeeting)
-            savePersistedMeeting(updatedMeeting)
-            if meeting.id == meetingId {
-                meeting = updatedMeeting
+            commitBackgroundChange(to: meetingId, fallback: snapshot) { updatedMeeting in
+                mergeExtractedFollowUpTasks(extractedTasks, into: &updatedMeeting)
             }
         } catch {
             if meeting.id == meetingId {

@@ -905,6 +905,9 @@ struct MeetingDetailContentView: View {
     @EnvironmentObject var langMgr: LanguageManager
     @State private var showDeleteAlert = false
     @State private var contextEditorFocusRequest = 0
+    /// An NSTextField that is being edited keeps its own text and writes it
+    /// back when editing ends, overwriting a title generated in the meantime.
+    @FocusState private var isTitleFieldFocused: Bool
     /// Bumped on every genuine "new document" boundary for the notes web
     /// editor (meeting switch, a fresh AI generation landing) — see
     /// `MarkdownWebEditorView`'s doc comment for why this can't just be
@@ -1027,6 +1030,11 @@ struct MeetingDetailContentView: View {
                 prepareContextWorkspace(requestFocus: true)
             }
         }
+        .onChange(of: viewModel.isGeneratingNotes) { _, isGenerating in
+            if isGenerating {
+                isTitleFieldFocused = false
+            }
+        }
         .onChange(of: meeting.id) { _, _ in
             viewModel.switchToMeeting(
                 meeting,
@@ -1141,6 +1149,7 @@ struct MeetingDetailContentView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 12) {
                 TextField(langMgr.t("会议标题", "Meeting Title"), text: $viewModel.meeting.title)
+                    .focused($isTitleFieldFocused)
                     .font(.title2)
                     .fontWeight(.semibold)
                     .textFieldStyle(.plain)
@@ -1300,7 +1309,7 @@ struct MeetingDetailContentView: View {
 
     private var titleActionButtons: some View {
         HStack(spacing: 8) {
-            if viewModel.selectedTab == .enhancedNotes && viewModel.toolbarHasGeneratedNotes {
+            if viewModel.selectedTab == .enhancedNotes && viewModel.canShowActionDigestEntry {
                 Button {
                     viewModel.aiNotesSubTab = .notes
                 } label: {
@@ -1316,7 +1325,7 @@ struct MeetingDetailContentView: View {
                 .buttonStyle(DetailHeaderActionButtonStyle(isSelected: viewModel.aiNotesSubTab == .digest))
             }
 
-            if viewModel.selectedTab == .enhancedNotes {
+            if viewModel.selectedTab == .enhancedNotes && viewModel.canShowFollowUpTasksEntry {
                 Button {
                     openFollowUpTasksWindow()
                 } label: {
@@ -1398,6 +1407,7 @@ struct MeetingDetailContentView: View {
                         .frame(width: 12, height: 12)
                 } else if usesCompactToolbarActions {
                     Image(systemName: "sparkles")
+                        .foregroundColor(isGenerateButtonActive ? .accentColor : .secondary)
                 }
 
                 if !usesCompactToolbarActions {
@@ -1424,7 +1434,7 @@ struct MeetingDetailContentView: View {
             .overlay(
                 Group {
                     if viewModel.shouldAnimateGenerateButton {
-                        ShimmerOverlay(color: .green)
+                        ShimmerOverlay(color: .accentColor)
                             .clipShape(Capsule(style: .continuous))
                     }
                 }
@@ -1507,21 +1517,39 @@ struct MeetingDetailContentView: View {
         return langMgr.t("使用模板生成或重新生成会议纪要", "Generate or regenerate meeting notes using a template")
     }
 
+    private var isGenerateButtonActive: Bool {
+        viewModel.toolbarHasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording
+    }
+
+    /// First-time generation is the primary next step; regenerating is secondary and stays neutral.
+    private var isGenerateButtonEmphasized: Bool {
+        isGenerateButtonActive && !viewModel.toolbarHasGeneratedNotes
+    }
+
     private var generateButtonForegroundColor: Color {
-        viewModel.toolbarHasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording ? .green : .secondary
+        if isGenerateButtonEmphasized { return .accentColor }
+        return isGenerateButtonActive ? Color.primary.opacity(0.85) : .secondary
     }
 
     private var generateButtonBackgroundColor: Color {
-        if viewModel.toolbarHasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
-            return Color.green.opacity(isGenerateButtonHovered ? 0.24 : 0.18)
+        if isGenerateButtonEmphasized {
+            return Color.accentColor.opacity(isGenerateButtonHovered ? 0.22 : 0.16)
+        }
+
+        if isGenerateButtonActive {
+            return Color.primary.opacity(isGenerateButtonHovered ? 0.10 : 0.06)
         }
 
         return Color.secondary.opacity(isGenerateButtonHovered ? 0.14 : 0.08)
     }
 
     private var generateButtonBorderColor: Color {
-        if viewModel.toolbarHasFinalTranscript && !viewModel.isRecording && !viewModel.isStartingRecording {
-            return Color.green.opacity(isGenerateButtonHovered ? 0.42 : 0.3)
+        if isGenerateButtonEmphasized {
+            return Color.accentColor.opacity(isGenerateButtonHovered ? 0.42 : 0.3)
+        }
+
+        if isGenerateButtonActive {
+            return Color.primary.opacity(isGenerateButtonHovered ? 0.16 : 0.10)
         }
 
         return isGenerateButtonHovered ? Color.secondary.opacity(0.18) : Color.clear

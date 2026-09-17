@@ -18,7 +18,9 @@ final class NotesGenerator {
     /// shared 8K cap could truncate an otherwise successful generation.
     static let notesOutputTokenBudget = 16_384
     static let evidenceOutputTokenBudget = 4_096
-    static let titleOutputTokenBudget = 256
+    // Reasoning models spend part of max_tokens before emitting the title; a
+    // tight budget ends in a truncation error and an untitled meeting.
+    static let titleOutputTokenBudget = 1024
 
     private let client: LLMProvider
 
@@ -407,7 +409,12 @@ final class NotesGenerator {
     /// system prompt, returning things like `《xxx》`, `"xxx"`, `会议标题：xxx`, or `xxx。`.
     /// This strips those wrappers so the saved title is clean.
     static func sanitizeTitle(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        var s = raw
+        // Some reasoning models inline their chain of thought before the answer.
+        if let thinkEnd = s.range(of: "</think>") {
+            s = String(s[thinkEnd.upperBound...])
+        }
+        s = s.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return "" }
 
         // Collapse to the first non-empty line in case the model wrapped output in a
@@ -462,6 +469,37 @@ final class NotesGenerator {
         }
 
         return s
+    }
+
+    /// Local title used when the model cannot name the meeting: the notes' own
+    /// top-level heading when it is specific, otherwise the meeting's start time.
+    static func fallbackTitle(for meeting: Meeting) -> String {
+        let genericHeadings: Set<String> = [
+            "会议纪要", "会议记录", "会议总结", "会议摘要", "纪要",
+            "Meeting Notes", "Meeting Summary", "Meeting Minutes", "Notes", "Summary"
+        ]
+        let headingPrefixes = ["会议纪要：", "会议纪要:", "会议记录：", "会议记录:", "Meeting Notes:", "Meeting Notes："]
+
+        if let heading = meeting.generatedNotes
+            .split(whereSeparator: { $0.isNewline })
+            .map({ $0.trimmingCharacters(in: .whitespaces) })
+            .first(where: { $0.hasPrefix("# ") }) {
+            var candidate = sanitizeTitle(heading)
+            for prefix in headingPrefixes where candidate.hasPrefix(prefix) {
+                candidate = String(candidate.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+            if !candidate.isEmpty, candidate.count <= 40, !genericHeadings.contains(candidate) {
+                return candidate
+            }
+        }
+
+        let language = LanguageManager.shared
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: language.t("zh_CN", "en_US"))
+        formatter.dateFormat = language.t("M月d日 HH:mm", "MMM d, HH:mm")
+        let time = formatter.string(from: meeting.date)
+        return language.t("\(time) 会议", "Meeting \(time)")
     }
 
     /// Validates if the LLM provider is configured

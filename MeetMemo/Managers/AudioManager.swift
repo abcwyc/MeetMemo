@@ -44,21 +44,20 @@ class AudioManager: NSObject, ObservableObject {
 
     /// Tracks the active interim chunk id per source for replace-on-update semantics.
     private var activeInterimChunkId: [AudioSource: UUID] = [:]
-    /// Wall-clock offset (ms) at the moment the first meaningful audio buffer arrives for each
-    /// source. This anchors CMTime=0 to the correct position on the recording timeline, which
-    /// is more accurate than capturing the offset at connectSTTProvider time.
-    private var firstAudioOffsets: [AudioSource: Int] = [:]
+    /// Per-source STT input timeline. Its anchor maps provider time 0 onto the recording
+    /// timeline, and it keeps the sample clock continuous across cold starts and restarts.
+    private var audioTimelines: [AudioSource: TranscriptionAudioTimeline] = [:]
+    /// Identifies the capture pipeline currently feeding each source. Output from a retired
+    /// pipeline is ignored, and a new id tells the timeline to fill the restart gap.
+    private var activeCaptureIDs: [AudioSource: UUID] = [:]
+    /// Session whose capture pipelines are being drained during a graceful stop. Audio from
+    /// it is still accepted even though the session is no longer active.
+    private var drainingSessionID: UUID?
 
     /// True while the system-audio STT runtime is being connected lazily (on first real
     /// system audio). Prevents duplicate concurrent connects.
     private var systemSTTConnectingSessionID: UUID?
     private var micCaptureHealth = AudioCaptureHealthState()
-
-    /// Mic audio captured while the mic STT provider is still connecting (e.g. Fun-ASR's
-    /// ~2 s model load). Ring-buffered up to `VoiceInputTiming.maxPendingAudioBytes` and
-    /// flushed into the provider once connected, so cold start doesn't eat the opening speech.
-    private var micPendingAudioChunks: [Data] = []
-    private var micPendingAudioByteCount = 0
 
     // Unique identifier for the current recording session
     private var sessionID = UUID()
@@ -217,7 +216,9 @@ class AudioManager: NSObject, ObservableObject {
             print("System audio tap invalidated")
         }
 
-        firstAudioOffsets.removeAll()
+        audioTimelines.removeAll()
+        activeCaptureIDs.removeAll()
+        drainingSessionID = nil
         cleanupAudioEngine()
         disconnectSTTProviders()
         recordingStateMachine.reset()
@@ -453,6 +454,8 @@ class AudioManager: NSObject, ObservableObject {
         systemSTT?.disconnect()
         systemSTT = nil
         systemSTTConnectingSessionID = nil
+        audioTimelines[.system] = nil
+        activeCaptureIDs[.system] = nil
 
         print("⚠️ \(message)")
         warningMessage = message
@@ -584,9 +587,14 @@ class AudioManager: NSObject, ObservableObject {
         AudioLevelManager.shared.updateMicLevel(0.0)
         AudioLevelManager.shared.updateSystemLevel(0.0)
 
+        // Detach the pipelines before tearing capture down so their queued audio is
+        // drained into the recognizers instead of discarded.
+        let pipelinesToDrain = [micAudioPipeline, systemAudioPipeline].compactMap { $0 }
+        micAudioPipeline = nil
+        systemAudioPipeline = nil
+        drainingSessionID = stoppedSessionID
+
         if isTapActive {
-            systemAudioPipeline?.stop()
-            systemAudioPipeline = nil
             processTap?.invalidate()
             processTap = nil
             isTapActive = false
@@ -595,7 +603,6 @@ class AudioManager: NSObject, ObservableObject {
 
         cleanupAudioEngine()
         micRetryCount = 0
-        sendFinalAudioToSTTProviders()
         isFinalizingStoppedRecording = true
 
         recordingStateMachine.reset()
@@ -613,6 +620,18 @@ class AudioManager: NSObject, ObservableObject {
                 completion?()
                 return
             }
+
+            // End-of-stream goes out only after the last captured words reach the providers.
+            await Self.drainAudioPipelines(pipelinesToDrain, timeout: timeout)
+            if self.drainingSessionID == stoppedSessionID {
+                self.drainingSessionID = nil
+            }
+            guard self.sessionID == stoppedSessionID else {
+                // A new recording started meanwhile and already tore these providers down.
+                completion?()
+                return
+            }
+            self.sendFinalAudioToSTTProviders()
 
             var finalizationStatuses: [STTFinalizationStatus] = []
             await withTaskGroup(of: STTFinalizationStatus.self) { group in
@@ -657,7 +676,8 @@ class AudioManager: NSObject, ObservableObject {
             }
 
             self.disconnectSTTProviders()
-            self.firstAudioOffsets.removeAll()
+            self.audioTimelines.removeAll()
+            self.activeCaptureIDs.removeAll()
             self.isFinalizingStoppedRecording = false
             self.isStoppingRecording = false
             print("Recording stopped")
@@ -671,14 +691,21 @@ class AudioManager: NSObject, ObservableObject {
         inputFormat: AVAudioFormat,
         targetFormat: AVAudioFormat
     ) -> AudioProcessingPipeline? {
-        AudioProcessingPipeline(
+        let captureID = UUID()
+        let pipeline = AudioProcessingPipeline(
             source: source,
             inputFormat: inputFormat,
             targetFormat: targetFormat,
+            // System audio is often silent for long stretches; the flag defers loading its
+            // recognizer until something is audible. Silent buffers are still delivered.
             silenceThreshold: source == .system ? 0.0015 : nil,
-            onAudioData: { [weak self] data, source in
-                Task { @MainActor [weak self] in
-                    self?.sendAudioData(data, source: source, sessionToken: sessionToken)
+            onAudioData: { [weak self] output in
+                // The main queue is FIFO, so drainAudioPipelines can wait for every delivery
+                // with a single hop after the pipeline drains.
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        self?.sendAudioData(output, captureID: captureID, sessionToken: sessionToken)
+                    }
                 }
             },
             onAudioLevel: { [weak self] level, source in
@@ -687,6 +714,42 @@ class AudioManager: NSObject, ObservableObject {
                 }
             }
         )
+        if pipeline != nil {
+            activeCaptureIDs[source] = captureID
+        }
+        return pipeline
+    }
+
+    /// Waits until each pipeline's queued audio has been delivered to `sendAudioData`.
+    /// On timeout the remaining queued audio is discarded so stopping can't hang.
+    private static func drainAudioPipelines(
+        _ pipelines: [AudioProcessingPipeline],
+        timeout: TimeInterval
+    ) async {
+        guard !pipelines.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                await withTaskGroup(of: Void.self) { drains in
+                    for pipeline in pipelines {
+                        drains.addTask { await pipeline.drain() }
+                    }
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(timeout))
+                guard !Task.isCancelled else { return }
+                print("⚠️ Timed out draining audio pipelines; discarding remaining queued audio.")
+                pipelines.forEach { $0.stop() }
+            }
+            await group.next()
+            group.cancelAll()
+        }
+        // Deliveries are enqueued on the main queue before each drain completes.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
     }
 
     private func markRecordingActive(sessionToken: UUID) {
@@ -716,39 +779,49 @@ class AudioManager: NSObject, ObservableObject {
         systemAudioPipeline = nil
     }
 
-    private func sendAudioData(_ data: Data, source: AudioSource, sessionToken: UUID) {
-        guard isActiveSession(sessionToken) else { return }
-        if firstAudioOffsets[source] == nil {
-            firstAudioOffsets[source] = elapsedRecordingMilliseconds()
+    private func sendAudioData(
+        _ output: AudioProcessingPipeline.Output,
+        captureID: UUID,
+        sessionToken: UUID
+    ) {
+        let isDraining = drainingSessionID == sessionToken
+        guard isActiveSession(sessionToken) || isDraining else { return }
+        let source = output.source
+        guard activeCaptureIDs[source] == captureID else { return }
+
+        var timeline = audioTimelines[source]
+            ?? TranscriptionAudioTimeline(maxPendingBytes: VoiceInputTiming.maxPendingAudioBytes)
+        let now = elapsedRecordingMilliseconds()
+        if !timeline.isStarted {
+            // System audio joins the timeline (and loads its recognizer) only once something
+            // is audible, so mic-only meetings never load a second model.
+            guard !isDraining, source == .mic || !output.isSilent else { return }
+            timeline.start(firstChunkByteCount: output.data.count, arrivalMilliseconds: now)
         }
-        switch source {
-        case .mic:
-            if let micSTT {
-                micSTT.sendAudio(data)
-            } else {
-                // Provider still connecting (cold model load): buffer so the opening
-                // speech isn't lost; flushed in connectSTTProvider once micSTT is set.
-                bufferPendingMicAudio(data)
-            }
-        case .system:
-            if let systemSTT {
-                systemSTT.sendAudio(data)
-            } else {
-                // First real system audio: spin up the recognizer now. Audio arriving
-                // during the few-second load is dropped (no-buffer mode).
+
+        let chunks = timeline.append(output.data, captureID: captureID, arrivalMilliseconds: now)
+        if let provider = provider(for: source) {
+            audioTimelines[source] = timeline
+            chunks.forEach { provider.sendAudio($0) }
+        } else {
+            // Provider still connecting (cold model load): keep the audio in order so the
+            // opening speech isn't lost; flushed in connectSTTProvider once connected.
+            timeline.bufferPending(chunks)
+            audioTimelines[source] = timeline
+            if source == .system, !isDraining {
                 ensureSystemSTTConnectedLazily(sessionToken: sessionToken)
             }
         }
     }
 
-    /// Lazily connects the system-audio STT runtime the first time real (non-silent)
-    /// system audio arrives. Mic-only sessions never reach here, so the second
-    /// recognizer is never loaded.
+    /// Lazily connects the system-audio STT runtime the first time audible system audio
+    /// arrives. Audio received while it loads is buffered on the system timeline. Mic-only
+    /// sessions never reach here, so the second recognizer is never loaded.
     private func ensureSystemSTTConnectedLazily(sessionToken: UUID) {
         guard isActiveSession(sessionToken) else { return }
         guard systemSTT == nil, systemSTTConnectingSessionID == nil else { return }
         systemSTTConnectingSessionID = sessionToken
-        let offset = firstAudioOffsets[.system] ?? elapsedRecordingMilliseconds()
+        let offset = audioTimelines[.system]?.anchorMilliseconds ?? elapsedRecordingMilliseconds()
         Task { [weak self] in
             guard let self else { return }
             defer {
@@ -835,32 +908,12 @@ class AudioManager: NSObject, ObservableObject {
         switch source {
         case .mic:
             micSTT = provider
-            flushPendingMicAudio(to: provider)
         case .system:
             systemSTT = provider
         }
+        audioTimelines[source]?.takePending().forEach { provider.sendAudio($0) }
 
         return provider
-    }
-
-    /// Ring-buffers mic audio captured before the provider finishes connecting, capped at
-    /// `VoiceInputTiming.maxPendingAudioBytes` so a slow/failed connect can't grow unbounded.
-    private func bufferPendingMicAudio(_ data: Data) {
-        micPendingAudioChunks.append(data)
-        micPendingAudioByteCount += data.count
-        while micPendingAudioByteCount > VoiceInputTiming.maxPendingAudioBytes,
-              !micPendingAudioChunks.isEmpty {
-            let removed = micPendingAudioChunks.removeFirst()
-            micPendingAudioByteCount -= removed.count
-        }
-    }
-
-    private func flushPendingMicAudio(to provider: STTProvider) {
-        guard !micPendingAudioChunks.isEmpty else { return }
-        let chunks = micPendingAudioChunks
-        micPendingAudioChunks.removeAll(keepingCapacity: true)
-        micPendingAudioByteCount = 0
-        chunks.forEach { provider.sendAudio($0) }
     }
 
     private func makeConnectedSTTProvider(
@@ -874,9 +927,9 @@ class AudioManager: NSObject, ObservableObject {
         provider.onTranscriptUpdate = { [weak self] update in
             DispatchQueue.main.async {
                 guard let self, self.sessionID == sessionToken else { return }
-                // Use offset captured at first meaningful audio arrival; fall back to
-                // connect-time offset if no audio has arrived yet for this source.
-                let offset = self.firstAudioOffsets[source] ?? offsetMilliseconds
+                // Use the timeline anchor (first audio on this source's timeline); fall back
+                // to connect-time offset if no audio has arrived yet for this source.
+                let offset = self.audioTimelines[source]?.anchorMilliseconds ?? offsetMilliseconds
                 self.handleTranscriptUpdate(
                     Self.offsetTranscriptUpdate(update, by: offset),
                     source: source
@@ -887,7 +940,7 @@ class AudioManager: NSObject, ObservableObject {
         provider.onTranscriptCorrection = { [weak self] corrections in
             DispatchQueue.main.async {
                 guard let self, self.sessionID == sessionToken else { return }
-                let offset = self.firstAudioOffsets[source] ?? offsetMilliseconds
+                let offset = self.audioTimelines[source]?.anchorMilliseconds ?? offsetMilliseconds
                 self.applyCorrections(corrections, source: source, offsetMilliseconds: offset)
             }
         }
@@ -1036,6 +1089,8 @@ class AudioManager: NSObject, ObservableObject {
             systemSTT?.disconnect()
             systemSTT = nil
             systemSTTConnectingSessionID = nil
+            audioTimelines[.system] = nil
+            activeCaptureIDs[.system] = nil
             if isTapActive {
                 systemAudioPipeline?.stop()
                 systemAudioPipeline = nil
@@ -1064,8 +1119,6 @@ class AudioManager: NSObject, ObservableObject {
         systemSTT?.disconnect()
         micSTT = nil
         systemSTT = nil
-        micPendingAudioChunks.removeAll(keepingCapacity: false)
-        micPendingAudioByteCount = 0
         activeInterimChunkId.removeAll()
         systemSTTConnectingSessionID = nil
     }

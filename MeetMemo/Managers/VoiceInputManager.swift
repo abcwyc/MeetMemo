@@ -247,13 +247,13 @@ final class VoiceInputManager: NSObject, ObservableObject {
             source: .mic,
             inputFormat: inputFormat,
             targetFormat: targetFormat,
-            onAudioData: { [weak self] data, _ in
+            onAudioData: { [weak self] output in
                 Task { @MainActor [weak self] in
                     guard let self, self.sessionID == sessionID, self.state == .listening else { return }
                     if let provider = self.provider {
-                        provider.sendAudio(data)
+                        provider.sendAudio(output.data)
                     } else {
-                        self.appendPendingAudio(data)
+                        self.appendPendingAudio(output.data)
                     }
                 }
             },
