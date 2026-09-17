@@ -838,19 +838,15 @@ class MeetingViewModel: ObservableObject {
         NSPasteboard.general.setString(content, forType: .string)
     }
 
-    func addTextContextItem() {
-        meeting.contextItems.append(
-            MeetingContextItem(
-                kind: .text,
-                title: LanguageManager.shared.t("手动补充", "Manual Context"),
-                extractedText: ""
-            )
+    @discardableResult
+    func prepareContextRecord() -> UUID {
+        meeting.ensureUnifiedContextRecord(
+            defaultTitle: LanguageManager.shared.t("记录", "Note")
         )
     }
 
     func addFileContextItem(url: URL, text: String) {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedText.isEmpty else { return }
 
         meeting.contextItems.append(
             MeetingContextItem(

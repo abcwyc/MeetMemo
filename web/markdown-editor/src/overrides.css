@@ -24,6 +24,49 @@
   }
 }
 
+/* Keep scrollbars geometrically stable. macOS' overlay scroller grows when
+ * the pointer approaches it, which reads as a small layout jump inside the
+ * detail pane. A fixed track keeps the footprint unchanged; hover only
+ * increases contrast. The same treatment also covers wide table widgets. */
+.atomic-cm-editor .cm-scroller,
+.atomic-cm-editor .cm-atomic-table {
+  scrollbar-gutter: stable;
+}
+
+.atomic-cm-editor .cm-scroller::-webkit-scrollbar,
+.atomic-cm-editor .cm-atomic-table::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.atomic-cm-editor .cm-scroller::-webkit-scrollbar-track,
+.atomic-cm-editor .cm-atomic-table::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.atomic-cm-editor .cm-scroller::-webkit-scrollbar-thumb,
+.atomic-cm-editor .cm-atomic-table::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--atomic-editor-fg-muted) 42%, transparent 58%);
+  background-clip: content-box;
+}
+
+.atomic-cm-editor .cm-scroller::-webkit-scrollbar-thumb:vertical {
+  min-height: 36px;
+}
+
+.atomic-cm-editor .cm-atomic-table::-webkit-scrollbar-thumb:horizontal {
+  min-width: 36px;
+}
+
+.atomic-cm-editor .cm-scroller::-webkit-scrollbar-thumb:hover,
+.atomic-cm-editor .cm-atomic-table::-webkit-scrollbar-thumb:hover {
+  border-width: 3px;
+  background: color-mix(in srgb, var(--atomic-editor-fg-muted) 68%, transparent 32%);
+  background-clip: content-box;
+}
+
 :root .atomic-cm-editor {
   --atomic-editor-body-size: inherit;
   --atomic-editor-body-leading: inherit;

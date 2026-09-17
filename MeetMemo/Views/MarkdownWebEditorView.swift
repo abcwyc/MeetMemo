@@ -32,6 +32,10 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     @Binding var text: String
     let documentId: String
     var readOnly: Bool
+    /// Increment to move keyboard focus into the CodeMirror editing surface.
+    /// Keeping this separate from `documentId` avoids remounting the document
+    /// merely because the user reselected the context tab or clicked Add Note.
+    var focusRequest: Int = 0
 
     /// Drives the editor's palette. Read from the SwiftUI environment rather
     /// than the web view's `effectiveAppearance` so it tracks the app's own
@@ -72,6 +76,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
             isDark: colorScheme == .dark
         )
         context.coordinator.sync(documentId: documentId, markdown: text, readOnly: readOnly)
+        context.coordinator.requestFocus(focusRequest)
     }
 
     static func dismantleNSView(_ webView: WKWebView, coordinator: Coordinator) {
@@ -112,6 +117,8 @@ struct MarkdownWebEditorView: NSViewRepresentable {
 
         private var appliedTheme: ThemeState?
         private var pendingTheme: ThemeState?
+        private var lastFocusRequest = 0
+        private var pendingFocusRequest: Int?
 
         /// The text the editor itself last reported. Lets `sync` tell "the
         /// app handed us different content" apart from "our own edit came
@@ -171,6 +178,35 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                 return
             }
             applyTheme(state)
+        }
+
+        func requestFocus(_ request: Int) {
+            guard request > 0, request != lastFocusRequest else { return }
+            lastFocusRequest = request
+            guard isBridgeReady else {
+                pendingFocusRequest = request
+                return
+            }
+            focusEditor()
+        }
+
+        private func focusEditor() {
+            // React/CodeMirror may still be completing a document remount when
+            // Swift asks for focus. Try immediately and across the short
+            // transition window without changing the editor's document id.
+            let script = """
+            (function () {
+              function focusContent() {
+                var content = document.querySelector('.cm-content[contenteditable="true"], .cm-content');
+                if (!content) return;
+                content.focus({ preventScroll: true });
+              }
+              focusContent();
+              window.setTimeout(focusContent, 90);
+              window.setTimeout(focusContent, 220);
+            })();
+            """
+            webView?.evaluateJavaScript(script)
         }
 
         private func applyTheme(_ state: ThemeState) {
@@ -251,6 +287,10 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                 if let pending = pendingLoad {
                     push(pending)
                     pendingLoad = nil
+                }
+                if pendingFocusRequest != nil {
+                    focusEditor()
+                    pendingFocusRequest = nil
                 }
             default:
                 break

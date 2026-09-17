@@ -890,7 +890,7 @@ struct MeetingDetailContentView: View {
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
     @State private var showDeleteAlert = false
-    @State private var isContextEditing = false
+    @State private var contextEditorFocusRequest = 0
     /// Bumped on every genuine "new document" boundary for the notes web
     /// editor (meeting switch, a fresh AI generation landing) — see
     /// `MarkdownWebEditorView`'s doc comment for why this can't just be
@@ -999,9 +999,19 @@ struct MeetingDetailContentView: View {
         .fileImporter(
             isPresented: $isImportingContextFile,
             allowedContentTypes: [.plainText, .text],
-            allowsMultipleSelection: false
+            allowsMultipleSelection: true
         ) { result in
             importContextFile(result)
+        }
+        .onAppear {
+            if viewModel.selectedTab == .context {
+                prepareContextWorkspace(requestFocus: true)
+            }
+        }
+        .onChange(of: viewModel.selectedTab) { _, selectedTab in
+            if selectedTab == .context {
+                prepareContextWorkspace(requestFocus: true)
+            }
         }
         .onChange(of: meeting.id) { _, _ in
             viewModel.switchToMeeting(
@@ -1012,9 +1022,12 @@ struct MeetingDetailContentView: View {
                 meetingIsFullyLoaded: true
             )
             hoveredTab = nil
-            isContextEditing = false
             notesEditorDocumentRevision += 1
             showCopyConfirmation = false
+
+            if viewModel.selectedTab == .context {
+                prepareContextWorkspace(requestFocus: true)
+            }
         }
         .background(WindowWidthReader(width: $windowWidth))
         .toolbar {
@@ -1228,20 +1241,6 @@ struct MeetingDetailContentView: View {
 
     private var moreMenu: some View {
         Menu {
-            // AI Notes has no separate edit/preview mode any more — the
-            // notes editor is directly editable in place at all times (see
-            // enhancedNotesView), so there's nothing to toggle there.
-            if viewModel.selectedTab == .context {
-                Button {
-                    toggleCurrentEditingMode()
-                } label: {
-                    Label(
-                        isCurrentTabEditing ? langMgr.t("预览", "Preview") : langMgr.t("编辑", "Edit"),
-                        systemImage: isCurrentTabEditing ? "eye" : "pencil"
-                    )
-                }
-            }
-
             Button {
                 copyCurrentTabContent()
             } label: {
@@ -1314,10 +1313,9 @@ struct MeetingDetailContentView: View {
 
             if viewModel.selectedTab == .context {
                 Button {
-                    isContextEditing = true
-                    viewModel.addTextContextItem()
+                    prepareContextWorkspace(requestFocus: true)
                 } label: {
-                    Label(langMgr.t("添加文本", "Add Text"), systemImage: "text.alignleft")
+                    Label(langMgr.t("添加记录", "Add Note"), systemImage: "text.alignleft")
                 }
                 .buttonStyle(DetailHeaderActionButtonStyle())
 
@@ -1535,24 +1533,6 @@ struct MeetingDetailContentView: View {
         return Color.accentColor.opacity(isRecordingButtonHovered ? 0.38 : 0.26)
     }
 
-    private var isCurrentTabEditing: Bool {
-        switch viewModel.selectedTab {
-        case .context:
-            return isContextEditing
-        case .enhancedNotes, .transcript, .summary:
-            return false
-        }
-    }
-
-    private func toggleCurrentEditingMode() {
-        switch viewModel.selectedTab {
-        case .context:
-            isContextEditing.toggle()
-        case .enhancedNotes, .transcript, .summary:
-            break
-        }
-    }
-
     private func generateNotesWithTemplate(_ templateId: UUID?) async {
         viewModel.selectedTab = .enhancedNotes
 
@@ -1577,74 +1557,77 @@ struct MeetingDetailContentView: View {
 
     // MARK: - Content Views
 
+    @ViewBuilder
     private var contextView: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if isContextEditing {
-                VStack(alignment: .leading, spacing: 12) {
-                    if viewModel.meeting.contextItems.isEmpty {
-                        Text(langMgr.t("添加会议议程、背景材料、客户信息或你的补充判断。", "Add an agenda, background material, customer details, or your own notes."))
-                            .foregroundColor(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                            .background(Color.gray.opacity(0.05))
-                            .cornerRadius(8)
-                    } else {
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 12) {
-                                ForEach(viewModel.meeting.contextItems) { item in
-                                    ContextEditorCard(
-                                        item: contextItemBinding(for: item),
-                                        onDelete: { viewModel.deleteContextItem(item) }
-                                    )
-                                }
-                            }
-                            .padding(.vertical, 2)
+        VStack(alignment: .leading, spacing: 12) {
+            let attachments = viewModel.meeting.contextItems.filter { $0.kind != .text }
+            if !attachments.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(langMgr.t("附件", "Attachments"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    ContextAttachmentFlowLayout(spacing: 7) {
+                        ForEach(attachments) { attachment in
+                            ContextAttachmentChip(
+                                item: attachment,
+                                onDelete: { viewModel.deleteContextItem(attachment) }
+                            )
                         }
                     }
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
-            } else {
-                if viewModel.meeting.formattedMeetingContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    ScrollView {
-                        Text(langMgr.t("暂无上下文...", "No context yet..."))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxHeight: .infinity)
-                    .background(Color.gray.opacity(0.05))
-                    .cornerRadius(8)
-                } else {
-                    ContextPreviewList(
-                        items: viewModel.meeting.contextItems
-                    )
-                        .font(.body)
-                        .background(Color.gray.opacity(0.05))
-                        .cornerRadius(8)
-                        .frame(maxHeight: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let record = viewModel.meeting.contextItems.first(where: { $0.kind == .text }) {
+                MarkdownWebEditorView(
+                    text: contextRecordTextBinding(for: record),
+                    documentId: "\(viewModel.meeting.id.uuidString)-context-\(record.id.uuidString)",
+                    readOnly: false,
+                    focusRequest: contextEditorFocusRequest
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minHeight: 200)
+                .background(Color.gray.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.gray.opacity(0.18), lineWidth: 1)
                 }
+            } else {
+                Color.clear
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func importContextFile(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
-            guard let url = urls.first else { return }
-            let didAccess = url.startAccessingSecurityScopedResource()
-            defer {
-                if didAccess {
-                    url.stopAccessingSecurityScopedResource()
+            var failedFileNames: [String] = []
+
+            for url in urls {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                defer {
+                    if didAccess {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+
+                do {
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    viewModel.addFileContextItem(url: url, text: text)
+                } catch {
+                    failedFileNames.append(url.lastPathComponent)
                 }
             }
 
-            do {
-                let text = try String(contentsOf: url, encoding: .utf8)
-                viewModel.addFileContextItem(url: url, text: text)
-            } catch {
+            if !failedFileNames.isEmpty {
+                let names = failedFileNames.joined(separator: "、")
                 viewModel.errorMessage = langMgr.t(
-                    "无法读取文件内容。当前支持 UTF-8 文本文件。",
-                    "Could not read this file. UTF-8 text files are supported for now."
+                    "无法读取以下文件：\(names)。当前支持 UTF-8 文本文件。",
+                    "Could not read: \(names). UTF-8 text files are supported for now."
                 )
             }
         case .failure(let error):
@@ -1777,16 +1760,28 @@ struct MeetingDetailContentView: View {
         }
     }
 
-    private func contextItemBinding(for item: MeetingContextItem) -> Binding<MeetingContextItem> {
-        Binding(
+    private func prepareContextWorkspace(requestFocus: Bool) {
+        viewModel.prepareContextRecord()
+        guard requestFocus else { return }
+        contextEditorFocusRequest += 1
+    }
+
+    private func contextRecordTextBinding(for item: MeetingContextItem) -> Binding<String> {
+        let boundMeetingId = viewModel.meeting.id
+        let boundItemId = item.id
+        return Binding(
             get: {
-                viewModel.meeting.contextItems.first(where: { $0.id == item.id }) ?? item
+                guard viewModel.meeting.id == boundMeetingId else { return "" }
+                return viewModel.meeting.contextItems
+                    .first(where: { $0.id == boundItemId })?
+                    .extractedText ?? ""
             },
-            set: { updatedItem in
-                guard let index = viewModel.meeting.contextItems.firstIndex(where: { $0.id == item.id }) else {
+            set: { updatedText in
+                guard viewModel.meeting.id == boundMeetingId,
+                      let index = viewModel.meeting.contextItems.firstIndex(where: { $0.id == boundItemId }) else {
                     return
                 }
-                viewModel.meeting.contextItems[index] = updatedItem
+                viewModel.meeting.contextItems[index].extractedText = updatedText
             }
         )
     }
@@ -1974,250 +1969,86 @@ private final class WindowWidthReportingView: NSView {
     }
 }
 
-private struct ContextEditorCard: View {
+private struct ContextAttachmentChip: View {
     @EnvironmentObject var langMgr: LanguageManager
-    @Binding var item: MeetingContextItem
+    let item: MeetingContextItem
     let onDelete: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Label(
-                    langMgr.t(item.kind.displayName, item.kind.englishDisplayName),
-                    systemImage: item.kind.icon
-                )
-                .font(.caption)
-                .foregroundColor(.secondary)
+        HStack(spacing: 6) {
+            Image(systemName: item.kind.icon)
+                .foregroundStyle(.secondary)
 
-                TextField(langMgr.t("标题", "Title"), text: $item.title)
-                    .textFieldStyle(.plain)
-                    .font(.headline)
+            Text(item.displayTitle)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: 240)
 
-                Spacer()
-
-                Button(role: .destructive, action: onDelete) {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.plain)
-                .help(langMgr.t("删除上下文", "Delete context"))
+            Button(role: .destructive, action: onDelete) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
-
-            if item.kind != .text {
-                TextField(langMgr.t("来源", "Source"), text: Binding(
-                    get: { item.source ?? "" },
-                    set: { item.source = $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .font(.caption)
-            }
-
-            ContextExtractionStatusView(item: item)
-
-            IMESafeTextEditor(text: $item.extractedText, minHeight: 110)
-                .frame(minHeight: 110)
-                .background(Color.gray.opacity(0.05))
-                .cornerRadius(8)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.gray.opacity(0.22), lineWidth: 1)
-                )
+            .buttonStyle(.plain)
+            .help(langMgr.t("移除附件", "Remove attachment"))
         }
-        .padding(12)
-        .background(Color.gray.opacity(0.05))
-        .cornerRadius(8)
+        .font(.caption)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 6)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(.separator.opacity(0.35), lineWidth: 1)
+        }
+        .fixedSize()
     }
 }
 
-private struct IMESafeTextEditor: NSViewRepresentable {
-    @Binding var text: String
-    var minHeight: CGFloat = 110
+private struct ContextAttachmentFlowLayout: Layout {
+    var spacing: CGFloat = 7
 
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .noBorder
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let availableWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var contentWidth: CGFloat = 0
+        var contentHeight: CGFloat = 0
 
-        let textView = NSTextView()
-        textView.delegate = context.coordinator
-        textView.string = text
-        textView.font = .systemFont(ofSize: NSFont.systemFontSize)
-        textView.textColor = .labelColor
-        textView.drawsBackground = false
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.importsGraphics = false
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.textContainerInset = NSSize(width: 8, height: 8)
-        textView.minSize = NSSize(width: 0, height: minHeight)
-        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        textView.isVerticallyResizable = true
-        textView.isHorizontallyResizable = false
-        textView.autoresizingMask = [.width]
-        textView.textContainer?.widthTracksTextView = true
-        textView.textContainer?.containerSize = NSSize(
-            width: scrollView.contentSize.width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-
-        scrollView.documentView = textView
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-
-        context.coordinator.update(text: $text)
-        textView.minSize = NSSize(width: 0, height: minHeight)
-
-        // During Chinese/Japanese/Korean IME composition, NSTextView keeps the
-        // in-progress pinyin/kana in marked text. Replacing the string from
-        // SwiftUI at that moment clears the marked text and loses the input.
-        guard !textView.hasMarkedText(), textView.string != text else { return }
-
-        let selectedRanges = clampedSelectedRanges(textView.selectedRanges, textLength: text.utf16.count)
-        textView.string = text
-        textView.selectedRanges = selectedRanges
-    }
-
-    private func clampedSelectedRanges(_ ranges: [NSValue], textLength: Int) -> [NSValue] {
-        ranges.map { value in
-            let range = value.rangeValue
-            let location = min(range.location, textLength)
-            let availableLength = max(0, textLength - location)
-            let length = min(range.length, availableLength)
-            return NSValue(range: NSRange(location: location, length: length))
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        private var text: Binding<String>
-
-        init(text: Binding<String>) {
-            self.text = text
-        }
-
-        func update(text: Binding<String>) {
-            self.text = text
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-
-            if textView.hasMarkedText() {
-                return
-            }
-
-            commit(textView.string)
-        }
-
-        func textDidEndEditing(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            commit(textView.string)
-        }
-
-        private func commit(_ value: String) {
-            guard value != text.wrappedValue else { return }
-            DispatchQueue.main.async {
-                self.text.wrappedValue = value
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            let proposedRowWidth = rowWidth == 0 ? size.width : rowWidth + spacing + size.width
+            if proposedRowWidth > availableWidth, rowWidth > 0 {
+                contentWidth = max(contentWidth, rowWidth)
+                contentHeight += rowHeight + spacing
+                rowWidth = size.width
+                rowHeight = size.height
+            } else {
+                rowWidth = proposedRowWidth
+                rowHeight = max(rowHeight, size.height)
             }
         }
+
+        contentWidth = max(contentWidth, rowWidth)
+        contentHeight += rowHeight
+        return CGSize(width: proposal.width ?? contentWidth, height: contentHeight)
     }
-}
 
-private struct ContextPreviewList: View {
-    @EnvironmentObject var langMgr: LanguageManager
-    let items: [MeetingContextItem]
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
 
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                ForEach(items.filter { !$0.trimmedText.isEmpty || $0.extractionStatus == .extracting }) { item in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 6) {
-                            Image(systemName: item.kind.icon)
-                                .foregroundColor(.secondary)
-                            Text(item.displayTitle)
-                                .font(.headline)
-                            Spacer()
-                            Text(langMgr.t(item.kind.displayName, item.kind.englishDisplayName))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-
-                        if let source = item.source, !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(source)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        ContextExtractionStatusView(item: item)
-
-                        if !item.trimmedText.isEmpty {
-                            // Sized to its content: it already sits in an outer ScrollView.
-                            RenderedNotesView(text: item.trimmedText, isScrollable: false)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 10)
-
-                    if item.id != items.filter({ !$0.trimmedText.isEmpty || $0.extractionStatus == .extracting }).last?.id {
-                        Divider()
-                    }
-                }
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
             }
-            .padding()
-            .textSelection(.enabled)
-        }
-    }
-}
 
-private struct ContextExtractionStatusView: View {
-    @EnvironmentObject var langMgr: LanguageManager
-    let item: MeetingContextItem
-
-    var body: some View {
-        switch item.extractionStatus {
-        case .extracting:
-            HStack(spacing: 6) {
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: 14, height: 14)
-                Text(langMgr.t("正在读取网页内容...", "Reading webpage content..."))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        case .succeeded:
-            if item.kind != .text {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
-                    Text(langMgr.t("已读取内容，可继续编辑", "Content read. You can edit it."))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-            }
-        case .failed:
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.orange)
-                Text(item.extractionError ?? langMgr.t("读取失败，可手动粘贴内容。", "Reading failed. You can paste content manually."))
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        case .idle:
-            EmptyView()
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

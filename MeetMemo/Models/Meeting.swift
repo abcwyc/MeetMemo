@@ -844,6 +844,48 @@ struct Meeting: Codable, Identifiable, Hashable {
         .joined(separator: "\n\n")
     }
 
+    /// Returns the single Markdown document used by the meeting-context
+    /// workspace, creating it when necessary. Older releases allowed several
+    /// independent text cards; fold those cards into one document so no
+    /// existing notes disappear when the new single-editor UI opens them.
+    @discardableResult
+    mutating func ensureUnifiedContextRecord(defaultTitle: String) -> UUID {
+        let textItems = contextItems.filter { $0.kind == .text }
+
+        guard let primary = textItems.first else {
+            let item = MeetingContextItem(
+                kind: .text,
+                title: defaultTitle,
+                extractedText: ""
+            )
+            contextItems.append(item)
+            return item.id
+        }
+
+        guard textItems.count > 1 else {
+            if let index = contextItems.firstIndex(where: { $0.id == primary.id }),
+               contextItems[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                contextItems[index].title = defaultTitle
+            }
+            return primary.id
+        }
+
+        let mergedMarkdown = textItems
+            .map(\.extractedText)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n\n---\n\n")
+        let mergedIds = Set(textItems.dropFirst().map(\.id))
+
+        if let primaryIndex = contextItems.firstIndex(where: { $0.id == primary.id }) {
+            contextItems[primaryIndex].extractedText = mergedMarkdown
+            if contextItems[primaryIndex].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                contextItems[primaryIndex].title = defaultTitle
+            }
+        }
+        contextItems.removeAll { mergedIds.contains($0.id) }
+        return primary.id
+    }
+
     /// Trims whitespace and leading `#`, drops empty values, and removes case-insensitive duplicates.
     static func normalizedTags(_ tags: [String]) -> [String] {
         var seen = Set<String>()
