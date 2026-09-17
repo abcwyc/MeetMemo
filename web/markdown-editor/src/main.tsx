@@ -9,9 +9,9 @@ import './overrides.css';
 // Bridge contract with MarkdownWebEditorView.swift (WKScriptMessageHandler +
 // evaluateJavaScript):
 //
-// JS -> Swift: window.webkit.messageHandlers.markdownChanged.postMessage(text)
-//   Fired on every edit (raw markdown string; WKScriptMessage round-trips a
-//   bare JS string as an NSString, no JSON wrapper needed).
+// JS -> Swift: markdownChanged.postMessage({ documentId, markdown })
+//   Fired on every edit. The mounted document id lets Swift reject a late
+//   callback from an editor instance that was replaced during meeting switch.
 // JS -> Swift: window.webkit.messageHandlers.linkClicked.postMessage(url)
 //   A rendered link was clicked; Swift opens it via NSWorkspace.
 //
@@ -37,7 +37,7 @@ declare global {
   interface Window {
     webkit?: {
       messageHandlers?: {
-        markdownChanged?: { postMessage: (body: string) => void };
+        markdownChanged?: { postMessage: (body: { documentId: string; markdown: string }) => void };
         linkClicked?: { postMessage: (url: string) => void };
         editorReady?: { postMessage: (body: string) => void };
       };
@@ -50,6 +50,10 @@ declare global {
 
 function App() {
   const [doc, setDoc] = useState<LoadPayload | null>(null);
+  const [isSwitchingDocument, setIsSwitchingDocument] = useState(false);
+  const docRef = useRef<LoadPayload | null>(null);
+  const switchTimerRef = useRef<number | null>(null);
+  const settleFrameRef = useRef<number | null>(null);
   // Distinguishes "this text change came from the editor itself" (already
   // reflected in the CM6 view; echoing it back via `load` would be a no-op
   // at best since markdownSource is mount-only, so we just skip posting it
@@ -64,7 +68,42 @@ function App() {
     window.__meetmemoBridge = {
       load: (payload) => {
         lastEmittedRef.current = payload.markdown;
-        setDoc(payload);
+        const current = docRef.current;
+
+        if (switchTimerRef.current !== null) {
+          window.clearTimeout(switchTimerRef.current);
+          switchTimerRef.current = null;
+        }
+        if (settleFrameRef.current !== null) {
+          window.cancelAnimationFrame(settleFrameRef.current);
+          settleFrameRef.current = null;
+        }
+
+        // The first document and in-place configuration updates should paint
+        // immediately. A genuine document replacement keeps the old editor
+        // visible for one very short fade, then lets the fully mounted new
+        // editor fade in. This masks CodeMirror's required destroy/recreate
+        // boundary without delaying normal typing or read-only changes.
+        if (!current || current.documentId === payload.documentId) {
+          docRef.current = payload;
+          setDoc(payload);
+          setIsSwitchingDocument(false);
+          return;
+        }
+
+        setIsSwitchingDocument(true);
+        switchTimerRef.current = window.setTimeout(() => {
+          docRef.current = payload;
+          setDoc(payload);
+          switchTimerRef.current = null;
+
+          settleFrameRef.current = window.requestAnimationFrame(() => {
+            settleFrameRef.current = window.requestAnimationFrame(() => {
+              setIsSwitchingDocument(false);
+              settleFrameRef.current = null;
+            });
+          });
+        }, 65);
       },
     };
     // Tell Swift the bridge object actually exists now, so it knows it's
@@ -77,6 +116,12 @@ function App() {
     window.webkit?.messageHandlers?.editorReady?.postMessage('');
 
     return () => {
+      if (switchTimerRef.current !== null) {
+        window.clearTimeout(switchTimerRef.current);
+      }
+      if (settleFrameRef.current !== null) {
+        window.cancelAnimationFrame(settleFrameRef.current);
+      }
       delete window.__meetmemoBridge;
     };
   }, []);
@@ -84,7 +129,11 @@ function App() {
   const handleChange = (text: string) => {
     if (text === lastEmittedRef.current) return;
     lastEmittedRef.current = text;
-    window.webkit?.messageHandlers?.markdownChanged?.postMessage(text);
+    if (!doc) return;
+    window.webkit?.messageHandlers?.markdownChanged?.postMessage({
+      documentId: doc.documentId,
+      markdown: text,
+    });
   };
 
   // Nothing to render until Swift's first load() call arrives — which it
@@ -92,18 +141,20 @@ function App() {
   if (!doc) return null;
 
   return (
-    <AtomicCodeMirrorEditor
-      documentId={doc.documentId}
-      markdownSource={doc.markdown}
-      readOnly={doc.readOnly}
-      onMarkdownChange={handleChange}
-      onLinkClick={(url) => {
-        // Hand off to Swift (NSWorkspace.shared.open) — a bare WKWebView has
-        // no window chrome for window.open to target, and this keeps
-        // "open in the system browser" a visible native action.
-        window.webkit?.messageHandlers?.linkClicked?.postMessage(url);
-      }}
-    />
+    <div className={`meetmemo-editor-transition${isSwitchingDocument ? ' is-switching' : ''}`}>
+      <AtomicCodeMirrorEditor
+        documentId={doc.documentId}
+        markdownSource={doc.markdown}
+        readOnly={doc.readOnly}
+        onMarkdownChange={handleChange}
+        onLinkClick={(url) => {
+          // Hand off to Swift (NSWorkspace.shared.open) — a bare WKWebView has
+          // no window chrome for window.open to target, and this keeps
+          // "open in the system browser" a visible native action.
+          window.webkit?.messageHandlers?.linkClicked?.postMessage(url);
+        }}
+      />
+    </div>
   );
 }
 

@@ -77,7 +77,8 @@ struct MeetingHTMLExporter {
     // MARK: - Sections
 
     private static func pageHTML(title: String, bodySections: String) -> String {
-        """
+        let markdownTheme = UserDefaultsManager.shared.markdownTheme.rawValue
+        return """
         <!DOCTYPE html>
         <html lang="zh-CN">
         <head>
@@ -87,7 +88,7 @@ struct MeetingHTMLExporter {
           <title>\(title.esc)</title>
           <style>\(embeddedCSS)</style>
         </head>
-        <body>
+        <body data-markdown-theme="\(markdownTheme)">
           <div class="container">
         \(bodySections)
           </div>
@@ -564,7 +565,7 @@ struct MeetingHTMLExporter {
       *, *::before, *::after { box-sizing: border-box; }
       body {
         font-family: 'PingFang SC', 'Hiragino Sans GB', -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
-        font-size: 16px;
+        font-size: 13px;
         line-height: 1.65;
         color: #1a1a1a;
         background: #ffffff;
@@ -735,17 +736,121 @@ struct MeetingHTMLExporter {
       }
 
       /* Notes */
-      .notes-body p  { margin: 0 0 10px; }
-      .notes-body h1 { font-size: 1.3rem; margin: 20px 0 8px; }
-      .notes-body h2 { font-size: 1.1rem; margin: 16px 0 6px; border: none; }
-      .notes-body h3 { font-size: 0.95rem; margin: 12px 0 4px; text-transform: none; letter-spacing: 0; }
-      .notes-body h4 { font-size: 0.9rem; }
-      .notes-body ul, .notes-body ol { padding-left: 1.4em; margin: 0 0 10px; }
-      .notes-body li { margin-bottom: 3px; }
-      .notes-body table { border-collapse: collapse; width: 100%; margin-bottom: 14px; font-size: 0.88rem; }
-      .notes-body th, .notes-body td { border: 1px solid #ddd; padding: 6px 10px; text-align: left; }
-      .notes-body th { background: #f0f0f0; font-weight: 600; }
-      .notes-body tr:nth-child(even) td { background: #fafafa; }
+      .notes-body { width: 100%; font-size: 13px; line-height: 1.5; overflow-wrap: break-word; }
+      .notes-body p, .notes-body blockquote, .notes-body ul, .notes-body ol, .notes-body dl, .notes-body table, .notes-body pre, .notes-body details { margin-top: 0; margin-bottom: 16px; }
+      .notes-body h1, .notes-body h2, .notes-body h3, .notes-body h4 { font-weight: 600; line-height: 1.25; }
+      .notes-body h1 { font-size: 2rem; margin: 24px 0 16px; padding-bottom: .3em; border-bottom: 1px solid #d8dee4; }
+      .notes-body h2 { font-size: 1.5rem; margin: 24px 0 16px; padding-bottom: .3em; border: none; border-bottom: 1px solid #d8dee4; }
+      .notes-body h3 { font-size: 1.25rem; margin: 24px 0 16px; text-transform: none; letter-spacing: 0; }
+      .notes-body h4 { font-size: 1rem; margin: 24px 0 16px; }
+      .notes-body > p:has(> strong:only-child) {
+        font-size: 1.5rem; line-height: 1.25; font-weight: 600; margin: 24px 0 16px;
+        padding-bottom: .3em; border-bottom: 1px solid #d8dee4;
+      }
+      .notes-body > p:first-child:has(> strong:only-child) {
+        font-size: 2rem; margin-top: 0;
+      }
+      .notes-body ul, .notes-body ol { padding-left: 2em; }
+      .notes-body li + li { margin-top: .25em; }
+      .notes-body blockquote { color: #59636e; border-left: .25em solid #d0d7de; padding: 0 1em; font-style: normal; }
+      .notes-body code, .notes-body pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+      .notes-body code { padding: .2em .4em; border-radius: 6px; background: rgba(175,184,193,.2); font-size: 85%; }
+      .notes-body pre { padding: 16px; overflow: auto; border-radius: 6px; background: #f6f8fa; font-size: 85%; line-height: 1.45; }
+      .notes-body pre code { padding: 0; background: transparent; font-size: 100%; }
+      .notes-body hr { height: .25em; margin: 24px 0; border: 0; background: #d0d7de; }
+      .notes-body img { max-width: 100%; }
+      .notes-body table { display: block; width: max-content; max-width: 100%; overflow: auto; border-collapse: collapse; border-spacing: 0; font-size: 1rem; font-variant-numeric: tabular-nums; }
+      .notes-body th, .notes-body td { border: 1px solid #d0d7de; padding: 6px 13px; text-align: left; vertical-align: top; }
+      .notes-body th { background: transparent; font-weight: 600; }
+      .notes-body tr { background: #fff; border-top: 1px solid #d8dee4; }
+      .notes-body tr:nth-child(even) td { background: #f6f8fa; }
+
+      /* Configurable Markdown themes. GitHub above remains the fallback. */
+      body[data-markdown-theme="meetmemo"] .notes-body h1 { font-size: 1.75rem; border-bottom: 0; }
+      body[data-markdown-theme="meetmemo"] .notes-body h2,
+      body[data-markdown-theme="meetmemo"] .notes-body > p:has(> strong:only-child) { font-size: 1.35rem; }
+      body[data-markdown-theme="meetmemo"] .notes-body h3 { font-size: 1.15rem; }
+      body[data-markdown-theme="meetmemo"] .notes-body blockquote {
+        background: rgba(0,122,255,.06); border-left: 3px solid #007aff; border-radius: 0 8px 8px 0; padding: .65em .9em;
+      }
+      body[data-markdown-theme="meetmemo"] .notes-body th { background: #f6f8fa; }
+      body[data-markdown-theme="meetmemo"] .notes-body tr:nth-child(even) td { background: transparent; }
+
+      body[data-markdown-theme="bear"] .notes-body { font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; line-height: 1.5; }
+      body[data-markdown-theme="bear"] .notes-body h1 { font-size: 1.9rem; border-bottom: 0; }
+      body[data-markdown-theme="bear"] .notes-body h2,
+      body[data-markdown-theme="bear"] .notes-body > p:has(> strong:only-child) { font-size: 1.4rem; border-bottom: 0; }
+      body[data-markdown-theme="bear"] .notes-body h3 { font-size: 1.18rem; }
+      body[data-markdown-theme="bear"] .notes-body h1,
+      body[data-markdown-theme="bear"] .notes-body h2,
+      body[data-markdown-theme="bear"] .notes-body h3,
+      body[data-markdown-theme="bear"] .notes-body h4,
+      body[data-markdown-theme="bear"] .notes-body > p:has(> strong:only-child) {
+        font-family: ui-rounded, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+        letter-spacing: -.012em;
+      }
+      body[data-markdown-theme="bear"] .notes-body blockquote { border-left-color: rgba(217,69,74,.35); }
+      body[data-markdown-theme="bear"] .notes-body th { background: rgba(217,69,74,.08); }
+      body[data-markdown-theme="bear"] .notes-body tr:nth-child(even) td { background: transparent; }
+      body[data-markdown-theme="bear"] .notes-body a,
+      body[data-markdown-theme="bear"] .notes-body li::marker { color: #d9454a; }
+      body[data-markdown-theme="bear"] .notes-body code,
+      body[data-markdown-theme="bear"] .notes-body pre { font-family: "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+      body[data-markdown-theme="typora"] .notes-body {
+        font-family: Vollkorn, Palatino, "Songti SC", "Noto Serif CJK SC", Times, serif;
+        line-height: 1.53; text-align: justify;
+      }
+      body[data-markdown-theme="typora"] .notes-body h1,
+      body[data-markdown-theme="typora"] .notes-body h2,
+      body[data-markdown-theme="typora"] .notes-body h3,
+      body[data-markdown-theme="typora"] .notes-body h4,
+      body[data-markdown-theme="typora"] .notes-body > p:has(> strong:only-child) { text-align: center; font-weight: 400; border-bottom: 0; }
+      body[data-markdown-theme="typora"] .notes-body h1 { margin-top: 1.6em; font-size: 3rem; }
+      body[data-markdown-theme="typora"] .notes-body h2,
+      body[data-markdown-theme="typora"] .notes-body > p:has(> strong:only-child) { margin-top: 2em; font-size: 1.5rem; }
+      body[data-markdown-theme="typora"] .notes-body > p:first-child:has(> strong:only-child) { margin-top: 0; font-size: 3rem; }
+      body[data-markdown-theme="typora"] .notes-body h2::after,
+      body[data-markdown-theme="typora"] .notes-body > p:not(:first-child):has(> strong:only-child)::after {
+        content: ""; display: block; width: 100px; height: 1px; margin: .45em auto 0; background: #ddd;
+      }
+      body[data-markdown-theme="typora"] .notes-body h3 { margin-top: 3em; font-size: 1.17rem; font-style: italic; }
+      body[data-markdown-theme="typora"] .notes-body blockquote { margin-left: 1em; border-left: 1px solid #ddd; }
+      body[data-markdown-theme="typora"] .notes-body code { padding: 0 .15em; border-radius: 0; background: transparent; font-size: .9em; }
+      body[data-markdown-theme="typora"] .notes-body pre { margin-left: 1em; padding: 6px 1em 8px; border: 1px solid #ddd; border-radius: 0; background: transparent; font-size: .9em; }
+      body[data-markdown-theme="typora"] .notes-body th,
+      body[data-markdown-theme="typora"] .notes-body td { padding: 8px; border: 0; border-top: 1px solid #ddd; }
+      body[data-markdown-theme="typora"] .notes-body thead tr:first-child th { border-top: 0; }
+      body[data-markdown-theme="typora"] .notes-body tr:nth-child(even) td { background: transparent; }
+      body[data-markdown-theme="typora"] .notes-body hr { height: 1px; margin: 2em 0; background: #ddd; }
+
+      body[data-markdown-theme="sspai"] .notes-body {
+        font-family: Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif; line-height: 1.8;
+      }
+      body[data-markdown-theme="sspai"] .notes-body h1 { font-size: 2.2rem; line-height: 1.1; margin: 0; padding: 16px 0 4px; border-bottom: 0; font-weight: 700; }
+      body[data-markdown-theme="sspai"] .notes-body h2,
+      body[data-markdown-theme="sspai"] .notes-body > p:has(> strong:only-child) {
+        font-size: 1.4rem; line-height: 1.4; font-weight: 700; margin: 40px 10px 20px 0; border: 0; border-left: 6px solid #ff7e79; padding: 0 0 0 9px;
+      }
+      body[data-markdown-theme="sspai"] .notes-body > p:first-child:has(> strong:only-child) { margin-top: 0; padding: 16px 0 4px; border-left: 0; font-size: 2.2rem; line-height: 1.1; }
+      body[data-markdown-theme="sspai"] .notes-body h3 { font-size: 1.2rem; line-height: 1.4; font-weight: 700; margin: 10px 5px; padding-top: 10px; }
+      body[data-markdown-theme="sspai"] .notes-body h4 { font-size: 1.1rem; text-transform: uppercase; }
+      body[data-markdown-theme="sspai"] .notes-body p { margin-bottom: 20px; }
+      body[data-markdown-theme="sspai"] .notes-body ul,
+      body[data-markdown-theme="sspai"] .notes-body ol { margin: 12px 0 20px; padding-left: 5%; }
+      body[data-markdown-theme="sspai"] .notes-body li { margin: .75em 0; }
+      body[data-markdown-theme="sspai"] .notes-body blockquote { position: relative; margin-bottom: 15px; padding: 30px 38px; border: 0; border-radius: 0; background: transparent; color: #888; }
+      body[data-markdown-theme="sspai"] .notes-body blockquote::before,
+      body[data-markdown-theme="sspai"] .notes-body blockquote::after { position: absolute; color: #ddd; font: 700 34px/1 Georgia, serif; }
+      body[data-markdown-theme="sspai"] .notes-body blockquote::before { content: "“"; top: 2px; left: 8px; }
+      body[data-markdown-theme="sspai"] .notes-body blockquote::after { content: "”"; right: 8px; bottom: 0; }
+      body[data-markdown-theme="sspai"] .notes-body a { color: #f22f27; }
+      body[data-markdown-theme="sspai"] .notes-body code { padding: 2px 4px; border-radius: 4px; color: #c7254e; background: #f9f2f4; font: .9em Courier, Menlo, Monaco, Consolas, monospace; }
+      body[data-markdown-theme="sspai"] .notes-body pre { margin-bottom: 25px; padding: 10px 20px; border-radius: 4px; color: #666; background: #f8f8f8; font: 13px/1.42857 Courier, Menlo, Monaco, Consolas, monospace; }
+      body[data-markdown-theme="sspai"] .notes-body pre code { padding: 0; color: inherit; background: transparent; font: inherit; }
+      body[data-markdown-theme="sspai"] .notes-body img { width: 100%; margin-bottom: 15px; border-radius: 5px; }
+      body[data-markdown-theme="sspai"] .notes-body hr { height: 1px; margin: 20px 0; background: #eee; }
+      body[data-markdown-theme="sspai"] .notes-body th { background: rgba(242,47,39,.08); }
 
       /* Dark mode */
       @media (prefers-color-scheme: dark) {
@@ -761,9 +866,32 @@ struct MeetingHTMLExporter {
         .card-detail { color: #adadb8; }
         blockquote { border-left-color: #48484a; color: #8e8e93; }
         details summary { color: #8e8e93; }
-        .notes-body th { background: #2c2c2e; }
-        .notes-body th, .notes-body td { border-color: #3a3a3c; }
-        .notes-body tr:nth-child(even) td { background: #232325; }
+        .notes-body h1, .notes-body h2, .notes-body > p:has(> strong:only-child) { border-bottom-color: #21262d; }
+        .notes-body blockquote { color: #8b949e; border-left-color: #30363d; }
+        .notes-body code { background: rgba(110,118,129,.4); }
+        .notes-body pre { background: #242426; }
+        .notes-body hr { background: #30363d; }
+        .notes-body th, .notes-body td { border-color: #30363d; }
+        .notes-body tr { background: #1c1c1e; border-top-color: #21262d; }
+        .notes-body tr:nth-child(even) td { background: #161b22; }
+        body[data-markdown-theme="meetmemo"] .notes-body blockquote { background: rgba(10,132,255,.09); border-left-color: #66b7ff; }
+        body[data-markdown-theme="meetmemo"] .notes-body th { background: #242426; }
+        body[data-markdown-theme="bear"] .notes-body a { color: #ff6b6b; }
+        body[data-markdown-theme="bear"] .notes-body th { background: rgba(255,107,107,.1); }
+        body[data-markdown-theme="typora"] .notes-body h2::after,
+        body[data-markdown-theme="typora"] .notes-body > p:not(:first-child):has(> strong:only-child)::after { background: #48484a; }
+        body[data-markdown-theme="typora"] .notes-body blockquote,
+        body[data-markdown-theme="typora"] .notes-body pre,
+        body[data-markdown-theme="typora"] .notes-body th,
+        body[data-markdown-theme="typora"] .notes-body td { border-color: #48484a; }
+        body[data-markdown-theme="typora"] .notes-body code,
+        body[data-markdown-theme="typora"] .notes-body pre { background: transparent; }
+        body[data-markdown-theme="sspai"] .notes-body blockquote { background: transparent; color: #8e8e93; }
+        body[data-markdown-theme="sspai"] .notes-body a { color: #ff7e79; }
+        body[data-markdown-theme="sspai"] .notes-body code { color: #ff9b9b; background: rgba(255,126,121,.1); }
+        body[data-markdown-theme="sspai"] .notes-body pre { color: #adadb8; background: #242426; }
+        body[data-markdown-theme="sspai"] .notes-body pre code { color: inherit; background: transparent; }
+        body[data-markdown-theme="sspai"] .notes-body th { background: rgba(255,126,121,.1); }
         .decision-grid-card { background: #2c2c2e; border-color: #3a3a3c; }
         .dg-title { color: #e5e5e7; }
         .dg-category { color: #636366; }

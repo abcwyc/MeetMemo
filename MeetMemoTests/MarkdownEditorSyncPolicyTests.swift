@@ -6,6 +6,10 @@ final class MarkdownEditorSyncPolicyTests: XCTestCase {
         MarkdownEditorDocumentState(documentId: id, markdown: markdown, readOnly: readOnly)
     }
 
+    private func emission(_ id: String, _ markdown: String) -> MarkdownEditorEmission {
+        MarkdownEditorEmission(documentId: id, markdown: markdown)
+    }
+
     func testFirstSyncMountsTheDocument() {
         let action = MarkdownEditorSyncPolicy.action(
             for: state("a-0", "# Notes"),
@@ -24,9 +28,8 @@ final class MarkdownEditorSyncPolicyTests: XCTestCase {
         XCTAssertEqual(action, .push(remount: true))
     }
 
-    /// The blank-pane bug: selecting a meeting hands the detail view a
-    /// placeholder with empty notes, and the real content is read from disk
-    /// afterwards — arriving under a documentId that has already settled.
+    /// Regression coverage for fallback/external loads that deliver content
+    /// after the document identity has already settled.
     func testContentArrivingAfterTheDocumentIdSettledRemounts() {
         let action = MarkdownEditorSyncPolicy.action(
             for: state("b-1", "# Real content loaded from disk"),
@@ -44,7 +47,7 @@ final class MarkdownEditorSyncPolicyTests: XCTestCase {
         let action = MarkdownEditorSyncPolicy.action(
             for: state("a-0", typed),
             lastPushed: state("a-0", "# Notes"),
-            lastEmittedByEditor: typed
+            lastEmittedByEditor: emission("a-0", typed)
         )
         XCTAssertEqual(action, .ignore)
     }
@@ -62,7 +65,7 @@ final class MarkdownEditorSyncPolicyTests: XCTestCase {
         let action = MarkdownEditorSyncPolicy.action(
             for: state("a-0", "# Notes"),
             lastPushed: state("a-0", "# Notes"),
-            lastEmittedByEditor: "# Notes"
+            lastEmittedByEditor: emission("a-0", "# Notes")
         )
         XCTAssertEqual(action, .ignore)
     }
@@ -86,7 +89,21 @@ final class MarkdownEditorSyncPolicyTests: XCTestCase {
         let action = MarkdownEditorSyncPolicy.action(
             for: state("a-1", text),
             lastPushed: state("a-0", text),
-            lastEmittedByEditor: text
+            lastEmittedByEditor: emission("a-0", text)
+        )
+        XCTAssertEqual(action, .push(remount: true))
+    }
+
+    /// Regression: edit A, switch to B, then revisit A. The revisit gets a
+    /// fresh document revision and initially mounts an empty summary
+    /// placeholder. When A's real content arrives from disk it must not be
+    /// mistaken for the previous A editor instance echoing its own edit.
+    func testRevisitingEditedDocumentDoesNotSuppressDiskLoadedContent() {
+        let edited = "# Notes\nEdited content"
+        let action = MarkdownEditorSyncPolicy.action(
+            for: state("a-2", edited),
+            lastPushed: state("a-2", ""),
+            lastEmittedByEditor: emission("a-0", edited)
         )
         XCTAssertEqual(action, .push(remount: true))
     }

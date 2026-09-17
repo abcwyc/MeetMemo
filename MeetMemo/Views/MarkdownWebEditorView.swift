@@ -26,7 +26,8 @@ import WebKit
 /// caller changing `documentId` and without the change having come from the
 /// editor itself — see `contentChangedExternally` in `sync`. That covers
 /// content arriving asynchronously for a document the editor has already
-/// mounted, which is the normal case when selecting a meeting.
+/// mounted. The meeting list now preloads before presentation, but this
+/// remains necessary for external replacements such as regenerated notes.
 struct MarkdownWebEditorView: NSViewRepresentable {
     @Binding var text: String
     let documentId: String
@@ -37,6 +38,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     /// light/dark setting (`AppearanceManager` forces it app-wide) at the
     /// same moment the rest of the UI does.
     @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var markdownThemeManager = MarkdownThemeManager.shared
 
     /// Custom scheme the bundled web editor loads under, instead of
     /// `file://` — WKWebView's `file://` origin is unreliable for
@@ -65,7 +67,10 @@ struct MarkdownWebEditorView: NSViewRepresentable {
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.text = $text
-        context.coordinator.syncTheme(isDark: colorScheme == .dark)
+        context.coordinator.syncTheme(
+            theme: markdownThemeManager.theme,
+            isDark: colorScheme == .dark
+        )
         context.coordinator.sync(documentId: documentId, markdown: text, readOnly: readOnly)
     }
 
@@ -100,15 +105,24 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         private var isBridgeReady = false
         private var pendingLoad: MarkdownEditorDocumentState?
         private var lastLoaded: MarkdownEditorDocumentState?
-        private var appliedThemeIsDark: Bool?
-        private var pendingThemeIsDark: Bool?
+        private struct ThemeState: Equatable {
+            let theme: MarkdownTheme
+            let isDark: Bool
+        }
+
+        private var appliedTheme: ThemeState?
+        private var pendingTheme: ThemeState?
 
         /// The text the editor itself last reported. Lets `sync` tell "the
         /// app handed us different content" apart from "our own edit came
         /// back around through the binding" — the latter must never force a
         /// reload, or every keystroke would remount the editor and drop the
         /// caret.
-        private var lastEmittedByEditor: String?
+        private var lastEmittedByEditor: MarkdownEditorEmission?
+        /// Exact remount-qualified id currently hosted by the JS editor.
+        /// Messages from an editor instance that was just replaced are
+        /// ignored instead of being written into the newly selected meeting.
+        private var activeBridgeDocumentId: String?
 
         /// Makes "same document, different content" look like a new document
         /// to the JS side. AtomicCodeMirrorEditor reads `markdownSource`
@@ -149,29 +163,31 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         /// Re-pushes the palette only when it actually changed. Called on
         /// every SwiftUI update pass, so it has to be cheap in the common
         /// (unchanged) case.
-        func syncTheme(isDark: Bool) {
-            guard isDark != appliedThemeIsDark else { return }
+        func syncTheme(theme: MarkdownTheme, isDark: Bool) {
+            let state = ThemeState(theme: theme, isDark: isDark)
+            guard state != appliedTheme else { return }
             guard isBridgeReady else {
-                pendingThemeIsDark = isDark
+                pendingTheme = state
                 return
             }
-            applyTheme(isDark: isDark)
+            applyTheme(state)
         }
 
-        private func applyTheme(isDark: Bool) {
-            appliedThemeIsDark = isDark
-            let variables = MarkdownEditorTheme.cssVariables(isDark: isDark)
+        private func applyTheme(_ state: ThemeState) {
+            appliedTheme = state
+            let variables = MarkdownEditorTheme.cssVariables(theme: state.theme, isDark: state.isDark)
             guard let data = try? JSONSerialization.data(withJSONObject: variables),
                   let json = String(data: data, encoding: .utf8) else { return }
             // `data-theme` still matters for the handful of variables we
             // don't override (code-syntax colors, find highlights): it picks
             // which of the package's own palettes those fall back to.
             let script = """
-            (function (theme, vars) {
-              document.documentElement.setAttribute('data-theme', theme);
+            (function (colorTheme, markdownTheme, vars) {
+              document.documentElement.setAttribute('data-theme', colorTheme);
+              document.documentElement.setAttribute('data-markdown-theme', markdownTheme);
               var style = document.documentElement.style;
               Object.keys(vars).forEach(function (key) { style.setProperty(key, vars[key]); });
-            })('\(isDark ? "dark" : "light")', \(json));
+            })('\(state.isDark ? "dark" : "light")', '\(state.theme.rawValue)', \(json));
             """
             webView?.evaluateJavaScript(script)
         }
@@ -190,25 +206,37 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                 let markdown: String
                 let readOnly: Bool
             }
+            let bridgeDocumentId = "\(state.documentId)#\(reloadNonce)"
             let payload = Payload(
-                documentId: "\(state.documentId)#\(reloadNonce)",
+                documentId: bridgeDocumentId,
                 markdown: state.markdown,
                 readOnly: state.readOnly
             )
             guard let data = try? JSONEncoder().encode(payload),
                   let json = String(data: data, encoding: .utf8) else { return }
+            activeBridgeDocumentId = bridgeDocumentId
             webView?.evaluateJavaScript("window.__meetmemoBridge && window.__meetmemoBridge.load(\(json));")
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             switch message.name {
             case "markdownChanged":
-                guard let newText = message.body as? String else { return }
-                lastEmittedByEditor = newText
+                guard let payload = message.body as? [String: Any],
+                      let bridgeDocumentId = payload["documentId"] as? String,
+                      let newText = payload["markdown"] as? String,
+                      bridgeDocumentId == activeBridgeDocumentId,
+                      let activeDocument = lastLoaded else { return }
+                lastEmittedByEditor = MarkdownEditorEmission(
+                    documentId: activeDocument.documentId,
+                    markdown: newText
+                )
                 guard newText != text.wrappedValue else { return }
-                DispatchQueue.main.async { [weak self] in
-                    self?.text.wrappedValue = newText
-                }
+                // WKScriptMessageHandler is invoked on the main thread. Apply
+                // the binding synchronously so a following meeting switch or
+                // view dismissal cannot overtake the final edit. The caller's
+                // binding is also scoped to its meeting id as a second guard
+                // against an already-queued callback from an old document.
+                text.wrappedValue = newText
             case "linkClicked":
                 guard let urlString = message.body as? String, let url = URL(string: urlString) else { return }
                 NSWorkspace.shared.open(url)
@@ -216,9 +244,9 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                 isBridgeReady = true
                 // Theme first, so the editor's first paint is already in the
                 // right palette instead of flashing the package's defaults.
-                if let pendingThemeIsDark {
-                    applyTheme(isDark: pendingThemeIsDark)
-                    self.pendingThemeIsDark = nil
+                if let pendingTheme {
+                    applyTheme(pendingTheme)
+                    self.pendingTheme = nil
                 }
                 if let pending = pendingLoad {
                     push(pending)

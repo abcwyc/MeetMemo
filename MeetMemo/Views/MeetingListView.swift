@@ -39,6 +39,12 @@ struct MeetingListView: View {
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
     @State private var selectedMeeting: MeetingSummary?
+    /// The fully loaded meeting currently presented in the detail pane.
+    /// Keeping this separate from the sidebar selection lets the old detail
+    /// remain visible while the newly selected JSON is decoded off-main,
+    /// avoiding the placeholder -> full-content double refresh.
+    @State private var presentedMeeting: Meeting?
+    @State private var isSwitchingMeeting = false
     @State private var navigationPath = NavigationPath()
     @State private var renamingMeeting: MeetingSummary?
     @State private var deletingMeeting: MeetingSummary?
@@ -58,6 +64,9 @@ struct MeetingListView: View {
             detailContent
         }
         .navigationSplitViewStyle(.balanced)
+        .task(id: selectedMeeting?.id) {
+            await presentSelectedMeeting()
+        }
         .overlay {
             if viewModel.isLoading {
                 ProgressView(langMgr.t("加载会议中...", "Loading meetings..."))
@@ -273,19 +282,43 @@ struct MeetingListView: View {
     private var detailContent: some View {
         NavigationStack(path: $navigationPath) {
             Group {
-                if let selectedMeeting = selectedMeeting {
+                if let meeting = presentedMeeting {
                     MeetingDetailContentView(
-                        meeting: selectedMeeting.placeholderMeeting,
-                        initialSelectedTab: selectedMeeting.hasGeneratedNotes ? .enhancedNotes : .transcript,
-                        initialHasTranscript: selectedMeeting.hasTranscript,
-                        initialHasGeneratedNotes: selectedMeeting.hasGeneratedNotes,
+                        meeting: meeting,
+                        initialSelectedTab: meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? .transcript
+                            : .enhancedNotes,
+                        initialHasTranscript: meeting.hasFinalTranscript,
+                        initialHasGeneratedNotes: !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                         onOpenSettings: {
                             navigationPath.append("settings")
                         },
                         onDelete: {
                             self.selectedMeeting = nil
+                            self.presentedMeeting = nil
                         }
                     )
+                    .overlay(alignment: .top) {
+                        if isSwitchingMeeting {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(langMgr.t("正在切换会议…", "Switching meeting…"))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(.top, 8)
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.16), value: isSwitchingMeeting)
+                } else if selectedMeeting != nil {
+                    ProgressView(langMgr.t("加载会议内容中…", "Loading meeting…"))
+                        .controlSize(.small)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ContentUnavailableView(
                         langMgr.t("请选择一个会议", "Select a Meeting"),
@@ -378,6 +411,9 @@ struct MeetingListView: View {
         if selectedMeeting?.id == meeting.id {
             selectedMeeting = nil
         }
+        if presentedMeeting?.id == meeting.id {
+            presentedMeeting = nil
+        }
         viewModel.deleteMeeting(meeting)
     }
 
@@ -394,6 +430,7 @@ struct MeetingListView: View {
 
     private func createAndSelectMeeting() {
         let newMeeting = viewModel.createNewMeeting()
+        presentedMeeting = newMeeting
         selectedMeeting = MeetingSummary(meeting: newMeeting)
     }
 
@@ -403,11 +440,48 @@ struct MeetingListView: View {
             guard let url = urls.first else { return }
             Task {
                 if let meeting = await viewModel.importAudioFile(url: url) {
+                    presentedMeeting = meeting
                     selectedMeeting = MeetingSummary(meeting: meeting)
                 }
             }
         case .failure(let error):
             viewModel.errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Decodes the target before replacing the detail pane. Sidebar
+    /// selection still responds immediately, while the currently visible
+    /// meeting remains stable until the replacement is ready. `.task(id:)`
+    /// cancels stale selections when the user clicks through the list fast.
+    @MainActor
+    private func presentSelectedMeeting() async {
+        guard let selectedMeeting else {
+            withAnimation(.easeOut(duration: 0.12)) {
+                presentedMeeting = nil
+                isSwitchingMeeting = false
+            }
+            return
+        }
+
+        guard presentedMeeting?.id != selectedMeeting.id else {
+            isSwitchingMeeting = false
+            return
+        }
+
+        withAnimation(.easeOut(duration: 0.12)) {
+            isSwitchingMeeting = presentedMeeting != nil
+        }
+
+        let meetingId = selectedMeeting.id
+        let loadedMeeting = await Task.detached(priority: .userInitiated) {
+            LocalStorageManager.shared.loadMeeting(id: meetingId)
+        }.value
+
+        guard !Task.isCancelled, self.selectedMeeting?.id == meetingId else { return }
+
+        withAnimation(.easeOut(duration: 0.16)) {
+            presentedMeeting = loadedMeeting ?? selectedMeeting.placeholderMeeting
+            isSwitchingMeeting = false
         }
     }
 }
@@ -852,7 +926,8 @@ struct MeetingDetailContentView: View {
             meeting: meeting,
             initialSelectedTab: initialSelectedTab,
             initialHasTranscript: initialHasTranscript,
-            initialHasGeneratedNotes: initialHasGeneratedNotes
+            initialHasGeneratedNotes: initialHasGeneratedNotes,
+            meetingIsFullyLoaded: true
         ))
         self.onOpenSettings = onOpenSettings
         self.onDelete = onDelete
@@ -916,6 +991,7 @@ struct MeetingDetailContentView: View {
             Text(langMgr.t("确定要删除这个会议吗？此操作不可撤销。", "Are you sure you want to delete this meeting? This action cannot be undone."))
         }
         .onDisappear {
+            viewModel.flushPendingChanges()
             viewModel.deleteIfEmpty()
             speakerNamingWindow?.close()
             followUpTasksWindow?.close()
@@ -932,7 +1008,8 @@ struct MeetingDetailContentView: View {
                 meeting,
                 initialSelectedTab: initialSelectedTab,
                 initialHasTranscript: initialHasTranscript,
-                initialHasGeneratedNotes: initialHasGeneratedNotes
+                initialHasGeneratedNotes: initialHasGeneratedNotes,
+                meetingIsFullyLoaded: true
             )
             hoveredTab = nil
             isContextEditing = false
@@ -1182,6 +1259,13 @@ struct MeetingDetailContentView: View {
                 Label(langMgr.t("导出 HTML", "Export as HTML"), systemImage: "square.and.arrow.up")
             }
             .disabled(!viewModel.canExportCurrentTabHTML)
+
+            Button {
+                viewModel.exportMarkdown()
+            } label: {
+                Label(langMgr.t("导出 Markdown", "Export as Markdown"), systemImage: "doc.badge.arrow.up")
+            }
+            .disabled(!viewModel.canExportMeetingNotesMarkdown)
 
             Divider()
 
@@ -1572,6 +1656,21 @@ struct MeetingDetailContentView: View {
         TranscriptListView(displayChunks: viewModel.transcriptDisplayChunks)
     }
 
+    /// Captures the meeting identity represented by this editor update.
+    /// A WKWebView callback can already be queued when the sidebar switches
+    /// meetings; in that case its old binding must not write into the newly
+    /// selected meeting before SwiftUI finishes updating the coordinator.
+    private var generatedNotesBinding: Binding<String> {
+        let boundMeetingId = viewModel.meeting.id
+        return Binding(
+            get: { viewModel.meeting.generatedNotes },
+            set: { notes in
+                guard viewModel.meeting.id == boundMeetingId else { return }
+                viewModel.updateGeneratedNotes(notes)
+            }
+        )
+    }
+
     private var enhancedNotesView: some View {
         // No separate edit/preview mode: the notes editor is directly
         // editable in place at all times (Atomic Editor's own design
@@ -1608,10 +1707,7 @@ struct MeetingDetailContentView: View {
                     .frame(maxHeight: .infinity)
             } else {
                 MarkdownWebEditorView(
-                    text: Binding(
-                        get: { viewModel.meeting.generatedNotes },
-                        set: { viewModel.meeting.generatedNotes = $0 }
-                    ),
+                    text: generatedNotesBinding,
                     documentId: "\(viewModel.meeting.id.uuidString)-\(notesEditorDocumentRevision)",
                     readOnly: false
                 )

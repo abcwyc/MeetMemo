@@ -7,6 +7,15 @@ struct MarkdownEditorDocumentState: Equatable {
     let readOnly: Bool
 }
 
+/// The last text change reported by a particular mounted editor document.
+/// Scoping the text to the document identity is essential: two meetings may
+/// legitimately contain identical Markdown, and a previous meeting's edit
+/// must never suppress a later disk-loaded document.
+struct MarkdownEditorEmission: Equatable {
+    let documentId: String
+    let markdown: String
+}
+
 enum MarkdownEditorSyncAction: Equatable {
     /// Nothing the editor needs to hear about. Most importantly this covers
     /// the user's own keystroke echoing back through the SwiftUI binding:
@@ -32,7 +41,7 @@ enum MarkdownEditorSyncPolicy {
     static func action(
         for incoming: MarkdownEditorDocumentState,
         lastPushed: MarkdownEditorDocumentState?,
-        lastEmittedByEditor: String?
+        lastEmittedByEditor: MarkdownEditorEmission?
     ) -> MarkdownEditorSyncAction {
         guard let lastPushed else {
             return .push(remount: true)
@@ -42,14 +51,15 @@ enum MarkdownEditorSyncPolicy {
             return .push(remount: true)
         }
 
-        // Content that changed behind the editor's back. Selecting a meeting
-        // does exactly this: the detail view first gets a placeholder with
-        // empty notes, and the real content arrives from disk a moment later
-        // (MeetingViewModel.loadFullMeetingIfNeeded) — by which point the
-        // documentId has already settled, so document identity alone can't
-        // see it. Anything the editor told us about is excluded, since that
-        // is the user typing, not the app substituting a document.
-        if incoming.markdown != lastPushed.markdown, incoming.markdown != lastEmittedByEditor {
+        // Content that changed behind the editor's back (for example a
+        // regenerated note replacing the current document). The meeting
+        // list preloads ordinary selections now, but direct/fallback callers
+        // may still deliver content after identity has settled. Anything the
+        // editor told us about is excluded, since that is the user typing,
+        // not the app substituting a document.
+        let isCurrentDocumentEditEcho = lastEmittedByEditor?.documentId == incoming.documentId
+            && lastEmittedByEditor?.markdown == incoming.markdown
+        if incoming.markdown != lastPushed.markdown, !isCurrentDocumentEditEcho {
             return .push(remount: true)
         }
 

@@ -8,34 +8,38 @@ import AppKit
 /// for the other the moment generation finishes — if the sizes differ, the
 /// text visibly resizes under the user at that exact moment.
 enum MeetingNotesTypography {
-    /// Matches the app's body text elsewhere (13pt is the size used across
-    /// MeetingListView, transcript rows, etc.).
+    /// Compact reading size shared by the native and web renderers.
     static let bodyFontSize: CGFloat = 13
 
     /// Left/right gutter. The native renderer applies it as
     /// `textContainerInset`; the web editor as `padding-inline` (see
     /// `web/markdown-editor/src/overrides.css`).
-    static let contentInset: CGFloat = 16
+    static let contentInset: CGFloat = 24
 
-    /// The web editing surface runs slightly looser than the native
-    /// renderer's ~1.27 (`lineSpacing: 1` on 13pt). Deliberate: a surface
-    /// you type into benefits from more air than one you only read, and
-    /// CodeMirror line boxes read tighter than AppKit's at the same ratio.
     static let webLineHeight: CGFloat = 1.5
 
-    static func headingSize(for level: Int) -> CGFloat {
-        switch level {
-        case 1: return 18
-        case 2: return 16
-        case 3: return 15
-        default: return 14
+    static func headingSize(for level: Int, theme: MarkdownTheme = .github) -> CGFloat {
+        let scale: CGFloat
+        switch theme {
+        case .meetMemo:
+            scale = [1: 1.75, 2: 1.35, 3: 1.15][level] ?? 1
+        case .github:
+            scale = [1: 2, 2: 1.5, 3: 1.25][level] ?? 1
+        case .bear:
+            scale = [1: 1.9, 2: 1.4, 3: 1.18][level] ?? 1
+        case .typora:
+            scale = [1: 3, 2: 1.5, 3: 1.17][level] ?? 1
+        case .sspai:
+            scale = [1: 2.2, 2: 1.4, 3: 1.2][level] ?? 1.1
         }
+        return bodyFontSize * scale
     }
 
-    static func headingWeight(for level: Int) -> NSFont.Weight {
-        switch level {
-        case 1, 2: return .semibold
-        default: return .medium
+    static func headingWeight(for level: Int, theme: MarkdownTheme = .github) -> NSFont.Weight {
+        switch theme {
+        case .typora: return .regular
+        case .sspai: return .bold
+        case .meetMemo, .github, .bear: return .semibold
         }
     }
 }

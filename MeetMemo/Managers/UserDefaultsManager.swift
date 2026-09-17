@@ -32,6 +32,7 @@ class UserDefaultsManager {
         static let hasMigratedToV2Providers = "hasMigratedToV2Providers"
         static let appLanguage = "appLanguage"
         static let appAppearance = "appAppearance"
+        static let markdownTheme = "markdownTheme"
         static let speakerParticipantNames = "speakerParticipantNames"
         static let notesOutputFormat = "notesOutputFormat"
         static let sttLocaleIdentifier = "sttLocaleIdentifier"
@@ -128,6 +129,16 @@ class UserDefaultsManager {
             return AppAppearance(rawValue: raw) ?? .light
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.appAppearance) }
+    }
+
+    // MARK: - Markdown Theme
+    var markdownTheme: MarkdownTheme {
+        get {
+            // Preserve the GitHub style used before themes became configurable.
+            let raw = userDefaults.string(forKey: Keys.markdownTheme) ?? MarkdownTheme.github.rawValue
+            return MarkdownTheme(rawValue: raw) ?? .github
+        }
+        set { userDefaults.set(newValue.rawValue, forKey: Keys.markdownTheme) }
     }
 
     // MARK: - Speaker Participants

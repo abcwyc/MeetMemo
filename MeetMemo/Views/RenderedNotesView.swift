@@ -12,9 +12,14 @@ struct RenderedNotesView: View {
     /// `true` hosts the text view in its own scroll view and fills the available space.
     /// `false` sizes the view to its content, for embedding inside an outer `ScrollView`.
     var isScrollable: Bool = true
+    @ObservedObject private var markdownThemeManager = MarkdownThemeManager.shared
 
     var body: some View {
-        MarkdownTextView(text: text, isScrollable: isScrollable)
+        MarkdownTextView(
+            text: text,
+            isScrollable: isScrollable,
+            theme: markdownThemeManager.theme
+        )
             .frame(maxWidth: .infinity, maxHeight: isScrollable ? .infinity : nil)
     }
 }
@@ -24,6 +29,7 @@ struct RenderedNotesView: View {
 private struct MarkdownTextView: NSViewRepresentable {
     let text: String
     let isScrollable: Bool
+    let theme: MarkdownTheme
 
     private static let contentInset = NSSize(
         width: MeetingNotesTypography.contentInset,
@@ -67,7 +73,7 @@ private struct MarkdownTextView: NSViewRepresentable {
         context.coordinator.layoutManager = layoutManager
         context.coordinator.textContainer = textContainer
         context.coordinator.textView = textView
-        context.coordinator.apply(text: text)
+        context.coordinator.apply(text: text, theme: theme)
 
         guard isScrollable else { return textView }
 
@@ -81,7 +87,7 @@ private struct MarkdownTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        context.coordinator.apply(text: text)
+        context.coordinator.apply(text: text, theme: theme)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSView, context: Context) -> CGSize? {
@@ -98,13 +104,15 @@ private struct MarkdownTextView: NSViewRepresentable {
         var textContainer: NSTextContainer?
         weak var textView: NSTextView?
         private var renderedText: String?
+        private var renderedTheme: MarkdownTheme?
 
         /// Rebuilds the attributed content only when the markdown actually changed,
         /// so an unrelated SwiftUI update never clears the user's selection.
-        func apply(text: String) {
-            guard renderedText != text else { return }
+        func apply(text: String, theme: MarkdownTheme) {
+            guard renderedText != text || renderedTheme != theme else { return }
             renderedText = text
-            textStorage?.setAttributedString(MarkdownAttributedStringBuilder.make(from: text))
+            renderedTheme = theme
+            textStorage?.setAttributedString(MarkdownAttributedStringBuilder.make(from: text, theme: theme))
         }
 
         func contentHeight(forWidth width: CGFloat) -> CGFloat {
@@ -126,7 +134,7 @@ private struct MarkdownTextView: NSViewRepresentable {
 private enum MarkdownAttributedStringBuilder {
     static let bodyFontSize = MeetingNotesTypography.bodyFontSize
 
-    static func make(from text: String) -> NSAttributedString {
+    static func make(from text: String, theme: MarkdownTheme) -> NSAttributedString {
         let result = NSMutableAttributedString()
 
         for block in MarkdownBlock.parse(text) {
@@ -134,9 +142,9 @@ private enum MarkdownAttributedStringBuilder {
             case .blank:
                 result.append(blankLine())
             case .line(let line):
-                result.append(attributedLine(line))
+                result.append(attributedLine(line, theme: theme))
             case .table(let table):
-                result.append(attributedTable(table))
+                result.append(attributedTable(table, theme: theme))
             }
         }
 
@@ -147,20 +155,42 @@ private enum MarkdownAttributedStringBuilder {
         NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 4)])
     }
 
-    private static func attributedLine(_ line: String) -> NSAttributedString {
+    private static func attributedLine(_ line: String, theme: MarkdownTheme) -> NSAttributedString {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
 
         if let level = headingLevel(for: trimmed) {
             let content = String(trimmed.dropFirst(level + 1)).trimmingCharacters(in: .whitespaces)
             let paragraph = NSMutableParagraphStyle()
-            paragraph.paragraphSpacingBefore = level <= 2 ? 10 : 6
-            paragraph.paragraphSpacing = 4
+            paragraph.paragraphSpacingBefore = level == 1 ? 18 : (level == 2 ? 16 : 10)
+            paragraph.paragraphSpacing = level <= 2 ? 7 : 5
+            paragraph.lineHeightMultiple = 1.0
+            paragraph.alignment = headingAlignment(for: theme)
 
             return paragraphString(
                 inline: content,
-                font: .systemFont(ofSize: headingSize(for: level), weight: headingWeight(for: level)),
-                color: .labelColor,
-                paragraph: paragraph
+                font: noteFont(ofSize: headingSize(for: level, theme: theme), weight: headingWeight(for: level, theme: theme), theme: theme),
+                color: headingColor(for: theme),
+                paragraph: paragraph,
+                theme: theme
+            )
+        }
+
+        // Compatibility with notes generated before heading syntax was
+        // enforced: those templates emitted `**Section title**` on a line by
+        // itself. Render them as headings without mutating persisted Markdown.
+        if let content = standaloneBoldContent(in: trimmed) {
+            let level = content == "会议纪要" || content == "Meeting Notes" ? 1 : 2
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.paragraphSpacingBefore = level == 1 ? 18 : 16
+            paragraph.paragraphSpacing = 7
+            paragraph.lineHeightMultiple = 1.0
+            paragraph.alignment = headingAlignment(for: theme)
+            return paragraphString(
+                inline: content,
+                font: noteFont(ofSize: headingSize(for: level, theme: theme), weight: headingWeight(for: level, theme: theme), theme: theme),
+                color: headingColor(for: theme),
+                paragraph: paragraph,
+                theme: theme
             )
         }
 
@@ -172,15 +202,15 @@ private enum MarkdownAttributedStringBuilder {
             paragraph.firstLineHeadIndent = firstLineIndent
             paragraph.headIndent = hangingIndent
             paragraph.tabStops = [NSTextTab(textAlignment: .left, location: hangingIndent)]
-            paragraph.paragraphSpacing = 3
-            paragraph.lineSpacing = 1
+            paragraph.paragraphSpacing = 5
+            paragraph.lineHeightMultiple = bodyLineHeight(for: theme)
 
-            let font = NSFont.systemFont(ofSize: bodyFontSize)
+            let font = noteFont(ofSize: bodyFontSize, theme: theme)
             let result = NSMutableAttributedString(
                 string: "\(bullet)\t",
-                attributes: [.font: font, .foregroundColor: NSColor.secondaryLabelColor]
+                attributes: [.font: font, .foregroundColor: bulletColor(for: theme)]
             )
-            result.append(inlineAttributed(content, font: font, color: .secondaryLabelColor))
+            result.append(inlineAttributed(content, font: font, color: .labelColor, theme: theme))
             result.append(NSAttributedString(string: "\n"))
             result.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: result.length))
             return result
@@ -189,14 +219,18 @@ private enum MarkdownAttributedStringBuilder {
         guard !trimmed.isEmpty else { return blankLine() }
 
         let paragraph = NSMutableParagraphStyle()
-        paragraph.paragraphSpacing = 6
-        paragraph.lineSpacing = 1
+        paragraph.paragraphSpacing = 8
+        paragraph.lineHeightMultiple = bodyLineHeight(for: theme)
+        if theme == .typora {
+            paragraph.alignment = .justified
+        }
 
         return paragraphString(
             inline: trimmed,
-            font: .systemFont(ofSize: bodyFontSize),
+            font: noteFont(ofSize: bodyFontSize, theme: theme),
             color: .labelColor,
-            paragraph: paragraph
+            paragraph: paragraph,
+            theme: theme
         )
     }
 
@@ -204,9 +238,10 @@ private enum MarkdownAttributedStringBuilder {
         inline: String,
         font: NSFont,
         color: NSColor,
-        paragraph: NSParagraphStyle
+        paragraph: NSParagraphStyle,
+        theme: MarkdownTheme
     ) -> NSAttributedString {
-        let result = NSMutableAttributedString(attributedString: inlineAttributed(inline, font: font, color: color))
+        let result = NSMutableAttributedString(attributedString: inlineAttributed(inline, font: font, color: color, theme: theme))
         result.append(NSAttributedString(string: "\n"))
         result.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: result.length))
         return result
@@ -214,7 +249,7 @@ private enum MarkdownAttributedStringBuilder {
 
     // MARK: Tables
 
-    private static func attributedTable(_ table: MarkdownTable) -> NSAttributedString {
+    private static func attributedTable(_ table: MarkdownTable, theme: MarkdownTheme) -> NSAttributedString {
         let textTable = NSTextTable()
         textTable.numberOfColumns = table.columnCount
         textTable.layoutAlgorithm = .automaticLayoutAlgorithm
@@ -232,7 +267,8 @@ private enum MarkdownAttributedStringBuilder {
                 isHeader: true,
                 table: textTable,
                 columnCount: table.columnCount,
-                columnWidth: columnWidth
+                columnWidth: columnWidth,
+                theme: theme
             )
         )
         for (index, row) in table.rows.enumerated() {
@@ -243,7 +279,8 @@ private enum MarkdownAttributedStringBuilder {
                     isHeader: false,
                     table: textTable,
                     columnCount: table.columnCount,
-                    columnWidth: columnWidth
+                    columnWidth: columnWidth,
+                    theme: theme
                 )
             )
         }
@@ -257,7 +294,8 @@ private enum MarkdownAttributedStringBuilder {
         isHeader: Bool,
         table: NSTextTable,
         columnCount: Int,
-        columnWidth: CGFloat
+        columnWidth: CGFloat,
+        theme: MarkdownTheme
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
 
@@ -271,10 +309,10 @@ private enum MarkdownAttributedStringBuilder {
             )
             block.setValue(columnWidth, type: .percentageValueType, for: .width)
             block.setWidth(1, type: .absoluteValueType, for: .border)
-            block.setWidth(9, type: .absoluteValueType, for: .padding)
+            block.setWidth(7, type: .absoluteValueType, for: .padding)
             block.setBorderColor(NSColor.separatorColor)
             if isHeader {
-                block.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.08)
+                block.backgroundColor = tableHeaderColor(for: theme)
             } else if !rowIndex.isMultiple(of: 2) {
                 block.backgroundColor = NSColor.secondaryLabelColor.withAlphaComponent(0.035)
             }
@@ -283,13 +321,14 @@ private enum MarkdownAttributedStringBuilder {
             paragraph.textBlocks = [block]
 
             let font: NSFont = isHeader
-                ? .systemFont(ofSize: bodyFontSize, weight: .semibold)
-                : .systemFont(ofSize: bodyFontSize)
+                ? noteFont(ofSize: bodyFontSize, weight: .semibold, theme: theme)
+                : noteFont(ofSize: bodyFontSize, theme: theme)
             let cell = NSMutableAttributedString(
                 attributedString: inlineAttributed(
                     cellText(in: row, at: column),
                     font: font,
-                    color: isHeader ? .labelColor : .secondaryLabelColor
+                    color: .labelColor,
+                    theme: theme
                 )
             )
             cell.append(NSAttributedString(string: "\n"))
@@ -307,7 +346,12 @@ private enum MarkdownAttributedStringBuilder {
 
     // MARK: Inline markdown
 
-    private static func inlineAttributed(_ source: String, font: NSFont, color: NSColor) -> NSAttributedString {
+    private static func inlineAttributed(
+        _ source: String,
+        font: NSFont,
+        color: NSColor,
+        theme: MarkdownTheme
+    ) -> NSAttributedString {
         guard let parsed = try? AttributedString(
             markdown: source,
             options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
@@ -331,12 +375,14 @@ private enum MarkdownAttributedStringBuilder {
                     attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
                 }
                 if intent.contains(.code) {
-                    runFont = .monospacedSystemFont(ofSize: runFont.pointSize - 0.5, weight: .regular)
+                    runFont = codeFont(ofSize: runFont.pointSize - 0.5, theme: theme)
+                    attributes[.backgroundColor] = NSColor.secondaryLabelColor.withAlphaComponent(0.12)
                 }
             }
 
             if let link = run.link {
                 attributes[.link] = link
+                attributes[.foregroundColor] = accentColor(for: theme)
             }
 
             attributes[.font] = runFont
@@ -363,12 +409,93 @@ private enum MarkdownAttributedStringBuilder {
         return nil
     }
 
-    private static func headingSize(for level: Int) -> CGFloat {
-        MeetingNotesTypography.headingSize(for: level)
+    private static func standaloneBoldContent(in line: String) -> String? {
+        guard line.count > 4, line.hasPrefix("**"), line.hasSuffix("**") else { return nil }
+        let content = line.dropFirst(2).dropLast(2).trimmingCharacters(in: .whitespaces)
+        guard !content.isEmpty, !content.contains("**") else { return nil }
+        return content
     }
 
-    private static func headingWeight(for level: Int) -> NSFont.Weight {
-        MeetingNotesTypography.headingWeight(for: level)
+    private static func headingSize(for level: Int, theme: MarkdownTheme) -> CGFloat {
+        MeetingNotesTypography.headingSize(for: level, theme: theme)
+    }
+
+    private static func headingWeight(for level: Int, theme: MarkdownTheme) -> NSFont.Weight {
+        MeetingNotesTypography.headingWeight(for: level, theme: theme)
+    }
+
+    private static func noteFont(
+        ofSize size: CGFloat,
+        weight: NSFont.Weight = .regular,
+        theme: MarkdownTheme
+    ) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
+        let design: NSFontDescriptor.SystemDesign?
+        switch theme {
+        case .bear: design = .rounded
+        case .typora: design = .serif
+        case .meetMemo, .github, .sspai: design = nil
+        }
+        guard let design, let descriptor = base.fontDescriptor.withDesign(design) else { return base }
+        return NSFont(descriptor: descriptor, size: size) ?? base
+    }
+
+    private static func headingColor(for theme: MarkdownTheme) -> NSColor {
+        .labelColor
+    }
+
+    private static func headingAlignment(for theme: MarkdownTheme) -> NSTextAlignment {
+        theme == .typora ? .center : .left
+    }
+
+    private static func bodyLineHeight(for theme: MarkdownTheme) -> CGFloat {
+        switch theme {
+        case .meetMemo: return 1.55
+        case .github, .bear: return 1.5
+        case .typora: return 1.53
+        case .sspai: return 1.8
+        }
+    }
+
+    private static func codeFont(ofSize size: CGFloat, theme: MarkdownTheme) -> NSFont {
+        switch theme {
+        case .bear:
+            return NSFont(name: "RobotoMono-Regular", size: size)
+                ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        case .sspai:
+            return NSFont(name: "Courier", size: size)
+                ?? .monospacedSystemFont(ofSize: size, weight: .regular)
+        case .meetMemo, .github, .typora:
+            return .monospacedSystemFont(ofSize: size, weight: .regular)
+        }
+    }
+
+    private static func bulletColor(for theme: MarkdownTheme) -> NSColor {
+        switch theme {
+        case .meetMemo, .bear, .sspai: return accentColor(for: theme)
+        case .github, .typora: return .secondaryLabelColor
+        }
+    }
+
+    private static func tableHeaderColor(for theme: MarkdownTheme) -> NSColor {
+        switch theme {
+        case .bear, .sspai:
+            return accentColor(for: theme).withAlphaComponent(0.09)
+        case .meetMemo, .typora:
+            return NSColor.secondaryLabelColor.withAlphaComponent(0.08)
+        case .github:
+            return .clear
+        }
+    }
+
+    private static func accentColor(for theme: MarkdownTheme) -> NSColor {
+        switch theme {
+        case .meetMemo: return .controlAccentColor
+        case .github: return .linkColor
+        case .bear: return NSColor(srgbRed: 0.85, green: 0.27, blue: 0.29, alpha: 1)
+        case .typora: return NSColor(srgbRed: 0.25, green: 0.51, blue: 0.77, alpha: 1)
+        case .sspai: return NSColor(srgbRed: 0.95, green: 0.18, blue: 0.15, alpha: 1)
+        }
     }
 
     private static func listItemInfo(for line: String) -> (indentLevel: Int, bullet: String, content: String)? {

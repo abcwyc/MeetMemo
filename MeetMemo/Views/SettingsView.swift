@@ -5,6 +5,7 @@ struct SettingsView: View {
     @ObservedObject var viewModel: SettingsViewModel
     @EnvironmentObject var langMgr: LanguageManager
     @ObservedObject private var appearanceMgr = AppearanceManager.shared
+    @ObservedObject private var markdownThemeMgr = MarkdownThemeManager.shared
     @ObservedObject private var speechInstaller = SpeechModelInstaller.shared
     @ObservedObject private var sherpaModel = SherpaModelManager.shared
     @ObservedObject private var funASRNanoModel = FunASRNanoModelManager.shared
@@ -168,6 +169,29 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 200)
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(langMgr.t("Markdown 样式", "Markdown Style"))
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                Picker("", selection: $markdownThemeMgr.theme) {
+                    ForEach(MarkdownTheme.allCases) { theme in
+                        Text(langMgr.t(theme.chineseLabel, theme.englishLabel)).tag(theme)
+                    }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .frame(width: 230, alignment: .leading)
+
+                Text(langMgr.t(
+                    markdownThemeMgr.theme.chineseDescription,
+                    markdownThemeMgr.theme.englishDescription
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             AppInfoCard()

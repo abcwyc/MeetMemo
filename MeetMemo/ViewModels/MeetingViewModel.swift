@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import UniformTypeIdentifiers
 
 // Add notification name for meeting saved events
 extension Notification.Name {
@@ -133,7 +134,8 @@ class MeetingViewModel: ObservableObject {
         meeting: Meeting = Meeting(),
         initialSelectedTab: MeetingViewTab? = nil,
         initialHasTranscript: Bool? = nil,
-        initialHasGeneratedNotes: Bool? = nil
+        initialHasGeneratedNotes: Bool? = nil,
+        meetingIsFullyLoaded: Bool = false
     ) {
         print("🆕 Using provided meeting placeholder: \(meeting.id)")
         self.meeting = meeting
@@ -147,7 +149,11 @@ class MeetingViewModel: ObservableObject {
         // Detect if this is a new meeting based on content, not storage existence
         isNewMeeting = isEmpty
 
-        loadFullMeetingIfNeeded()
+        if meetingIsFullyLoaded {
+            hasCompletedInitialLoad = true
+        } else {
+            loadFullMeetingIfNeeded()
+        }
         
         // Load templates and selected template
         loadTemplates()
@@ -256,10 +262,11 @@ class MeetingViewModel: ObservableObject {
                 guard let self else { return }
                 guard !self.isApplyingLoadedMeeting else { return }
                 guard !self.isStreamingGeneratedNotes else { return }
-
-                self.hasLocalUnsavedChanges = true
-
+                // A summary placeholder is published while a selected
+                // meeting's full JSON is still loading. It is not a local
+                // edit and must never be merged over the disk copy.
                 guard self.hasCompletedInitialLoad else { return }
+                self.hasLocalUnsavedChanges = true
                 print("🔄 Auto-saving meeting: \(meeting.id) - title: '\(meeting.title)', context: '\(meeting.formattedMeetingContext.prefix(50))...'")
                 self.saveMeeting()
             }
@@ -306,10 +313,12 @@ class MeetingViewModel: ObservableObject {
         _ meeting: Meeting,
         initialSelectedTab: MeetingViewTab? = nil,
         initialHasTranscript: Bool? = nil,
-        initialHasGeneratedNotes: Bool? = nil
+        initialHasGeneratedNotes: Bool? = nil,
+        meetingIsFullyLoaded: Bool = false
     ) {
         guard meeting.id != self.meeting.id else { return }
 
+        flushPendingChanges()
         deleteIfEmpty()
 
         print("🔁 Switching detail meeting: \(meeting.id)")
@@ -345,7 +354,11 @@ class MeetingViewModel: ObservableObject {
             refreshToolbarSnapshot()
         }
 
-        loadFullMeetingIfNeeded()
+        if meetingIsFullyLoaded {
+            hasCompletedInitialLoad = true
+        } else {
+            loadFullMeetingIfNeeded()
+        }
         loadTemplates()
     }
 
@@ -431,6 +444,12 @@ class MeetingViewModel: ObservableObject {
         case .summary:
             return !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+    }
+
+    var canExportMeetingNotesMarkdown: Bool {
+        selectedTab == .enhancedNotes
+            && aiNotesSubTab == .notes
+            && !meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
     func toggleRecording() {
@@ -770,6 +789,20 @@ class MeetingViewModel: ObservableObject {
         }
     }
 
+    /// Called directly by the web editor binding so a meeting switch can
+    /// flush the edit even when it happens inside the 500ms autosave window.
+    func updateGeneratedNotes(_ notes: String) {
+        guard notes != meeting.generatedNotes else { return }
+        hasLocalUnsavedChanges = true
+        meeting.generatedNotes = notes
+        toolbarHasGeneratedNotes = !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func flushPendingChanges() {
+        guard hasLocalUnsavedChanges, hasCompletedInitialLoad, !isDeleted else { return }
+        saveMeeting()
+    }
+
     private func savePersistedMeeting(_ meeting: Meeting) {
         print("💾 Saving background meeting: \(meeting.id)")
         let success = LocalStorageManager.shared.saveMeeting(meeting)
@@ -908,6 +941,26 @@ class MeetingViewModel: ObservableObject {
             NSWorkspace.shared.open(url)
         } catch {
             errorMessage = "HTML 导出失败：\(error.localizedDescription)"
+        }
+    }
+
+    func exportMarkdown() {
+        guard canExportMeetingNotesMarkdown else { return }
+
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.nameFieldStringValue = "\(sanitizedExportBaseName())-AI纪要.md"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let notes = meeting.generatedNotes
+        let markdown = notes.hasSuffix("\n") ? notes : notes + "\n"
+        do {
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+            NSWorkspace.shared.open(url)
+        } catch {
+            errorMessage = "Markdown 导出失败：\(error.localizedDescription)"
         }
     }
 

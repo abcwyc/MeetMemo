@@ -1,42 +1,600 @@
-/* Structural overrides for the embedded notes editor.
+/* MeetMemo Markdown themes for the embedded Atomic Editor.
  *
- * Imported *after* '@atomic-editor/editor/styles.css' in main.tsx so these
- * land later in the bundled stylesheet and win on equal specificity — don't
- * reorder those imports. Selectors deliberately mirror the package's own
- * two-class specificity (.atomic-cm-editor .cm-content) so they also beat
- * CodeMirror's generated theme rules, which CM6 injects at the *top* of
- * <head> precisely so external CSS can override them.
- *
- * Purely structural values live here; anything that depends on the app's
- * appearance or the user's accent color is injected natively instead — see
- * MarkdownEditorTheme.swift.
+ * Swift sets `data-markdown-theme` and injects appearance-aware colors on
+ * <html>. These rules own document typography while the editor package owns
+ * editing behaviour, selections, popovers, and syntax widgets.
  */
 
-/* The package ships an 8px gutter. Match RenderedNotesView's 16pt
- * textContainerInset so text doesn't sit flush against the rounded card
- * edge — which matters more now that the column fills the full pane width
- * (--atomic-editor-measure: 100%) instead of being centered in it. */
-.atomic-cm-editor .cm-content {
-  padding-inline: 16px;
+.meetmemo-editor-transition {
+  width: 100%;
+  height: 100%;
+  opacity: 1;
+  transition: opacity 110ms ease-out;
+  will-change: opacity;
 }
 
-/* The package reserves 40vh of trailing scroll room (typewriter-style
- * centering). In a short embedded pane that's a lot of dead space below a
- * two-paragraph note; half of it still lets the last line scroll clear of
- * the bottom edge. */
-.atomic-cm-editor .cm-content {
-  padding-bottom: 20vh;
+.meetmemo-editor-transition.is-switching {
+  opacity: 0.42;
+  pointer-events: none;
 }
 
-/* The app's own headings are semibold/medium (see
- * MeetingNotesTypography.headingWeight); the package's are bold. Sizes need
- * no override: they're em-relative (1.35/1.2/1.1), so pinning the body to
- * 13px already lands them at ~17.6/15.6/14.3 against the native 18/16/15. */
-.cm-line.cm-atomic-h1,
-.cm-line.cm-atomic-h2 {
-  font-weight: 600;
+@media (prefers-reduced-motion: reduce) {
+  .meetmemo-editor-transition {
+    transition: none;
+  }
+}
+
+:root .atomic-cm-editor {
+  --atomic-editor-body-size: inherit;
+  --atomic-editor-body-leading: inherit;
+  --atomic-editor-measure: inherit;
+  --atomic-editor-font: inherit;
+  --atomic-editor-font-mono: inherit;
+  --atomic-editor-fg: inherit;
+  --atomic-editor-fg-muted: inherit;
+  --atomic-editor-fg-faint: inherit;
+  --atomic-editor-bg: inherit;
+  --atomic-editor-bg-panel: inherit;
+  --atomic-editor-bg-surface: inherit;
+  --atomic-editor-border: inherit;
+  --atomic-editor-accent: inherit;
+  --atomic-editor-accent-bright: inherit;
+  --atomic-editor-accent-soft: inherit;
+  --atomic-editor-link: inherit;
+  --atomic-editor-link-hover: inherit;
+  --atomic-editor-selection-bg: inherit;
+  --atomic-editor-code-bg: inherit;
+  --notes-border-default: inherit;
+  --notes-border-muted: inherit;
+  --notes-canvas-subtle: inherit;
+  --notes-neutral-muted: inherit;
+  --notes-fg-muted: inherit;
+  --notes-row-alt: inherit;
+  --notes-quote-bg: inherit;
+}
+
+/* GitHub is the compatibility default until the native bridge applies the
+ * saved preference. Theme blocks below only redefine these design tokens. */
+:root,
+:root[data-markdown-theme="github"] {
+  --notes-h1-size: 2em;
+  --notes-h2-size: 1.5em;
+  --notes-h3-size: 1.25em;
+  --notes-h4-size: 1em;
+  --notes-h1-padding: 0.75em 0 0.3em;
+  --notes-h2-padding: 24px 0 0.3em;
+  --notes-h3-padding: 24px 0 0;
+  --notes-h4-padding: 24px 0 0;
+  --notes-h1-border-bottom: 1px solid var(--notes-border-muted);
+  --notes-h2-border-bottom: 1px solid var(--notes-border-muted);
+  --notes-h2-border-left: 0 solid transparent;
+  --notes-heading-color: var(--atomic-editor-fg);
+  --notes-heading-weight: 600;
+  --notes-heading-font: var(--atomic-editor-font);
+  --notes-heading-align: left;
+  --notes-quote-border: 0.25em solid var(--notes-border-default);
+  --notes-quote-background: transparent;
+  --notes-quote-padding: 0 1em;
+  --notes-quote-radius: 0;
+  --notes-code-background: var(--notes-canvas-subtle);
+  --notes-inline-code-background: var(--notes-neutral-muted);
+  --notes-table-head-background: transparent;
+  --notes-table-even-background: var(--notes-row-alt);
+  --notes-table-cell-padding: 6px 13px;
+  --notes-hr-height: 0.25em;
+  --notes-hr-color: var(--notes-border-default);
+}
+
+:root[data-markdown-theme="meetmemo"] {
+  --notes-h1-size: 1.75em;
+  --notes-h2-size: 1.35em;
+  --notes-h3-size: 1.15em;
+  --notes-h4-size: 1em;
+  --notes-h1-padding: 0.8em 0 0.45em;
+  --notes-h2-padding: 1.35em 0 0.4em;
+  --notes-h3-padding: 0.8em 0 0;
+  --notes-h4-padding: 0.6em 0 0;
+  --notes-h1-border-bottom: 0 solid transparent;
+  --notes-h2-border-bottom: 1px solid var(--notes-border-muted);
+  --notes-h2-border-left: 0 solid transparent;
+  --notes-heading-color: var(--atomic-editor-fg);
+  --notes-heading-weight: 650;
+  --notes-heading-font: var(--atomic-editor-font);
+  --notes-heading-align: left;
+  --notes-quote-border: 3px solid var(--atomic-editor-accent);
+  --notes-quote-background: var(--notes-quote-bg);
+  --notes-quote-padding: 0.65em 0.9em;
+  --notes-quote-radius: 0 8px 8px 0;
+  --notes-code-background: var(--notes-canvas-subtle);
+  --notes-inline-code-background: var(--notes-neutral-muted);
+  --notes-table-head-background: var(--notes-canvas-subtle);
+  --notes-table-even-background: transparent;
+  --notes-table-cell-padding: 7px 12px;
+  --notes-hr-height: 1px;
+  --notes-hr-color: var(--notes-border-muted);
+}
+
+:root[data-markdown-theme="bear"] {
+  --notes-h1-size: 1.9em;
+  --notes-h2-size: 1.4em;
+  --notes-h3-size: 1.18em;
+  --notes-h4-size: 1em;
+  --notes-h1-padding: 0.9em 0 0.35em;
+  --notes-h2-padding: 1.35em 0 0.25em;
+  --notes-h3-padding: 0.8em 0 0;
+  --notes-h4-padding: 0.55em 0 0;
+  --notes-h1-border-bottom: 0 solid transparent;
+  --notes-h2-border-bottom: 0 solid transparent;
+  --notes-h2-border-left: 0 solid transparent;
+  --notes-heading-color: var(--atomic-editor-fg);
+  --notes-heading-weight: 650;
+  --notes-heading-font: ui-rounded, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --notes-heading-align: left;
+  --notes-quote-border: 3px solid var(--atomic-editor-accent-soft);
+  --notes-quote-background: transparent;
+  --notes-quote-padding: 0.2em 1em;
+  --notes-quote-radius: 0;
+  --notes-code-background: var(--notes-canvas-subtle);
+  --notes-inline-code-background: color-mix(in srgb, var(--atomic-editor-accent) 10%, transparent 90%);
+  --notes-table-head-background: color-mix(in srgb, var(--atomic-editor-accent) 8%, transparent 92%);
+  --notes-table-even-background: transparent;
+  --notes-table-cell-padding: 8px 12px;
+  --notes-hr-height: 1px;
+  --notes-hr-color: var(--notes-border-muted);
+}
+
+:root[data-markdown-theme="typora"] {
+  --notes-h1-size: 3em;
+  --notes-h2-size: 1.5em;
+  --notes-h3-size: 1.17em;
+  --notes-h4-size: 1em;
+  --notes-h1-padding: 1.6em 0 0.25em;
+  --notes-h2-padding: 2em 0 0.35em;
+  --notes-h3-padding: 3em 0 0.25em;
+  --notes-h4-padding: 1.5em 0 0;
+  --notes-h1-border-bottom: 0 solid transparent;
+  --notes-h2-border-bottom: 0 solid transparent;
+  --notes-h2-border-left: 0 solid transparent;
+  --notes-heading-color: var(--atomic-editor-fg);
+  --notes-heading-weight: 400;
+  --notes-heading-font: var(--atomic-editor-font);
+  --notes-heading-align: center;
+  --notes-quote-border: 1px solid var(--notes-border-muted);
+  --notes-quote-background: transparent;
+  --notes-quote-padding: 0.15em 1em;
+  --notes-quote-radius: 0;
+  --notes-code-background: transparent;
+  --notes-inline-code-background: transparent;
+  --notes-table-head-background: transparent;
+  --notes-table-even-background: transparent;
+  --notes-table-cell-padding: 7px 10px;
+  --notes-hr-height: 1px;
+  --notes-hr-color: var(--notes-border-muted);
+}
+
+:root[data-markdown-theme="sspai"] {
+  --notes-h1-size: 2.2em;
+  --notes-h2-size: 1.4em;
+  --notes-h3-size: 1.2em;
+  --notes-h4-size: 1.1em;
+  --notes-h1-padding: 0.75em 0 0.2em;
+  --notes-h2-padding: 0.2em 0 0.2em 0.7em;
+  --notes-h3-padding: 0.8em 0 0;
+  --notes-h4-padding: 0.65em 0 0;
+  --notes-h1-border-bottom: 0 solid transparent;
+  --notes-h2-border-bottom: 0 solid transparent;
+  --notes-h2-border-left: 6px solid var(--atomic-editor-accent);
+  --notes-heading-color: var(--atomic-editor-fg);
+  --notes-heading-weight: 700;
+  --notes-heading-font: var(--atomic-editor-font);
+  --notes-heading-align: left;
+  --notes-quote-border: 0 solid transparent;
+  --notes-quote-background: transparent;
+  --notes-quote-padding: 30px 38px;
+  --notes-quote-radius: 0;
+  --notes-code-background: var(--notes-canvas-subtle);
+  --notes-inline-code-background: color-mix(in srgb, var(--atomic-editor-accent) 9%, transparent 91%);
+  --notes-table-head-background: color-mix(in srgb, var(--atomic-editor-accent) 9%, transparent 91%);
+  --notes-table-even-background: var(--notes-row-alt);
+  --notes-table-cell-padding: 8px 12px;
+  --notes-hr-height: 1px;
+  --notes-hr-color: var(--notes-border-muted);
+}
+
+/* Full-width, container-adaptive document canvas shared by every theme. */
+.atomic-cm-editor .cm-content {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  padding: 24px 24px 20vh;
+}
+
+.cm-line.cm-atomic-h1 {
+  margin-top: 0;
+  padding: var(--notes-h1-padding);
+  border: 0;
+  border-bottom: var(--notes-h1-border-bottom);
+  color: var(--notes-heading-color);
+  font-family: var(--notes-heading-font, var(--atomic-editor-font));
+  font-size: var(--notes-h1-size);
+  font-weight: var(--notes-heading-weight);
+  line-height: 1.25;
+  letter-spacing: normal;
+  text-align: var(--notes-heading-align, left);
+}
+
+.cm-line.cm-atomic-h2,
+.cm-line:has(> .cm-atomic-strong-wrap:only-child) {
+  margin-top: 0;
+  padding: var(--notes-h2-padding);
+  border: 0;
+  border-bottom: var(--notes-h2-border-bottom);
+  border-left: var(--notes-h2-border-left);
+  color: var(--notes-heading-color);
+  font-family: var(--notes-heading-font, var(--atomic-editor-font));
+  font-size: var(--notes-h2-size);
+  font-weight: var(--notes-heading-weight);
+  line-height: 1.3;
+  text-align: var(--notes-heading-align, left);
 }
 
 .cm-line.cm-atomic-h3 {
-  font-weight: 500;
+  padding: var(--notes-h3-padding);
+  color: var(--notes-heading-color);
+  font-family: var(--notes-heading-font, var(--atomic-editor-font));
+  font-size: var(--notes-h3-size);
+  font-weight: var(--notes-heading-weight);
+  line-height: 1.3;
+  text-align: var(--notes-heading-align, left);
+}
+
+.cm-line.cm-atomic-h4 {
+  padding: var(--notes-h4-padding);
+  color: var(--notes-heading-color);
+  font-family: var(--notes-heading-font, var(--atomic-editor-font));
+  font-size: var(--notes-h4-size);
+  font-weight: var(--notes-heading-weight);
+  line-height: 1.3;
+  text-align: var(--notes-heading-align, left);
+}
+
+.cm-line.cm-atomic-h5 {
+  font-family: var(--notes-heading-font, var(--atomic-editor-font));
+  font-size: 0.875em;
+  font-weight: 600;
+  text-align: var(--notes-heading-align, left);
+}
+
+.cm-line.cm-atomic-h6 {
+  color: var(--notes-fg-muted);
+  font-family: var(--notes-heading-font, var(--atomic-editor-font));
+  font-size: 0.85em;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  text-align: var(--notes-heading-align, left);
+}
+
+/* Older generated notes use a bold-only line instead of heading syntax. */
+.cm-line:has(> .cm-atomic-strong-wrap:only-child)
+  > .cm-atomic-strong-wrap
+  > .cm-atomic-strong {
+  color: inherit;
+  font-weight: inherit;
+}
+
+.atomic-cm-editor .cm-content > .cm-line:first-child:has(> .cm-atomic-strong-wrap:only-child) {
+  padding: var(--notes-h1-padding);
+  border: 0;
+  border-bottom: var(--notes-h1-border-bottom);
+  color: var(--notes-heading-color);
+  font-family: var(--notes-heading-font, var(--atomic-editor-font));
+  font-size: var(--notes-h1-size);
+  line-height: 1.25;
+  text-align: var(--notes-heading-align, left);
+}
+
+.cm-atomic-bullet {
+  color: var(--atomic-editor-fg);
+  font-weight: 400;
+}
+
+:root[data-markdown-theme="meetmemo"] .cm-atomic-bullet,
+:root[data-markdown-theme="bear"] .cm-atomic-bullet,
+:root[data-markdown-theme="sspai"] .cm-atomic-bullet {
+  color: var(--atomic-editor-accent);
+}
+
+.cm-line.cm-atomic-blockquote {
+  color: var(--notes-fg-muted);
+  background: var(--notes-quote-background);
+  border: 0;
+  border-left: var(--notes-quote-border);
+  border-radius: var(--notes-quote-radius);
+  padding: var(--notes-quote-padding);
+}
+
+.cm-line.cm-atomic-fenced-code {
+  color: var(--atomic-editor-fg);
+  background: var(--notes-code-background);
+  border: 0;
+  box-shadow: none;
+  padding: 0.2em 1em;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.cm-atomic-inline-code {
+  color: var(--atomic-editor-fg);
+  background: var(--notes-inline-code-background);
+  border-radius: 5px;
+  padding: 0.18em 0.38em;
+  font-size: 0.85em;
+}
+
+:root[data-markdown-theme="sspai"] .cm-atomic-inline-code {
+  color: var(--atomic-editor-accent);
+}
+
+.cm-line.cm-atomic-hr::after {
+  border: 0;
+  height: var(--notes-hr-height);
+  background: var(--notes-hr-color);
+}
+
+.cm-atomic-table {
+  padding: 1em 0;
+}
+
+.cm-atomic-table table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  border-spacing: 0;
+  font-size: 1em;
+  font-variant-numeric: tabular-nums;
+}
+
+.cm-atomic-table th,
+.cm-atomic-table td {
+  min-width: 2em;
+  padding: var(--notes-table-cell-padding);
+  border: 1px solid var(--notes-border-default);
+  background: transparent;
+  vertical-align: top;
+}
+
+.cm-atomic-table th {
+  background: var(--notes-table-head-background);
+  font-weight: 600;
+}
+
+.cm-atomic-table tbody tr:nth-child(even) td {
+  background: var(--notes-table-even-background);
+}
+
+.cm-atomic-link {
+  text-decoration: none;
+}
+
+.cm-atomic-link:hover {
+  text-decoration: underline;
+}
+
+/* GitHub Primer Markdown: spacing, code groups and table rhythm mirror the
+ * live github.com markdown body while remaining responsive to this pane. */
+:root[data-markdown-theme="github"] .cm-line.cm-atomic-fenced-code,
+:root:not([data-markdown-theme]) .cm-line.cm-atomic-fenced-code {
+  padding: 0 16px;
+  font-size: 0.85em;
+  line-height: 1.45;
+}
+
+:root[data-markdown-theme="github"] .cm-line:not(.cm-atomic-fenced-code) + .cm-line.cm-atomic-fenced-code,
+:root[data-markdown-theme="github"] .cm-content > .cm-line.cm-atomic-fenced-code:first-child,
+:root:not([data-markdown-theme]) .cm-line:not(.cm-atomic-fenced-code) + .cm-line.cm-atomic-fenced-code,
+:root:not([data-markdown-theme]) .cm-content > .cm-line.cm-atomic-fenced-code:first-child {
+  padding-top: 16px;
+  border-radius: 6px 6px 0 0;
+}
+
+:root[data-markdown-theme="github"] .cm-line.cm-atomic-fenced-code:has(+ .cm-line:not(.cm-atomic-fenced-code)),
+:root[data-markdown-theme="github"] .cm-content > .cm-line.cm-atomic-fenced-code:last-child,
+:root:not([data-markdown-theme]) .cm-line.cm-atomic-fenced-code:has(+ .cm-line:not(.cm-atomic-fenced-code)),
+:root:not([data-markdown-theme]) .cm-content > .cm-line.cm-atomic-fenced-code:last-child {
+  padding-bottom: 16px;
+  border-radius: 0 0 6px 6px;
+}
+
+:root[data-markdown-theme="github"] .cm-atomic-inline-code,
+:root:not([data-markdown-theme]) .cm-atomic-inline-code {
+  border-radius: 6px;
+  padding: 0.2em 0.4em;
+  font-size: 0.85em;
+}
+
+:root[data-markdown-theme="github"] .cm-atomic-table,
+:root:not([data-markdown-theme]) .cm-atomic-table {
+  padding: 16px 0;
+}
+
+:root[data-markdown-theme="github"] .cm-atomic-table tbody tr,
+:root:not([data-markdown-theme]) .cm-atomic-table tbody tr {
+  border-top: 1px solid var(--notes-border-muted);
+}
+
+/* Bear's Red Graphite typography uses neutral rounded headings and reserves
+ * red for links, bullets and interaction. BearSansUI/Roboto Mono gracefully
+ * fall back to the closest system faces when they are not installed. */
+:root[data-markdown-theme="bear"] .cm-line.cm-atomic-h1,
+:root[data-markdown-theme="bear"] .cm-line.cm-atomic-h2,
+:root[data-markdown-theme="bear"] .cm-line.cm-atomic-h3,
+:root[data-markdown-theme="bear"] .cm-line.cm-atomic-h4,
+:root[data-markdown-theme="bear"] .cm-line:has(> .cm-atomic-strong-wrap:only-child) {
+  letter-spacing: -0.012em;
+}
+
+/* Typora Whitey. The original theme uses a fixed 960–1100px measure; this
+ * variant intentionally keeps MeetMemo's user-requested adaptive full width. */
+:root[data-markdown-theme="typora"] .cm-content {
+  text-align: justify;
+}
+
+:root[data-markdown-theme="typora"] .cm-line.cm-atomic-h3 {
+  font-style: italic;
+}
+
+:root[data-markdown-theme="typora"] .cm-line.cm-atomic-h2::after,
+:root[data-markdown-theme="typora"] .cm-content > .cm-line:not(:first-child):has(> .cm-atomic-strong-wrap:only-child)::after {
+  content: "";
+  display: block;
+  width: 100px;
+  height: 1px;
+  margin: 0.45em auto 0;
+  background: var(--notes-border-muted);
+}
+
+:root[data-markdown-theme="typora"] .cm-line.cm-atomic-blockquote {
+  margin-left: 1em;
+}
+
+:root[data-markdown-theme="typora"] .cm-line.cm-atomic-fenced-code {
+  margin-left: 1em;
+  padding: 0 1em;
+  border-right: 1px solid var(--notes-border-muted);
+  border-left: 1px solid var(--notes-border-muted);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+:root[data-markdown-theme="typora"] .cm-line:not(.cm-atomic-fenced-code) + .cm-line.cm-atomic-fenced-code,
+:root[data-markdown-theme="typora"] .cm-content > .cm-line.cm-atomic-fenced-code:first-child {
+  padding-top: 6px;
+  border-top: 1px solid var(--notes-border-muted);
+}
+
+:root[data-markdown-theme="typora"] .cm-line.cm-atomic-fenced-code:has(+ .cm-line:not(.cm-atomic-fenced-code)),
+:root[data-markdown-theme="typora"] .cm-content > .cm-line.cm-atomic-fenced-code:last-child {
+  margin-bottom: 1.5em;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--notes-border-muted);
+}
+
+:root[data-markdown-theme="typora"] .cm-atomic-inline-code {
+  border-radius: 0;
+  padding: 0 0.15em;
+  font-size: 0.9em;
+}
+
+:root[data-markdown-theme="typora"] .cm-atomic-table th,
+:root[data-markdown-theme="typora"] .cm-atomic-table td {
+  padding: 8px;
+  border: 0;
+  border-top: 1px solid var(--notes-border-muted);
+}
+
+:root[data-markdown-theme="typora"] .cm-atomic-table thead tr:first-child th {
+  border-top: 0;
+}
+
+:root[data-markdown-theme="typora"] .cm-line.cm-atomic-hr {
+  margin-block: 2em;
+}
+
+/* 少数派: values below are transcribed from the supplied sspai.css. */
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-h1 {
+  padding-top: 16px;
+  padding-bottom: 4px;
+  line-height: 1.1;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-h2,
+:root[data-markdown-theme="sspai"] .cm-line:has(> .cm-atomic-strong-wrap:only-child) {
+  margin: 40px 10px 20px 0;
+  padding: 0 0 0 9px;
+  line-height: 1.4;
+}
+
+:root[data-markdown-theme="sspai"] .cm-content > .cm-line:first-child:has(> .cm-atomic-strong-wrap:only-child) {
+  margin-top: 0;
+  padding-top: 16px;
+  padding-bottom: 4px;
+  border-left: 0;
+  line-height: 1.1;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-h3 {
+  margin: 10px 5px;
+  padding-top: 10px;
+  line-height: 1.4;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-h4 {
+  text-transform: uppercase;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line:has(.cm-atomic-bullet) {
+  padding-block: 0.35em;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-blockquote {
+  position: relative;
+  line-height: 1.8;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line:not(.cm-atomic-blockquote) + .cm-line.cm-atomic-blockquote::before,
+:root[data-markdown-theme="sspai"] .cm-content > .cm-line.cm-atomic-blockquote:first-child::before {
+  content: "“";
+  position: absolute;
+  top: 2px;
+  left: 8px;
+  color: var(--notes-border-default);
+  font: 700 34px/1 Georgia, serif;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-blockquote:has(+ .cm-line:not(.cm-atomic-blockquote))::after,
+:root[data-markdown-theme="sspai"] .cm-content > .cm-line.cm-atomic-blockquote:last-child::after {
+  content: "”";
+  position: absolute;
+  right: 8px;
+  bottom: 0;
+  color: var(--notes-border-default);
+  font: 700 34px/1 Georgia, serif;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-fenced-code {
+  padding: 0 20px;
+  color: var(--notes-fg-muted);
+  font-size: 13px;
+  line-height: 1.42857;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line:not(.cm-atomic-fenced-code) + .cm-line.cm-atomic-fenced-code,
+:root[data-markdown-theme="sspai"] .cm-content > .cm-line.cm-atomic-fenced-code:first-child {
+  padding-top: 10px;
+  border-radius: 4px 4px 0 0;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-fenced-code:has(+ .cm-line:not(.cm-atomic-fenced-code)),
+:root[data-markdown-theme="sspai"] .cm-content > .cm-line.cm-atomic-fenced-code:last-child {
+  margin-bottom: 25px;
+  padding-bottom: 10px;
+  border-radius: 0 0 4px 4px;
+}
+
+:root[data-markdown-theme="sspai"] .cm-atomic-inline-code {
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 0.9em;
+}
+
+:root[data-markdown-theme="sspai"] .cm-line.cm-atomic-hr {
+  margin-block: 20px;
+}
+
+:root[data-markdown-theme="sspai"] .cm-atomic-image,
+:root[data-markdown-theme="sspai"] .cm-atomic-image img {
+  max-width: 100%;
+  border-radius: 5px;
 }
