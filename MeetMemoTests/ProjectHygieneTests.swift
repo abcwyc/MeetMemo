@@ -42,11 +42,13 @@ final class ProjectHygieneTests: XCTestCase {
         XCTAssertTrue(viewModel.contains("try Task.checkCancellation()"))
     }
 
-    func testMeetingResumeKeepsSystemAudioRecoveryPaths() throws {
+    func testSystemAudioUsesGlobalTapWithoutProcessListRestarts() throws {
         let audioManager = try read("MeetMemo/Managers/AudioManager.swift", from: repositoryRoot())
+        let processTap = try read("MeetMemo/ProcessTap/ProcessTap.swift", from: repositoryRoot())
 
-        XCTAssertTrue(audioManager.contains("scheduleSystemAudioTapRetry(sessionToken: activeSessionToken)"))
-        XCTAssertFalse(audioManager.contains("objectID.readProcessIsRunning(),"))
+        XCTAssertTrue(processTap.contains("stereoGlobalTapButExcludeProcesses"))
+        XCTAssertFalse(audioManager.contains("publisher(for: \\.runningApplications)"))
+        XCTAssertFalse(audioManager.contains("restartSystemAudioTapIfNeeded"))
         XCTAssertTrue(audioManager.contains("systemSTTConnectingSessionID = sessionToken"))
         XCTAssertTrue(audioManager.contains("connectSTTProvider(\n                    for: .system,\n                    offsetMilliseconds: offset,\n                    sessionToken: sessionToken"))
     }

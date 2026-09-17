@@ -114,3 +114,59 @@ protocol LLMProvider {
 
     func testConnection(config: LLMProviderConfig) async throws
 }
+
+struct LLMStructuredOutputRequest: Hashable, Sendable {
+    let name: String
+    let jsonSchema: String
+    let maxTokens: Int
+
+    init(name: String, jsonSchema: String, maxTokens: Int = 4096) {
+        self.name = name
+        self.jsonSchema = jsonSchema
+        self.maxTokens = maxTokens
+    }
+}
+
+struct LLMCompletionResponse: Hashable, Sendable {
+    let content: String
+    let finishReason: String?
+    let requestID: String?
+}
+
+enum LLMCompletionError: LocalizedError {
+    case emptyResponse
+    case truncated
+    case invalidResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .emptyResponse:
+            return "LLM 服务没有返回可用内容，请稍后重试。"
+        case .truncated:
+            return "LLM 输出达到长度上限，结构化摘要未完整生成。"
+        case .invalidResponse:
+            return "LLM 服务返回了无法识别的响应格式。"
+        }
+    }
+}
+
+extension LLMProvider {
+    /// Default compatibility path for test doubles and third-party providers.
+    /// `LLMClient` overrides this with provider-native JSON schema/tool calling.
+    func completeStructuredJSON(
+        config: LLMProviderConfig,
+        messages: [ChatMessage],
+        request: LLMStructuredOutputRequest
+    ) async throws -> LLMCompletionResponse {
+        var content = ""
+        let stream = chatCompletionsStreamThrowing(config: config, messages: messages)
+        for try await chunk in stream {
+            content += chunk
+        }
+
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LLMCompletionError.emptyResponse
+        }
+        return LLMCompletionResponse(content: content, finishReason: nil, requestID: nil)
+    }
+}

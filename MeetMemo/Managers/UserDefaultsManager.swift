@@ -2,6 +2,7 @@
 // Manages non-sensitive app settings using UserDefaults
 
 import Foundation
+import CryptoKit
 
 enum NotesOutputFormat: String, CaseIterable {
     case markdown = "markdown"
@@ -75,7 +76,13 @@ class UserDefaultsManager {
             .replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n")
 
-        return normalized.contains("Your job is to generate enhanced meeting notes")
+        let digest = SHA256.hash(data: Data(normalized.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let isPreviousChineseDefault = digest == "9b850c6ad7ff6aa5404a3a08375bde7f3c04988211faa1c6736420acaf388a84"
+
+        return isPreviousChineseDefault
+            || normalized.contains("Your job is to generate enhanced meeting notes")
             && normalized.contains("<user_notes>")
             && !normalized.contains("<meeting_context>")
     }

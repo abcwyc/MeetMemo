@@ -153,6 +153,11 @@ final class ReminderManager {
             lines.append(detail)
         }
 
+        let dueDateText = task.dueDateText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if task.dueDate == nil, !dueDateText.isEmpty {
+            lines.append("会议中提到的时间：\(dueDateText)")
+        }
+
         if !meeting.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             lines.append("来自会议：\(meeting.title)")
         }

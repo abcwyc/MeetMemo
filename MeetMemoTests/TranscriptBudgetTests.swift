@@ -75,5 +75,30 @@ final class TranscriptBudgetTests: XCTestCase {
         XCTAssertTrue(result.didCompress)
         XCTAssertTrue(result.text.contains("…"))
         XCTAssertLessThan(result.text.count, text.count)
+        XCTAssertLessThanOrEqual(TranscriptBudget.estimateTokens(result.text), budget)
+    }
+
+    func testEvidenceChunksKeepAllMiddleContentWithinBudget() {
+        let lines = (0..<80).map { index in
+            "\(index):" + String(repeating: "会议内容", count: 8)
+        }
+        let text = lines.joined(separator: "\n")
+        let budget = 220
+
+        let chunks = TranscriptBudget.chunks(text, tokenBudget: budget)
+
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertTrue(chunks.allSatisfy { TranscriptBudget.estimateTokens($0) <= budget })
+        XCTAssertEqual(chunks.joined(separator: "\n"), text)
+        XCTAssertTrue(chunks.joined(separator: "\n").contains("40:"))
+    }
+
+    func testEvidenceChunksSplitAnOversizedLineWithoutDroppingCharacters() {
+        let text = String(repeating: "中", count: 1_000)
+        let chunks = TranscriptBudget.chunks(text, tokenBudget: 100)
+
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertTrue(chunks.allSatisfy { TranscriptBudget.estimateTokens($0) <= 100 })
+        XCTAssertEqual(chunks.joined(), text)
     }
 }

@@ -47,19 +47,61 @@ final class FollowUpTaskExtractor {
             ChatMessage(role: "user", content: Self.userPrompt(meeting: meeting, notes: notes))
         ]
 
-        var response = ""
-        let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)
-        for try await chunk in stream {
-            response += chunk
+        var attemptMessages = messages
+        for attempt in 1...2 {
+            let response = try await client.completeStructuredJSON(
+                config: config,
+                messages: attemptMessages,
+                request: Self.structuredOutputRequest
+            )
+            do {
+                return try Self.decodeTasks(from: response.content)
+            } catch FollowUpTaskExtractionError.invalidResponse {
+                guard attempt == 1 else { throw FollowUpTaskExtractionError.invalidResponse }
+                attemptMessages.append(ChatMessage(
+                    role: "user",
+                    content: "上一次返回无法解析。请重新生成完整 JSON，只输出 {\"tasks\": [...]}。"
+                ))
+            }
         }
-
-        return try Self.decodeTasks(from: response)
+        throw FollowUpTaskExtractionError.invalidResponse
     }
+
+    private static let structuredOutputRequest = LLMStructuredOutputRequest(
+        name: "meeting_follow_up_tasks",
+        jsonSchema: """
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tasks"],
+          "properties": {
+            "tasks": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title", "detail", "owner", "kind", "sourceExcerpt", "dueDateText"],
+                "properties": {
+                  "title": { "type": "string" },
+                  "detail": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "kind": { "type": "string", "enum": ["actionItem", "confirmation", "followUp"] },
+                  "sourceExcerpt": { "type": "string" },
+                  "dueDateText": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+        """,
+        maxTokens: 3072
+    )
 
     private static let systemPrompt = """
 你是一个会议待办识别助手。请从会议纪要中识别需要后续执行、确认或跟进的事项。
 只输出 JSON，不要输出 Markdown、解释或代码块。
-JSON 必须是数组，每个元素包含：
+JSON 必须是对象，格式为 {"tasks": [...]}，tasks 中每个元素包含：
 - title: 简短可执行任务标题
 - detail: 任务补充说明，没有则为空字符串
 - owner: 负责人姓名，没有则为空字符串
@@ -92,7 +134,16 @@ JSON 必须是数组，每个元素包含：
         }
 
         let decoder = JSONDecoder()
-        let decoded = try decoder.decode([ExtractedFollowUpTask].self, from: data)
+        let decoded: [ExtractedFollowUpTask]
+        do {
+            if let wrapped = try? decoder.decode(ExtractedFollowUpTaskResponse.self, from: data) {
+                decoded = wrapped.tasks
+            } else {
+                decoded = try decoder.decode([ExtractedFollowUpTask].self, from: data)
+            }
+        } catch {
+            throw FollowUpTaskExtractionError.invalidResponse
+        }
         return decoded.compactMap { item in
             let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !title.isEmpty else { return nil }
@@ -102,6 +153,7 @@ JSON 必须是数组，每个元素包含：
                 detail: item.detail.trimmingCharacters(in: .whitespacesAndNewlines),
                 sourceExcerpt: item.sourceExcerpt.trimmingCharacters(in: .whitespacesAndNewlines),
                 kind: FollowUpTaskKind(rawValue: item.kind) ?? .followUp,
+                dueDateText: item.dueDateText.trimmingCharacters(in: .whitespacesAndNewlines),
                 owner: (item.owner ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
                 isManual: false
             )
@@ -118,8 +170,11 @@ JSON 必须是数组，每个元素包含：
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        guard let start = cleaned.firstIndex(of: "["),
-              let end = cleaned.lastIndex(of: "]"),
+        let objectStart = cleaned.firstIndex(of: "{")
+        let arrayStart = cleaned.firstIndex(of: "[")
+        let start = [objectStart, arrayStart].compactMap { $0 }.min()
+        guard let start,
+              let end = cleaned.lastIndex(where: { $0 == "}" || $0 == "]" }),
               start <= end else {
             return cleaned
         }
@@ -128,11 +183,29 @@ JSON 必须是数组，每个元素包含：
     }
 }
 
+private struct ExtractedFollowUpTaskResponse: Decodable {
+    let tasks: [ExtractedFollowUpTask]
+}
+
 private struct ExtractedFollowUpTask: Decodable {
     let title: String
     let detail: String
     let owner: String?
     let kind: String
     let sourceExcerpt: String
-    let dueDateText: String?
+    let dueDateText: String
+
+    private enum CodingKeys: String, CodingKey {
+        case title, detail, owner, kind, sourceExcerpt, dueDateText
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        detail = try c.decodeIfPresent(String.self, forKey: .detail) ?? ""
+        owner = try c.decodeIfPresent(String.self, forKey: .owner)
+        kind = try c.decodeIfPresent(String.self, forKey: .kind) ?? "followUp"
+        sourceExcerpt = try c.decodeIfPresent(String.self, forKey: .sourceExcerpt) ?? ""
+        dueDateText = try c.decodeIfPresent(String.self, forKey: .dueDateText) ?? ""
+    }
 }

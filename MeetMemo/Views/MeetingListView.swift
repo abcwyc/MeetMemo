@@ -44,7 +44,9 @@ struct MeetingListView: View {
     /// remain visible while the newly selected JSON is decoded off-main,
     /// avoiding the placeholder -> full-content double refresh.
     @State private var presentedMeeting: Meeting?
-    @State private var isSwitchingMeeting = false
+    /// The target whose load has taken long enough to warrant visible feedback.
+    /// Fast local loads never show a transient spinner.
+    @State private var switchingIndicatorMeetingId: UUID?
     @State private var navigationPath = NavigationPath()
     @State private var renamingMeeting: MeetingSummary?
     @State private var deletingMeeting: MeetingSummary?
@@ -299,7 +301,7 @@ struct MeetingListView: View {
                         }
                     )
                     .overlay(alignment: .top) {
-                        if isSwitchingMeeting {
+                        if switchingIndicatorMeetingId == selectedMeeting?.id {
                             HStack(spacing: 6) {
                                 ProgressView()
                                     .controlSize(.small)
@@ -314,7 +316,7 @@ struct MeetingListView: View {
                             .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
-                    .animation(.easeOut(duration: 0.16), value: isSwitchingMeeting)
+                    .animation(.easeOut(duration: 0.16), value: switchingIndicatorMeetingId)
                 } else if selectedMeeting != nil {
                     ProgressView(langMgr.t("加载会议内容中…", "Loading meeting…"))
                         .controlSize(.small)
@@ -458,30 +460,42 @@ struct MeetingListView: View {
         guard let selectedMeeting else {
             withAnimation(.easeOut(duration: 0.12)) {
                 presentedMeeting = nil
-                isSwitchingMeeting = false
+                switchingIndicatorMeetingId = nil
             }
             return
         }
 
         guard presentedMeeting?.id != selectedMeeting.id else {
-            isSwitchingMeeting = false
+            switchingIndicatorMeetingId = nil
             return
         }
 
-        withAnimation(.easeOut(duration: 0.12)) {
-            isSwitchingMeeting = presentedMeeting != nil
-        }
-
         let meetingId = selectedMeeting.id
+        let shouldShowSwitchingIndicator = presentedMeeting != nil
+        let indicatorTask = Task { @MainActor in
+            guard shouldShowSwitchingIndicator else { return }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled,
+                  self.selectedMeeting?.id == meetingId,
+                  self.presentedMeeting?.id != meetingId else { return }
+            withAnimation(.easeOut(duration: 0.12)) {
+                switchingIndicatorMeetingId = meetingId
+            }
+        }
+        defer { indicatorTask.cancel() }
+
         let loadedMeeting = await Task.detached(priority: .userInitiated) {
             LocalStorageManager.shared.loadMeeting(id: meetingId)
         }.value
 
         guard !Task.isCancelled, self.selectedMeeting?.id == meetingId else { return }
 
+        // Swap the already-decoded model without an implicit animation. The
+        // child view and web editor update in one transaction, which avoids
+        // animating intermediate layout from one meeting into the next.
+        presentedMeeting = loadedMeeting ?? selectedMeeting.placeholderMeeting
         withAnimation(.easeOut(duration: 0.16)) {
-            presentedMeeting = loadedMeeting ?? selectedMeeting.placeholderMeeting
-            isSwitchingMeeting = false
+            switchingIndicatorMeetingId = nil
         }
     }
 }
@@ -2091,7 +2105,6 @@ private struct TranscriptListView: View {
             }
         }
         .frame(maxHeight: .infinity)
-        .background(Color.gray.opacity(0.05))
         .cornerRadius(8)
     }
 
@@ -2734,6 +2747,17 @@ private struct FollowUpTaskRow: View {
             HStack(spacing: 10) {
                 Toggle(langMgr.t("截止日期", "Due Date"), isOn: hasDueDate)
                     .toggleStyle(.checkbox)
+
+                if task.dueDate == nil,
+                   !task.dueDateText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(langMgr.t(
+                        "原文：\(task.dueDateText)",
+                        "Transcript: \(task.dueDateText)"
+                    ))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                }
 
                 if task.dueDate != nil {
                     DatePicker("", selection: dueDate, displayedComponents: [.date, .hourAndMinute])

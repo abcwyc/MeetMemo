@@ -52,10 +52,15 @@ private struct MainWindowAppearanceSync: NSViewRepresentable {
     }
 
     final class Coordinator {
-        private static let frameAutosaveName = "MeetMemo.MainWindow"
-
         private weak var configuredWindow: NSWindow?
         private var appearance: NSAppearance?
+        private var resizeObserver: NSObjectProtocol?
+
+        deinit {
+            if let resizeObserver {
+                NotificationCenter.default.removeObserver(resizeObserver)
+            }
+        }
 
         func update(appearance: NSAppearance?, window: NSWindow?) {
             self.appearance = appearance
@@ -66,15 +71,35 @@ private struct MainWindowAppearanceSync: NSViewRepresentable {
             guard let window else { return }
 
             if configuredWindow !== window {
+                if let resizeObserver {
+                    NotificationCenter.default.removeObserver(resizeObserver)
+                    self.resizeObserver = nil
+                }
                 configuredWindow = window
-                // AppKit persists every move and resize under this stable
-                // name, then restores the saved frame when the next main
-                // window is attached. It also constrains stale frames to the
-                // current display after a monitor arrangement changes.
-                window.setFrameAutosaveName(Self.frameAutosaveName)
+
+                // SwiftUI applies `.defaultSize` after AppKit's native frame
+                // restoration, so `setFrameAutosaveName` is overwritten on a
+                // cold launch. Restore once SwiftUI's initial window layout
+                // has settled, then observe subsequent user resizes.
+                DispatchQueue.main.async { [weak self, weak window] in
+                    guard let self, let window, self.configuredWindow === window else { return }
+                    MainWindowSizePersistence.restore(window)
+                    self.observeResizes(of: window)
+                }
             }
 
             window.appearance = appearance
+        }
+
+        private func observeResizes(of window: NSWindow) {
+            resizeObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResizeNotification,
+                object: window,
+                queue: .main
+            ) { [weak window] _ in
+                guard let window else { return }
+                MainWindowSizePersistence.save(window)
+            }
         }
     }
 }
@@ -88,6 +113,53 @@ private final class MainWindowAttachmentView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         onWindowChange?(window)
+    }
+}
+
+private enum MainWindowSizePersistence {
+    private static let widthKey = "mainWindowSize.width"
+    private static let heightKey = "mainWindowSize.height"
+    private static let minimumSize = NSSize(width: 500, height: 400)
+
+    static func save(_ window: NSWindow) {
+        // Full-screen is a presentation mode, not the user's normal window
+        // size. Zoomed windows are intentionally saved because they are still
+        // ordinary resizable windows.
+        guard !window.styleMask.contains(.fullScreen) else { return }
+
+        let size = window.frame.size
+        guard size.width >= minimumSize.width, size.height >= minimumSize.height else { return }
+        UserDefaults.standard.set(size.width, forKey: widthKey)
+        UserDefaults.standard.set(size.height, forKey: heightKey)
+    }
+
+    static func restore(_ window: NSWindow) {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: widthKey) != nil,
+              defaults.object(forKey: heightKey) != nil else { return }
+
+        let screen = window.screen ?? NSScreen.main
+        let availableSize = screen?.visibleFrame.size ?? window.frame.size
+        let savedSize = NSSize(
+            width: defaults.double(forKey: widthKey),
+            height: defaults.double(forKey: heightKey)
+        )
+        let restoredSize = NSSize(
+            width: min(max(savedSize.width, minimumSize.width), availableSize.width),
+            height: min(max(savedSize.height, minimumSize.height), availableSize.height)
+        )
+
+        var restoredFrame = window.frame
+        let center = NSPoint(x: restoredFrame.midX, y: restoredFrame.midY)
+        restoredFrame.size = restoredSize
+        restoredFrame.origin = NSPoint(
+            x: center.x - restoredSize.width / 2,
+            y: center.y - restoredSize.height / 2
+        )
+        if let screen {
+            restoredFrame = window.constrainFrameRect(restoredFrame, to: screen)
+        }
+        window.setFrame(restoredFrame, display: false)
     }
 }
 

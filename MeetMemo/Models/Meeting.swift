@@ -267,6 +267,9 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
     var sourceExcerpt: String
     var kind: FollowUpTaskKind
     var dueDate: Date?
+    /// Original deadline wording extracted from the transcript, retained until
+    /// the user chooses an exact date for Reminders.
+    var dueDateText: String
     var owner: String
     var isManual: Bool
     var reminderIdentifier: String?
@@ -282,6 +285,7 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
         sourceExcerpt: String = "",
         kind: FollowUpTaskKind,
         dueDate: Date? = nil,
+        dueDateText: String = "",
         owner: String = "",
         isManual: Bool = false,
         reminderIdentifier: String? = nil,
@@ -296,6 +300,7 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
         self.sourceExcerpt = sourceExcerpt
         self.kind = kind
         self.dueDate = dueDate
+        self.dueDateText = dueDateText
         self.owner = owner
         self.isManual = isManual
         self.reminderIdentifier = reminderIdentifier
@@ -306,7 +311,7 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, detail, sourceExcerpt, kind, dueDate, owner, isManual
+        case id, title, detail, sourceExcerpt, kind, dueDate, dueDateText, owner, isManual
         case reminderIdentifier, reminderCalendarIdentifier, reminderCalendarTitle
         case createdAt, updatedAt
     }
@@ -319,6 +324,7 @@ struct MeetingFollowUpTask: Codable, Identifiable, Hashable {
         sourceExcerpt = try c.decodeIfPresent(String.self, forKey: .sourceExcerpt) ?? ""
         kind = try c.decodeIfPresent(FollowUpTaskKind.self, forKey: .kind) ?? .followUp
         dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
+        dueDateText = try c.decodeIfPresent(String.self, forKey: .dueDateText) ?? ""
         owner = try c.decodeIfPresent(String.self, forKey: .owner) ?? ""
         isManual = try c.decodeIfPresent(Bool.self, forKey: .isManual) ?? false
         reminderIdentifier = try c.decodeIfPresent(String.self, forKey: .reminderIdentifier)

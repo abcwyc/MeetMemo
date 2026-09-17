@@ -26,6 +26,17 @@ final class MeetingStructuredExtractorTests: XCTestCase {
               "source_excerpt": "先灰度 20%"
             }
           ],
+          "action_items": [
+            {
+              "title": "补齐核心监控指标",
+              "detail": "覆盖灰度发布的关键链路",
+              "owner": "Cara",
+              "kind": "actionItem",
+              "due_date_text": "周五前",
+              "confidence": "high",
+              "source_excerpt": "周五前补齐核心指标"
+            }
+          ],
           "risks": [
             {
               "title": "监控覆盖不足",
@@ -59,6 +70,8 @@ final class MeetingStructuredExtractorTests: XCTestCase {
         XCTAssertEqual(result.location, "线上")
         XCTAssertEqual(result.discussions.first?.title, "发布节奏")
         XCTAssertEqual(result.decisions.first?.confidence, "high")
+        XCTAssertEqual(result.followUpTasks.first?.title, "补齐核心监控指标")
+        XCTAssertEqual(result.followUpTasks.first?.dueDateText, "周五前")
         XCTAssertEqual(result.risks.first?.severity, "medium")
         XCTAssertEqual(result.openQuestions.first?.nextStep, "周五前确认")
         XCTAssertEqual(result.milestones.first?.targetDate, "下周一")

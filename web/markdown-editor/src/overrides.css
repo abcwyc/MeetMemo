@@ -5,23 +5,9 @@
  * editing behaviour, selections, popovers, and syntax widgets.
  */
 
-.meetmemo-editor-transition {
+.meetmemo-editor-host {
   width: 100%;
   height: 100%;
-  opacity: 1;
-  transition: opacity 110ms ease-out;
-  will-change: opacity;
-}
-
-.meetmemo-editor-transition.is-switching {
-  opacity: 0.42;
-  pointer-events: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .meetmemo-editor-transition {
-    transition: none;
-  }
 }
 
 /* Keep scrollbars geometrically stable. macOS' overlay scroller grows when

@@ -10,6 +10,12 @@ enum TranscriptBudget {
     /// 默认输入预算。按主流 128k~200k 上下文模型，留足 prompt 模板与输出余量后取 ~96k tokens。
     static let inputTokenBudget = 96_000
 
+    /// Per-request budget used by the long-meeting evidence pass. Keeping this
+    /// comfortably below common context limits leaves room for extraction
+    /// instructions and output even when the configured provider is not a
+    /// 128k-context model.
+    static let evidenceChunkTokenBudget = 20_000
+
     /// 头部占用预算的比例，其余归尾部。开头的背景信息通常比结尾的收尾更值得多保留一些。
     private static let headBudgetRatio = 0.55
 
@@ -78,7 +84,49 @@ enum TranscriptBudget {
         }
 
         let assembled = headLines + [omissionMarker(omittedLineCount: omittedCount)] + tailLines
-        return (assembled.joined(separator: "\n"), true)
+        let result = assembled.joined(separator: "\n")
+        if estimateTokens(result) > tokenBudget {
+            // A single transcript segment may itself exceed the line budget.
+            // Enforce the final invariant instead of returning an oversized prompt.
+            return (hardTruncate(text, tokenBudget: tokenBudget), true)
+        }
+        return (result, true)
+    }
+
+    /// Splits a transcript into ordered, non-overlapping chunks without
+    /// dropping middle content. Newlines may be inserted when a single source
+    /// line itself exceeds the budget, but all source characters are retained.
+    static func chunks(
+        _ text: String,
+        tokenBudget: Int = evidenceChunkTokenBudget
+    ) -> [String] {
+        guard tokenBudget > 0, !text.isEmpty else { return [] }
+        guard estimateTokens(text) > tokenBudget else { return [text] }
+
+        let logicalLines = text.components(separatedBy: "\n")
+            .flatMap { splitOversizedLine($0, tokenBudget: tokenBudget) }
+
+        var result: [String] = []
+        var currentLines: [String] = []
+        var currentTokens = 0
+
+        for line in logicalLines {
+            let cost = estimateTokens(line) + (currentLines.isEmpty ? 0 : 1)
+            if !currentLines.isEmpty, currentTokens + cost > tokenBudget {
+                result.append(currentLines.joined(separator: "\n"))
+                currentLines = []
+                currentTokens = 0
+            }
+
+            currentLines.append(line)
+            currentTokens += estimateTokens(line) + (currentLines.count == 1 ? 0 : 1)
+        }
+
+        if !currentLines.isEmpty {
+            result.append(currentLines.joined(separator: "\n"))
+        }
+
+        return result
     }
 
     // MARK: - Helpers
@@ -86,14 +134,63 @@ enum TranscriptBudget {
     /// 极端兜底：单行超长，按字符比例保留首尾。
     private static func hardTruncate(_ text: String, tokenBudget: Int) -> String {
         let chars = Array(text)
-        // 粗略反推字符上限：token 预算 × ~4 字符/token，再保守乘 0.9。
-        let charBudget = max(2, Int(Double(tokenBudget) * 4.0 * 0.9))
-        guard chars.count > charBudget else { return text }
-        let head = Int(Double(charBudget) * headBudgetRatio)
-        let tail = charBudget - head
-        let headStr = String(chars.prefix(head))
-        let tailStr = String(chars.suffix(tail))
-        return headStr + "\n" + omissionMarker(omittedLineCount: 1) + "\n" + tailStr
+        guard estimateTokens(text) > tokenBudget else { return text }
+
+        // Binary-search the number of retained characters using the same token
+        // estimator as the caller. This works for both CJK (~1 token/character)
+        // and Latin text instead of assuming every language is 4 chars/token.
+        let marker = "\n…\n"
+        var lowerBound = 0
+        var upperBound = chars.count
+        var best = marker.trimmingCharacters(in: .newlines)
+
+        while lowerBound <= upperBound {
+            let retained = (lowerBound + upperBound) / 2
+            let headCount = Int(Double(retained) * headBudgetRatio)
+            let tailCount = retained - headCount
+            let candidate = String(chars.prefix(headCount)) + marker + String(chars.suffix(tailCount))
+
+            if estimateTokens(candidate) <= tokenBudget {
+                best = candidate
+                lowerBound = retained + 1
+            } else {
+                upperBound = retained - 1
+            }
+        }
+
+        return best
+    }
+
+    private static func splitOversizedLine(_ line: String, tokenBudget: Int) -> [String] {
+        guard estimateTokens(line) > tokenBudget else { return [line] }
+
+        var remaining = line
+        var pieces: [String] = []
+        while estimateTokens(remaining) > tokenBudget {
+            let characters = Array(remaining)
+            var lowerBound = 1
+            var upperBound = characters.count
+            var bestCount = 1
+
+            while lowerBound <= upperBound {
+                let candidateCount = (lowerBound + upperBound) / 2
+                let candidate = String(characters.prefix(candidateCount))
+                if estimateTokens(candidate) <= tokenBudget {
+                    bestCount = candidateCount
+                    lowerBound = candidateCount + 1
+                } else {
+                    upperBound = candidateCount - 1
+                }
+            }
+
+            pieces.append(String(characters.prefix(bestCount)))
+            remaining = String(characters.dropFirst(bestCount))
+        }
+
+        if !remaining.isEmpty {
+            pieces.append(remaining)
+        }
+        return pieces
     }
 
     /// 中间被省略时插入的占位行。两种语言版本均含省略号 "…"，便于识别与测试。

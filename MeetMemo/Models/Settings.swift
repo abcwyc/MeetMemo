@@ -66,11 +66,9 @@ struct Settings: Codable {
     }
 
     var fullSystemPrompt: String {
-        let defaultPrompt = Settings.defaultSystemPrompt()
-        if userBlurb.isEmpty {
-            return defaultPrompt
-        }
-        return "\(defaultPrompt)\n\n用户补充背景：\(userBlurb)"
+        // Dynamic profile data belongs in the lower-authority user message.
+        // Keep this compatibility accessor instruction-only as well.
+        Settings.defaultSystemPrompt()
     }
 
     static func processTemplate(_ template: String, with variables: [String: String]) -> String {

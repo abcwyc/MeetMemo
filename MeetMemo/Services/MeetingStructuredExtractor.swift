@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 enum StructuredExtractionError: LocalizedError {
     case missingNotes
@@ -29,10 +30,15 @@ struct StructuredSummaryResult {
     let openQuestions: [MeetingOpenQuestion]
     let discussions: [MeetingDiscussion]
     let milestones: [MeetingMilestone]
+    let followUpTasks: [MeetingFollowUpTask]
 }
 
 final class MeetingStructuredExtractor {
     static let shared = MeetingStructuredExtractor(client: LLMClient())
+    private static let logger = Logger(
+        subsystem: "com.youcai.meetmemo",
+        category: "StructuredExtraction"
+    )
 
     private let client: LLMProvider
 
@@ -78,13 +84,11 @@ final class MeetingStructuredExtractor {
         let client = self.client
         return try await withThrowingTaskGroup(of: StructuredSummaryResult.self) { group in
             group.addTask {
-                var response = ""
-                let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)
-                for try await chunk in stream {
-                    try Task.checkCancellation()
-                    response += chunk
-                }
-                return try Self.decodeResult(from: response)
+                try await Self.requestAndDecode(
+                    client: client,
+                    config: config,
+                    messages: messages
+                )
             }
             group.addTask {
                 try await Task.sleep(for: .seconds(timeout))
@@ -103,6 +107,127 @@ final class MeetingStructuredExtractor {
             }
         }
     }
+
+    private static func requestAndDecode(
+        client: LLMProvider,
+        config: LLMProviderConfig,
+        messages: [ChatMessage]
+    ) async throws -> StructuredSummaryResult {
+        var attemptMessages = messages
+
+        for attempt in 1...2 {
+            try Task.checkCancellation()
+            let completion = try await client.completeStructuredJSON(
+                config: config,
+                messages: attemptMessages,
+                request: structuredOutputRequest
+            )
+
+            do {
+                return try decodeResult(from: completion.content)
+            } catch StructuredExtractionError.invalidResponse {
+                logger.error(
+                    "Structured JSON decode failed; attempt=\(attempt, privacy: .public) chars=\(completion.content.count, privacy: .public) finish=\(completion.finishReason ?? "unknown", privacy: .public) requestID=\(completion.requestID ?? "unknown", privacy: .public) style=\(config.apiStyle.rawValue, privacy: .public) model=\(config.model, privacy: .private(mask: .hash))"
+                )
+                guard attempt == 1 else { throw StructuredExtractionError.invalidResponse }
+                attemptMessages.append(ChatMessage(
+                    role: "user",
+                    content: "上一次返回无法解析。请重新生成完整 JSON，严格遵守给定 schema，不要输出解释、Markdown 或代码块。"
+                ))
+            }
+        }
+
+        throw StructuredExtractionError.invalidResponse
+    }
+
+    private static let structuredOutputRequest = LLMStructuredOutputRequest(
+        name: "meeting_action_digest",
+        jsonSchema: """
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["one_liner", "host", "location", "discussions", "decisions", "action_items", "risks", "open_questions", "milestones"],
+          "properties": {
+            "one_liner": { "type": "string" },
+            "host": { "type": "string" },
+            "location": { "type": "string" },
+            "discussions": {
+              "type": "array", "maxItems": 3,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["title", "summary", "consensus", "has_consensus", "source_excerpt"],
+                "properties": {
+                  "title": { "type": "string" }, "summary": { "type": "string" },
+                  "consensus": { "type": "string" }, "has_consensus": { "type": "boolean" },
+                  "source_excerpt": { "type": "string" }
+                }
+              }
+            },
+            "decisions": {
+              "type": "array", "maxItems": 5,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["title", "owner", "reason", "confidence", "source_excerpt"],
+                "properties": {
+                  "title": { "type": "string" }, "owner": { "type": "string" },
+                  "reason": { "type": "string" }, "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+                  "source_excerpt": { "type": "string" }
+                }
+              }
+            },
+            "action_items": {
+              "type": "array", "maxItems": 10,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["title", "detail", "owner", "kind", "due_date_text", "confidence", "source_excerpt"],
+                "properties": {
+                  "title": { "type": "string" }, "detail": { "type": "string" },
+                  "owner": { "type": "string" },
+                  "kind": { "type": "string", "enum": ["actionItem", "confirmation", "followUp"] },
+                  "due_date_text": { "type": "string" },
+                  "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+                  "source_excerpt": { "type": "string" }
+                }
+              }
+            },
+            "risks": {
+              "type": "array", "maxItems": 5,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["title", "severity", "mitigation", "owner", "source_excerpt"],
+                "properties": {
+                  "title": { "type": "string" }, "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+                  "mitigation": { "type": "string" }, "owner": { "type": "string" }, "source_excerpt": { "type": "string" }
+                }
+              }
+            },
+            "open_questions": {
+              "type": "array", "maxItems": 5,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["question", "owner", "next_step", "source_excerpt"],
+                "properties": {
+                  "question": { "type": "string" }, "owner": { "type": "string" },
+                  "next_step": { "type": "string" }, "source_excerpt": { "type": "string" }
+                }
+              }
+            },
+            "milestones": {
+              "type": "array", "maxItems": 5,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["title", "description", "target_date", "source_excerpt"],
+                "properties": {
+                  "title": { "type": "string" }, "description": { "type": "string" },
+                  "target_date": { "type": "string" }, "source_excerpt": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+        """,
+        maxTokens: 6144
+    )
 
     private static let systemPrompt = """
 你是一个会议转录结构化提取助手。请只从会议转录原文中提取关键结构化信息。
@@ -129,6 +254,17 @@ JSON 必须是如下对象结构：
       "reason": "决策原因或背景，没有则为空字符串",
       "confidence": "high 或 medium 或 low",
       "source_excerpt": "会议转录原文中支持该决策的相关原文短句，不超过80字，没有则为空字符串"
+    }
+  ],
+  "action_items": [
+    {
+      "title": "明确、可执行的任务标题",
+      "detail": "任务补充说明，没有则为空字符串",
+      "owner": "负责人，没有则为空字符串",
+      "kind": "actionItem、confirmation 或 followUp",
+      "due_date_text": "截止时间的原文表述，没有则为空字符串",
+      "confidence": "high、medium 或 low",
+      "source_excerpt": "会议转录原文中支持该待办的相关原文短句，不超过80字"
     }
   ],
   "risks": [
@@ -162,9 +298,11 @@ JSON 必须是如下对象结构：
 - discussions：只提取会议中最重要的实质议题（0-3 条）。summary 侧重「讨论了什么、有何分歧或不同观点」，consensus 侧重「最终达成了什么共识或结论」。has_consensus 为 true 时 consensus 不能为空。纯粹的信息汇报或结论宣布不视为议题讨论。若无法区分具体议题，返回空数组 []。
 - milestones：提取会议中提及的具体交付节点或上线计划（通常有时间节点）。与 decisions 的区别在于 milestones 侧重「交付时间线」，decisions 侧重「方向选择」。没有明确时间节点的目标不算里程碑。若无里程碑信息，返回空数组 []。
 - decisions：只提取会议中明确达成、被多方认可的决策。不要把"建议"、"想法"、"讨论方向"误判为已确认决策。confidence 为 low 时表示你对该决策的判断不确定。
+- action_items：只提取明确承诺、明确指派或明确要求后续执行/确认/跟进的事项（0-10 条）。不要把普通决策、里程碑、背景信息或泛泛建议自动改写成待办。kind 只能是 actionItem、confirmation 或 followUp。
 - risks：提取会议中明确提及的风险、阻塞项、潜在问题。
 - open_questions：提取会议中尚未达成结论、需要后续确认或跟进的问题。
 - 如果某类信息在会议中不存在，对应数组返回空数组 []。
+- decisions、risks、open_questions、milestones 每类最多 5 条，只保留最重要内容。
 - one_liner 必须存在，不能为空字符串，控制在30到50个汉字左右。
 - one_liner 要帮助读者快速回忆这次会议讨论了什么；优先写清核心议题，并尽量补充最关键的决策、结论或待办，不要只写成标题式短语。
 - host 和 location 若无法从转录原文中判断，返回空字符串。
@@ -264,6 +402,20 @@ AI 会议纪要（仅用于快速定位重点，不可作为事实依据）：
             )
         } ?? []
 
+        let followUpTasks = raw.action_items?.compactMap { item -> MeetingFollowUpTask? in
+            let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else { return nil }
+            return MeetingFollowUpTask(
+                title: title,
+                detail: item.detail.trimmingCharacters(in: .whitespacesAndNewlines),
+                sourceExcerpt: item.source_excerpt.trimmingCharacters(in: .whitespacesAndNewlines),
+                kind: FollowUpTaskKind(rawValue: item.kind) ?? .followUp,
+                dueDateText: item.due_date_text.trimmingCharacters(in: .whitespacesAndNewlines),
+                owner: item.owner.trimmingCharacters(in: .whitespacesAndNewlines),
+                isManual: false
+            )
+        } ?? []
+
         return StructuredSummaryResult(
             oneLiner: raw.one_liner.trimmingCharacters(in: .whitespacesAndNewlines),
             host: (raw.host ?? "").trimmingCharacters(in: .whitespacesAndNewlines),
@@ -272,7 +424,8 @@ AI 会议纪要（仅用于快速定位重点，不可作为事实依据）：
             risks: risks,
             openQuestions: openQuestions,
             discussions: discussions,
-            milestones: milestones
+            milestones: milestones,
+            followUpTasks: followUpTasks
         )
     }
 
@@ -305,12 +458,13 @@ private struct RawStructuredSummary: Decodable {
     let location: String?
     let discussions: [RawDiscussion]?
     let decisions: [RawDecision]?
+    let action_items: [RawActionItem]?
     let risks: [RawRisk]?
     let open_questions: [RawOpenQuestion]?
     let milestones: [RawMilestone]?
 
     private enum CodingKeys: String, CodingKey {
-        case one_liner, host, location, discussions, decisions, risks, open_questions, milestones
+        case one_liner, host, location, discussions, decisions, action_items, risks, open_questions, milestones
     }
 
     init(from decoder: Decoder) throws {
@@ -320,9 +474,35 @@ private struct RawStructuredSummary: Decodable {
         location = c.lossyOptionalString(forKey: .location)
         discussions = c.lossyArray(RawDiscussion.self, forKey: .discussions)
         decisions = c.lossyArray(RawDecision.self, forKey: .decisions)
+        action_items = c.lossyArray(RawActionItem.self, forKey: .action_items)
         risks = c.lossyArray(RawRisk.self, forKey: .risks)
         open_questions = c.lossyArray(RawOpenQuestion.self, forKey: .open_questions)
         milestones = c.lossyArray(RawMilestone.self, forKey: .milestones)
+    }
+}
+
+private struct RawActionItem: Decodable {
+    let title: String
+    let detail: String
+    let owner: String
+    let kind: String
+    let due_date_text: String
+    let confidence: String
+    let source_excerpt: String
+
+    private enum CodingKeys: String, CodingKey {
+        case title, detail, owner, kind, due_date_text, confidence, source_excerpt
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = c.lossyString(forKey: .title)
+        detail = c.lossyString(forKey: .detail)
+        owner = c.lossyString(forKey: .owner)
+        kind = c.lossyString(forKey: .kind, defaultValue: "followUp")
+        due_date_text = c.lossyString(forKey: .due_date_text)
+        confidence = c.lossyString(forKey: .confidence, defaultValue: "medium")
+        source_excerpt = c.lossyString(forKey: .source_excerpt)
     }
 }
 

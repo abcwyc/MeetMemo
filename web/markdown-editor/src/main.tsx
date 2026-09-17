@@ -50,10 +50,6 @@ declare global {
 
 function App() {
   const [doc, setDoc] = useState<LoadPayload | null>(null);
-  const [isSwitchingDocument, setIsSwitchingDocument] = useState(false);
-  const docRef = useRef<LoadPayload | null>(null);
-  const switchTimerRef = useRef<number | null>(null);
-  const settleFrameRef = useRef<number | null>(null);
   // Distinguishes "this text change came from the editor itself" (already
   // reflected in the CM6 view; echoing it back via `load` would be a no-op
   // at best since markdownSource is mount-only, so we just skip posting it
@@ -68,42 +64,11 @@ function App() {
     window.__meetmemoBridge = {
       load: (payload) => {
         lastEmittedRef.current = payload.markdown;
-        const current = docRef.current;
-
-        if (switchTimerRef.current !== null) {
-          window.clearTimeout(switchTimerRef.current);
-          switchTimerRef.current = null;
-        }
-        if (settleFrameRef.current !== null) {
-          window.cancelAnimationFrame(settleFrameRef.current);
-          settleFrameRef.current = null;
-        }
-
-        // The first document and in-place configuration updates should paint
-        // immediately. A genuine document replacement keeps the old editor
-        // visible for one very short fade, then lets the fully mounted new
-        // editor fade in. This masks CodeMirror's required destroy/recreate
-        // boundary without delaying normal typing or read-only changes.
-        if (!current || current.documentId === payload.documentId) {
-          docRef.current = payload;
-          setDoc(payload);
-          setIsSwitchingDocument(false);
-          return;
-        }
-
-        setIsSwitchingDocument(true);
-        switchTimerRef.current = window.setTimeout(() => {
-          docRef.current = payload;
-          setDoc(payload);
-          switchTimerRef.current = null;
-
-          settleFrameRef.current = window.requestAnimationFrame(() => {
-            settleFrameRef.current = window.requestAnimationFrame(() => {
-              setIsSwitchingDocument(false);
-              settleFrameRef.current = null;
-            });
-          });
-        }, 65);
+        // React keeps the old tree painted until this update commits, so an
+        // additional fade/delay only makes a local document switch look like
+        // a page refresh. Let Atomic Editor replace the CodeMirror instance
+        // in the same commit instead.
+        setDoc(payload);
       },
     };
     // Tell Swift the bridge object actually exists now, so it knows it's
@@ -116,12 +81,6 @@ function App() {
     window.webkit?.messageHandlers?.editorReady?.postMessage('');
 
     return () => {
-      if (switchTimerRef.current !== null) {
-        window.clearTimeout(switchTimerRef.current);
-      }
-      if (settleFrameRef.current !== null) {
-        window.cancelAnimationFrame(settleFrameRef.current);
-      }
       delete window.__meetmemoBridge;
     };
   }, []);
@@ -141,7 +100,7 @@ function App() {
   if (!doc) return null;
 
   return (
-    <div className={`meetmemo-editor-transition${isSwitchingDocument ? ' is-switching' : ''}`}>
+    <div className="meetmemo-editor-host">
       <AtomicCodeMirrorEditor
         documentId={doc.documentId}
         markdownSource={doc.markdown}

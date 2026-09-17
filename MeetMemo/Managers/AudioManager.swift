@@ -4,12 +4,15 @@
 @preconcurrency import AVFoundation
 import Combine
 import Foundation
+import OSLog
 import SwiftUI
 
 /// Manages audio capture from microphone and system audio and handles real-time transcription.
 @MainActor
 class AudioManager: NSObject, ObservableObject {
     static let shared = AudioManager()
+
+    private let logger = Logger(subsystem: "com.youcai.meetmemo", category: "AudioManager")
 
     @Published var transcriptChunks: [TranscriptChunk] = []
     @Published var isRecording = false
@@ -31,7 +34,9 @@ class AudioManager: NSObject, ObservableObject {
     private var systemAudioPipeline: AudioProcessingPipeline?
     private var startRecordingTask: Task<Void, Never>?
     private var micRestartTask: Task<Void, Never>?
+    private var audioHealthTask: Task<Void, Never>?
     private let finalFlushTimeout: TimeInterval = 2.0
+    private let micBufferStallTimeout: TimeInterval = 5.0
     private var recordingStartedAtUptime: TimeInterval?
     private var recordingBaseOffsetMilliseconds = 0
     private var recordingStateMachine = AudioRecordingStateMachine()
@@ -47,7 +52,7 @@ class AudioManager: NSObject, ObservableObject {
     /// True while the system-audio STT runtime is being connected lazily (on first real
     /// system audio). Prevents duplicate concurrent connects.
     private var systemSTTConnectingSessionID: UUID?
-    private var systemAudioRetryTask: Task<Void, Never>?
+    private var micCaptureHealth = AudioCaptureHealthState()
 
     /// Mic audio captured while the mic STT provider is still connecting (e.g. Fun-ASR's
     /// ~2 s model load). Ring-buffered up to `VoiceInputTiming.maxPendingAudioBytes` and
@@ -60,7 +65,6 @@ class AudioManager: NSObject, ObservableObject {
 
     // ProcessTap properties
     private var processTap: ProcessTap?
-    private let audioProcessController = AudioProcessController()
     private let permission = AudioRecordingPermission()
     private let tapQueue = DispatchQueue(label: "io.meetmemo.audiotap", qos: .userInitiated)
     private var isTapActive = false
@@ -70,7 +74,6 @@ class AudioManager: NSObject, ObservableObject {
     private var micRetryCount = 0
     private let maxMicRetries = 3
 
-    private var cancellables = Set<AnyCancellable>()
     /// `NotificationCenter.addObserver(forName:object:queue:using:)` returns an opaque token
     /// that must be passed back to `removeObserver`. We need to drop and re-register this
     /// each time `audioEngine` is replaced, because the observer is filtered by sender.
@@ -85,19 +88,6 @@ class AudioManager: NSObject, ObservableObject {
         super.init()
         registerAudioEngineConfigObserver()
         registerSystemPowerObservers()
-
-        audioProcessController.activate()
-
-        NSWorkspace.shared.publisher(for: \.runningApplications)
-            .debounce(for: .seconds(1), scheduler: RunLoop.main)
-            .sink { [weak self] _ in
-                guard let self, self.isTapActive else { return }
-                print("🎤 Running applications changed, checking if tap restart is needed.")
-                Task {
-                    await self.restartSystemAudioTapIfNeeded()
-                }
-            }
-            .store(in: &cancellables)
     }
 
     deinit {
@@ -184,7 +174,7 @@ class AudioManager: NSObject, ObservableObject {
         recordingStartedAtUptime = ProcessInfo.processInfo.systemUptime
         activeInterimChunkId.removeAll()
         systemSTTConnectingSessionID = nil
-        stopSystemAudioRetryTask()
+        startAudioHealthMonitor(sessionToken: startedSessionID)
 
         startRecordingTask?.cancel()
         startRecordingTask = Task { [weak self] in
@@ -208,7 +198,7 @@ class AudioManager: NSObject, ObservableObject {
 
         stopStartRecordingTask()
         stopMicRestartTask()
-        stopSystemAudioRetryTask()
+        stopAudioHealthMonitor()
         stopAudioPipelines()
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
@@ -374,8 +364,7 @@ class AudioManager: NSObject, ObservableObject {
     private func startSystemAudioTap(
         isRestart: Bool = false,
         isInitialStart: Bool = false,
-        sessionToken: UUID? = nil,
-        scheduleRetryOnEmpty: Bool = true
+        sessionToken: UUID? = nil
     ) async {
         print(isRestart ? "🎧 Restarting system audio tap logic..." : "🎧 Starting system audio tap for the first time...")
         let activeSessionToken = sessionToken ?? sessionID
@@ -397,84 +386,59 @@ class AudioManager: NSObject, ObservableObject {
             return
         }
 
+        // A global tap follows audio-producing apps without being rebuilt whenever
+        // an unrelated app launches or exits. Excluding our own process prevents
+        // feedback if MeetMemo itself emits audio.
+        let excludedProcessObjectIDs = currentProcessAudioObjectIDs()
+        let target = TapTarget.systemAudio(
+            excludedProcessObjectIDs: excludedProcessObjectIDs
+        )
+        let newTap = ProcessTap(target: target)
+        newTap.activate()
+
+        if let tapError = newTap.errorMessage {
+            newTap.invalidate()
+            guard isActiveSession(activeSessionToken) else { return }
+            let errorMsg = "Failed to activate system audio tap: \(tapError)"
+            print("❌ \(errorMsg)")
+            degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
+            return
+        }
+
+        processTap = newTap
+        isTapActive = true
+
         do {
-            // The system-audio STT runtime is created lazily on first non-silent system
-            // audio (see sendAudioData / ensureSystemSTTConnectedLazily) so mic-only
-            // recordings never load a second ~1.5 GB recognizer. The tap below still
-            // starts listening; if no app is playing audio, no data arrives and no
-            // runtime is allocated.
-            let allProcessObjectIDs = refreshedSystemAudioProcessObjectIDs()
-            if allProcessObjectIDs.isEmpty {
-                let message = "未检测到可用的系统音频源，将在录制中继续等待。"
-                print("⚠️ \(message)")
-                warningMessage = message
-                if scheduleRetryOnEmpty {
-                    scheduleSystemAudioTapRetry(sessionToken: activeSessionToken)
-                }
-                return
-            }
-
-            let target = TapTarget.systemAudio(processObjectIDs: allProcessObjectIDs)
-            let newTap = ProcessTap(target: target)
-            newTap.activate()
-
-            if let tapError = newTap.errorMessage {
-                newTap.invalidate()
-                guard isActiveSession(activeSessionToken) else { return }
-                let errorMsg = "Failed to activate system audio tap: \(tapError)"
-                print("❌ \(errorMsg)")
-                degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
-                return
-            }
-
-            processTap = newTap
-            isTapActive = true
-
-            do {
-                try startTapIO(newTap, sessionToken: activeSessionToken)
-                guard isActiveSession(activeSessionToken) else {
-                    newTap.invalidate()
-                    isTapActive = false
-                    return
-                }
-
-                if !isRestart {
-                    markRecordingActive(sessionToken: activeSessionToken)
-                }
-                print("✅ System audio tap started successfully (isRestart: \(isRestart))")
-            } catch {
-                guard isActiveSession(activeSessionToken) else { return }
-                let errorMsg = "Failed to start system audio tap IO: \(error.localizedDescription)"
-                print("❌ \(errorMsg)")
+            try startTapIO(newTap, sessionToken: activeSessionToken)
+            guard isActiveSession(activeSessionToken) else {
                 newTap.invalidate()
                 isTapActive = false
-                degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
+                return
             }
+
+            if !isRestart {
+                markRecordingActive(sessionToken: activeSessionToken)
+            }
+            logger.notice("System audio tap started; global capture active, excluded processes: \(excludedProcessObjectIDs.count)")
+            print("✅ System audio tap started successfully (isRestart: \(isRestart))")
         } catch {
             guard isActiveSession(activeSessionToken) else { return }
-            let errorMsg = ErrorHandler.shared.handleError(error)
-            print("❌ Failed to connect system STT provider: \(errorMsg)")
-            // System audio STT failure: degrade to mic-only without aborting recording.
-            degradeSystemAudioToMicOnly("系统音频转录不可用，已自动切换为仅麦克风模式。")
+            let errorMsg = "Failed to start system audio tap IO: \(error.localizedDescription)"
+            print("❌ \(errorMsg)")
+            newTap.invalidate()
+            isTapActive = false
+            degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
         }
     }
 
-    private func refreshedSystemAudioProcessObjectIDs() -> [AudioObjectID] {
-        audioProcessController.refresh()
-
-        let currentObjectIDs = Set((try? AudioObjectID.readProcessList()) ?? [])
-        var seenObjectIDs = Set<AudioObjectID>()
-
-        return audioProcessController.processes.compactMap { process in
-            let objectID = process.objectID
-            guard objectID.isValid,
-                  currentObjectIDs.contains(objectID),
-                  seenObjectIDs.insert(objectID).inserted else {
-                return nil
-            }
-
-            return objectID
+    private func currentProcessAudioObjectIDs() -> [AudioObjectID] {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        guard let objectID = try? AudioObjectID.translatePIDToProcessObjectID(pid: pid),
+              objectID.isValid else {
+            logger.warning("Could not resolve MeetMemo's Core Audio process object; global tap will use an empty exclusion list.")
+            return []
         }
+        return [objectID]
     }
 
     private func degradeSystemAudioToMicOnly(_ message: String) {
@@ -494,55 +458,6 @@ class AudioManager: NSObject, ObservableObject {
         warningMessage = message
     }
 
-    private func scheduleSystemAudioTapRetry(sessionToken: UUID) {
-        guard systemAudioRetryTask == nil else { return }
-
-        systemAudioRetryTask = Task { [weak self] in
-            guard let self else { return }
-            defer { self.systemAudioRetryTask = nil }
-
-            for _ in 0..<12 {
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled else { return }
-                guard self.isActiveSession(sessionToken),
-                      self.isRecording,
-                      !self.isStoppingOrTearingDown,
-                      !self.isTapActive,
-                      UserDefaultsManager.shared.enableSystemAudioSTT else {
-                    return
-                }
-
-                await self.startSystemAudioTap(
-                    isRestart: true,
-                    sessionToken: sessionToken,
-                    scheduleRetryOnEmpty: false
-                )
-
-                if self.isTapActive {
-                    return
-                }
-            }
-        }
-    }
-
-    private func restartSystemAudioTapIfNeeded() async {
-        let newProcessObjectIDs = Set(audioProcessController.processes.map { $0.objectID })
-        let currentProcessObjectIDs: Set<AudioObjectID>
-
-        if case .systemAudio(let processObjectIDs) = processTap?.target {
-            currentProcessObjectIDs = Set(processObjectIDs)
-        } else {
-            currentProcessObjectIDs = []
-        }
-
-        if newProcessObjectIDs != currentProcessObjectIDs {
-            print("Process list has changed. Restarting system audio tap.")
-            await restartSystemAudioTap()
-        } else {
-            print("Process list is the same. No restart needed.")
-        }
-    }
-
     private func restartSystemAudioTap() async {
         print("🔄 Restarting system audio tap...")
 
@@ -550,9 +465,14 @@ class AudioManager: NSObject, ObservableObject {
             print("Recording was stopped, aborting tap restart.")
             return
         }
+        guard !isRestartingSystemTap else {
+            logger.notice("Ignoring duplicate system audio tap restart request.")
+            return
+        }
 
         isRestartingSystemTap = true
         defer { isRestartingSystemTap = false }
+        logger.warning("Restarting system audio tap after invalidation.")
 
         if isTapActive {
             systemAudioPipeline?.stop()
@@ -653,7 +573,7 @@ class AudioManager: NSObject, ObservableObject {
 
         stopStartRecordingTask()
         stopMicRestartTask()
-        stopSystemAudioRetryTask()
+        stopAudioHealthMonitor()
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
         isStoppingRecording = true
@@ -780,6 +700,7 @@ class AudioManager: NSObject, ObservableObject {
         guard isRecording, isActiveSession(sessionToken) else { return }
         switch source {
         case .mic:
+            micCaptureHealth.noteMicBuffer(at: ProcessInfo.processInfo.systemUptime)
             micAudioLevel = level
             AudioLevelManager.shared.updateMicLevel(level)
         case .system:
@@ -858,9 +779,34 @@ class AudioManager: NSObject, ObservableObject {
         startRecordingTask = nil
     }
 
-    private func stopSystemAudioRetryTask() {
-        systemAudioRetryTask?.cancel()
-        systemAudioRetryTask = nil
+    private func startAudioHealthMonitor(sessionToken: UUID) {
+        stopAudioHealthMonitor()
+        micCaptureHealth.begin(at: ProcessInfo.processInfo.systemUptime)
+        audioHealthTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled, let self else { return }
+                guard self.isRecording,
+                      self.isActiveSession(sessionToken),
+                      !self.isStoppingOrTearingDown else { continue }
+
+                let now = ProcessInfo.processInfo.systemUptime
+                guard self.micCaptureHealth.isMicStalled(
+                    at: now,
+                    timeout: self.micBufferStallTimeout
+                ) else { continue }
+
+                self.logger.error("Microphone audio callbacks stalled; rebuilding the microphone capture graph.")
+                self.micCaptureHealth.begin(at: now)
+                self.restartMicrophone()
+            }
+        }
+    }
+
+    private func stopAudioHealthMonitor() {
+        audioHealthTask?.cancel()
+        audioHealthTask = nil
+        micCaptureHealth.reset()
     }
 
     private func connectSTTProvider(

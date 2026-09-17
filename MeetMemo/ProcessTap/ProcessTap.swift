@@ -5,7 +5,10 @@ import AVFoundation
 
 enum TapTarget {
     case singleProcess(AudioProcess)
-    case systemAudio(processObjectIDs: [AudioObjectID])
+    /// Captures the global system mix while excluding the supplied processes.
+    /// A global tap automatically follows apps as they launch and quit, so callers do
+    /// not need to tear down Core Audio whenever the running-process list changes.
+    case systemAudio(excludedProcessObjectIDs: [AudioObjectID])
 
     var displayName: String {
         switch self {
@@ -137,12 +140,11 @@ final class ProcessTap {
         case .singleProcess(let process):
             tapDescription = CATapDescription(stereoMixdownOfProcesses: [process.objectID])
             logger.debug("Configuring tap for single process objectID: \(process.objectID)")
-        case .systemAudio(let processObjectIDs):
-            if processObjectIDs.isEmpty {
-                logger.warning("System audio tap configured with an empty list of processObjectIDs. This might not capture any audio or behave unexpectedly.")
-            }
-            tapDescription = CATapDescription(stereoMixdownOfProcesses: processObjectIDs)
-            logger.debug("Configuring tap for system audio output using \(processObjectIDs.count) explicit processes.")
+        case .systemAudio(let excludedProcessObjectIDs):
+            tapDescription = CATapDescription(
+                stereoGlobalTapButExcludeProcesses: excludedProcessObjectIDs
+            )
+            logger.debug("Configuring global system audio tap while excluding \(excludedProcessObjectIDs.count) processes.")
         }
         
         tapDescription.uuid = UUID()

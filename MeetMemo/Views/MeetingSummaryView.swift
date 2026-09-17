@@ -809,7 +809,7 @@ private struct TaskTableSection: View {
                     ownerChipView(task.owner)
                         .frame(width: 80, alignment: .leading)
 
-                    dueDateView(task.dueDate)
+                    dueDateView(task.dueDate, fallbackText: task.dueDateText)
                         .frame(width: 100, alignment: .leading)
                 }
                 .padding(.horizontal, 10)
@@ -852,7 +852,7 @@ private struct TaskTableSection: View {
     }
 
     @ViewBuilder
-    private func dueDateView(_ date: Date?) -> some View {
+    private func dueDateView(_ date: Date?, fallbackText: String) -> some View {
         if let date = date {
             let now = Date()
             let isOverdue = date < now
@@ -861,6 +861,11 @@ private struct TaskTableSection: View {
             Text(date, style: .date)
                 .font(.caption)
                 .foregroundStyle(color)
+        } else if !fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text(fallbackText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         } else {
             Text("—")
                 .font(.caption)

@@ -909,6 +909,7 @@ class MeetingViewModel: ObservableObject {
             updatedMeeting.openQuestions = result.openQuestions
             updatedMeeting.discussions = result.discussions
             updatedMeeting.milestones = result.milestones
+            mergeExtractedFollowUpTasks(result.followUpTasks, into: &updatedMeeting)
             updatedMeeting.structuredSummarySourceHash = updatedMeeting.structuredSummaryCurrentSourceHash
             updatedMeeting.structuredSummaryGeneratedAt = Date()
             savePersistedMeeting(updatedMeeting)
@@ -1147,11 +1148,14 @@ class MeetingViewModel: ObservableObject {
     }
 
     private func derivedFollowUpTasksFromStructuredSummary() -> [MeetingFollowUpTask] {
-        let questionTasks = meeting.openQuestions.map { question in
-            MeetingFollowUpTask(
-                title: question.nextStep.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? question.question
-                    : question.nextStep,
+        // Compatibility for summaries generated before `action_items` became
+        // part of the structured result. Only an explicit next step is a task;
+        // decisions and milestones are not automatically rewritten as work.
+        let questionTasks = meeting.openQuestions.compactMap { question -> MeetingFollowUpTask? in
+            let nextStep = question.nextStep.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !nextStep.isEmpty else { return nil }
+            return MeetingFollowUpTask(
+                title: nextStep,
                 detail: question.question,
                 sourceExcerpt: question.sourceExcerpt,
                 kind: .confirmation,
@@ -1160,31 +1164,7 @@ class MeetingViewModel: ObservableObject {
             )
         }
 
-        let milestoneTasks = meeting.milestones.map { milestone in
-            let title = milestone.targetDate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? milestone.title
-                : "\(milestone.title)（\(milestone.targetDate)）"
-            return MeetingFollowUpTask(
-                title: title,
-                detail: milestone.milestoneDescription,
-                sourceExcerpt: milestone.sourceExcerpt,
-                kind: .actionItem,
-                isManual: false
-            )
-        }
-
-        let decisionTasks = meeting.decisions.map { decision in
-            MeetingFollowUpTask(
-                title: "落实决策：\(decision.title)",
-                detail: decision.reason,
-                sourceExcerpt: decision.sourceExcerpt,
-                kind: .followUp,
-                owner: decision.owner,
-                isManual: false
-            )
-        }
-
-        return (questionTasks + milestoneTasks + decisionTasks).filter {
+        return questionTasks.filter {
             !$0.trimmedTitle.isEmpty
         }
     }

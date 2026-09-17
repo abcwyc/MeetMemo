@@ -71,22 +71,16 @@ class SettingsViewModel: ObservableObject {
     
     func saveSettings(showMessage: Bool = true) {
         let lang = LanguageManager.shared
-        // Validate that systemPrompt contains all required template placeholders
-        let requiredKeys = ["meeting_title", "meeting_date", "transcript", "user_blurb", "template_content"]
-        let contextKeys = ["meeting_context", "user_notes"]
-        let hasContextPlaceholder = contextKeys.contains { settings.systemPrompt.contains("{{\($0)}}") }
-        let missing = requiredKeys.filter { !settings.systemPrompt.contains("{{\($0)}}") }
-        if !missing.isEmpty || !hasContextPlaceholder {
-            var missingPlaceholders = missing.map { "{{\($0)}}" }
-            if !hasContextPlaceholder {
-                missingPlaceholders.append("{{meeting_context}}")
-            }
+        // Dynamic meeting data is now carried in the user message. The system
+        // prompt contains only durable behavior and accuracy rules, so it no
+        // longer needs data placeholders.
+        if settings.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if showMessage {
                 activeAlert = AlertMessage(
                     title: lang.t("设置保存失败", "Settings Save Failed"),
                     message: lang.t(
-                        "无法保存设置：系统提示词中缺少占位符 \(missingPlaceholders.joined(separator: ", "))",
-                        "Cannot save settings: missing placeholders \(missingPlaceholders.joined(separator: ", ")) in system prompt"
+                        "无法保存设置：系统提示词不能为空。",
+                        "Cannot save settings: the system prompt cannot be empty."
                     )
                 )
             }
