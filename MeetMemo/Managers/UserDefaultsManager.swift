@@ -134,9 +134,10 @@ class UserDefaultsManager {
     // MARK: - Markdown Theme
     var markdownTheme: MarkdownTheme {
         get {
-            // Preserve the GitHub style used before themes became configurable.
-            let raw = userDefaults.string(forKey: Keys.markdownTheme) ?? MarkdownTheme.github.rawValue
-            return MarkdownTheme(rawValue: raw) ?? .github
+            // MeetMemo is the app-matched default. An explicitly saved
+            // preference still wins, so existing user choices are preserved.
+            let raw = userDefaults.string(forKey: Keys.markdownTheme) ?? MarkdownTheme.meetMemo.rawValue
+            return MarkdownTheme(rawValue: raw) ?? .meetMemo
         }
         set { userDefaults.set(newValue.rawValue, forKey: Keys.markdownTheme) }
     }
