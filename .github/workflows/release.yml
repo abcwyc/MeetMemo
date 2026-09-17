@@ -43,6 +43,9 @@ jobs:
       - name: Fetch sherpa-onnx frameworks
         run: ./scripts/fetch_sherpa_frameworks.sh
 
+      # Same ad-hoc signing override as the release build below: the runner has
+      # no Developer ID or Mac Development certificate, and the test host still
+      # has to launch.
       - name: Run tests
         run: |
           xcodebuild \
@@ -50,6 +53,10 @@ jobs:
             -scheme MeetMemo \
             -configuration Debug \
             -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
             test
 
       # Ad-hoc signed ("-"), not Developer ID: this repository holds no signing
