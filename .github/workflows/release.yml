@@ -1,0 +1,94 @@
+name: Release
+
+# Manual only: publishing a release is a deliberate act, not something a
+# push should trigger. The version comes from the project file so the tag,
+# the app bundle and the asset name cannot drift apart.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+
+      - name: Read version from project
+        id: version
+        run: |
+          VERSION=$(grep -m1 "MARKETING_VERSION" MeetMemo.xcodeproj/project.pbxproj | sed 's/.*= \(.*\);/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "Could not read MARKETING_VERSION from the project file." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building MeetMemo $VERSION"
+
+      - name: Check release notes exist
+        run: |
+          NOTES=".github/release-notes/${{ steps.version.outputs.version }}.md"
+          if [ ! -f "$NOTES" ]; then
+            echo "Missing $NOTES — write the notes before publishing." >&2
+            exit 1
+          fi
+
+      - name: Fetch sherpa-onnx frameworks
+        run: ./scripts/fetch_sherpa_frameworks.sh
+
+      - name: Run tests
+        run: |
+          xcodebuild \
+            -project MeetMemo.xcodeproj \
+            -scheme MeetMemo \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            test
+
+      # Ad-hoc signed ("-"), not Developer ID: this repository holds no signing
+      # secrets. Apple silicon refuses to run a wholly unsigned binary, so the
+      # ad-hoc signature is what makes the build launchable at all. Downloaders
+      # still have to clear the quarantine attribute themselves.
+      - name: Build universal app
+        run: |
+          xcodebuild \
+            -project MeetMemo.xcodeproj \
+            -scheme MeetMemo \
+            -configuration Release \
+            -derivedDataPath build \
+            -destination 'generic/platform=macOS' \
+            ARCHS="arm64 x86_64" \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            clean build
+
+      - name: Verify the binary is universal
+        run: |
+          APP="build/Build/Products/Release/MeetMemo.app"
+          lipo -info "$APP/Contents/MacOS/MeetMemo"
+          codesign -dv "$APP" 2>&1 | head -5
+
+      - name: Package
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/Build/Products/Release/MeetMemo.app" \
+            "MeetMemo.${{ steps.version.outputs.version }}.zip"
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "MeetMemo ${{ steps.version.outputs.version }}" \
+            --notes-file ".github/release-notes/${{ steps.version.outputs.version }}.md" \
+            "MeetMemo.${{ steps.version.outputs.version }}.zip"
