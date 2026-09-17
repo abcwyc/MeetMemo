@@ -811,15 +811,28 @@ struct Meeting: Codable, Identifiable, Hashable {
         dataVersion = try container.decodeIfPresent(Int.self, forKey: .dataVersion) ?? 1
     }
 
+    /// Marks hashes taken from the AI notes. Digests saved before the source
+    /// switched from the transcript carry a bare hash of the transcript.
+    static let notesSourceHashPrefix = "notes-sha256:"
+
     var structuredSummaryCurrentSourceHash: String {
-        let sourceText = generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-        let digest = SHA256.hash(data: Data(sourceText.utf8))
-        return digest.map { String(format: "%02x", $0) }.joined()
+        Self.notesSourceHashPrefix + Self.sha256Hex(generatedNotes)
     }
 
     var isStructuredSummaryStale: Bool {
-        !structuredSummarySourceHash.isEmpty &&
-        structuredSummarySourceHash != structuredSummaryCurrentSourceHash
+        guard !structuredSummarySourceHash.isEmpty else { return false }
+        if structuredSummarySourceHash.hasPrefix(Self.notesSourceHashPrefix) {
+            return structuredSummarySourceHash != structuredSummaryCurrentSourceHash
+        }
+        // Legacy digest: keep comparing against the transcript it was hashed
+        // from, so upgrading doesn't flag every existing digest as stale.
+        return structuredSummarySourceHash != Self.sha256Hex(formattedTranscript)
+    }
+
+    private static func sha256Hex(_ text: String) -> String {
+        let sourceText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let digest = SHA256.hash(data: Data(sourceText.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
     var hasMeetingContext: Bool {

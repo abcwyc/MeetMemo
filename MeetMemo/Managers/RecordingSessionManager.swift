@@ -19,7 +19,9 @@ class RecordingSessionManager: ObservableObject {
     
     private let audioManager = AudioManager.shared
     private var cancellables = Set<AnyCancellable>()
-    private let transcriptUpdateSubject = PassthroughSubject<[TranscriptChunk], Never>()
+    /// Carries the meeting the chunks belong to: the debounce fires up to 2s later, by
+    /// which time a different meeting may be the active one.
+    private let transcriptUpdateSubject = PassthroughSubject<(meetingId: UUID, chunks: [TranscriptChunk]), Never>()
     private var isStoppingFromSessionManager = false
     private var hasObservedAudioRecordingStart = false
     private var activeSessionToken: UUID?
@@ -94,14 +96,14 @@ class RecordingSessionManager: ObservableObject {
         audioManager.$transcriptChunks
             .sink { [weak self] newChunks in
                 guard let self,
-                      self.activeMeetingId != nil,
+                      let activeMeetingId = self.activeMeetingId,
                       self.isRecording || self.isStoppingFromSessionManager else {
                     return
                 }
                 self.activeRecordingTranscriptChunks = newChunks
                 self.activeRecordingTranscriptChunksUpdated = newChunks
 
-                self.transcriptUpdateSubject.send(newChunks)
+                self.transcriptUpdateSubject.send((activeMeetingId, newChunks))
             }
             .store(in: &cancellables)
     }
@@ -109,10 +111,13 @@ class RecordingSessionManager: ObservableObject {
     private func setupDebouncedSaving() {
         transcriptUpdateSubject
             .debounce(for: .seconds(2), scheduler: DispatchQueue.main)
-            .sink { [weak self] chunks in
+            .sink { [weak self] update in
                 guard let self = self, let activeMeetingId = self.activeMeetingId else { return }
+                // A session that has since finished already saved its final transcript;
+                // never write its chunks into whichever meeting is recording now.
+                guard update.meetingId == activeMeetingId else { return }
                 print("💾 Debounced save triggered for meeting: \(activeMeetingId.uuidString)")
-                self.updateActiveMeetingTranscript(meetingId: activeMeetingId, chunks: chunks)
+                self.updateActiveMeetingTranscript(meetingId: activeMeetingId, chunks: update.chunks)
             }
             .store(in: &cancellables)
     }

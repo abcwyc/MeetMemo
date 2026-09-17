@@ -126,6 +126,10 @@ struct LLMStructuredOutputRequest: Hashable, Sendable {
     let jsonSchema: String
     let maxTokens: Int
 
+    /// Idle timeout for one non-streaming structured request. Several thousand
+    /// output tokens from a slower model routinely take longer than a minute.
+    static let requestTimeout: TimeInterval = 180
+
     init(name: String, jsonSchema: String, maxTokens: Int = 4096) {
         self.name = name
         self.jsonSchema = jsonSchema

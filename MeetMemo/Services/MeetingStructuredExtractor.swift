@@ -46,9 +46,10 @@ final class MeetingStructuredExtractor {
         self.client = client
     }
 
-    /// Default per-call timeout. Structured extraction returns a short JSON payload, so 60s
-    /// is generous; mainly guards against a hung connection.
-    static let defaultTimeout: TimeInterval = 60
+    /// Default budget for the whole extraction, including a retry after a truncated or
+    /// unparseable answer. The digest can run to thousands of output tokens returned
+    /// non-streaming, which slower providers take well over a minute to produce.
+    static let defaultTimeout: TimeInterval = 300
 
     func extract(from meeting: Meeting, timeout: TimeInterval = defaultTimeout) async throws -> StructuredSummaryResult {
         let generatedNotes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)

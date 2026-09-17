@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import MeetMemo
 
 final class MeetingStructuredExtractorTests: XCTestCase {
@@ -30,6 +31,21 @@ final class MeetingStructuredExtractorTests: XCTestCase {
         XCTAssertFalse(meeting.isStructuredSummaryStale)
 
         meeting.generatedNotes = "更新后的 AI 会议纪要"
+        XCTAssertTrue(meeting.isStructuredSummaryStale)
+    }
+
+    func testLegacyTranscriptHashIsNotStaleAfterUpgrade() {
+        var meeting = Meeting(
+            transcriptChunks: [TranscriptChunk(source: .mic, text: "旧版本生成摘要时的转录。", isFinal: true)],
+            generatedNotes: "旧版 AI 会议纪要"
+        )
+        // v0.63 hashed the formatted transcript without a prefix.
+        meeting.structuredSummarySourceHash = SHA256.hash(
+            data: Data(meeting.formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+        ).map { String(format: "%02x", $0) }.joined()
+        XCTAssertFalse(meeting.isStructuredSummaryStale)
+
+        meeting.transcriptChunks.append(TranscriptChunk(source: .mic, text: "之后追加的转录。", isFinal: true))
         XCTAssertTrue(meeting.isStructuredSummaryStale)
     }
 

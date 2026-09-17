@@ -217,7 +217,9 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
         let url = try buildRequestURL(config: config)
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
-        urlRequest.timeoutInterval = 60
+        // Non-streaming: no bytes arrive until the whole JSON is generated, so
+        // this idle timeout must cover the full generation time.
+        urlRequest.timeoutInterval = LLMStructuredOutputRequest.requestTimeout
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
@@ -626,7 +628,9 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
         let url = try buildRequestURL(config: config)
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
-        urlRequest.timeoutInterval = 60
+        // Non-streaming: no bytes arrive until the whole JSON is generated, so
+        // this idle timeout must cover the full generation time.
+        urlRequest.timeoutInterval = LLMStructuredOutputRequest.requestTimeout
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
