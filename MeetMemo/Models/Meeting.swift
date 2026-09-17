@@ -844,10 +844,51 @@ struct Meeting: Codable, Identifiable, Hashable {
         .joined(separator: "\n\n")
     }
 
+    /// Titles the app stamps on context records itself. They carry no user
+    /// intent, so they are dropped instead of promoted into the document. The
+    /// values are frozen: they only ever have to match cards already on disk,
+    /// and listing both languages keeps a card written before an in-app
+    /// language switch from being mistaken for a user-authored name.
+    private static let syntheticContextTitles: Set<String> = [
+        "手动补充", "Manual Context",
+        "记录", "Note"
+    ]
+
+    /// The name the user gave a context card, or nil when the title is only
+    /// one of the app's own defaults.
+    private static func authoredContextTitle(
+        of item: MeetingContextItem,
+        defaultTitle: String
+    ) -> String? {
+        let title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              title != defaultTitle,
+              !syntheticContextTitles.contains(title) else { return nil }
+        return title
+    }
+
+    /// Renders one legacy card as a section of the unified document. The new
+    /// workspace renders only the record's body, so a card's name has to move
+    /// into the Markdown itself or it stops being visible at all.
+    private static func contextSection(
+        for item: MeetingContextItem,
+        defaultTitle: String
+    ) -> String {
+        let body = item.extractedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let title = authoredContextTitle(of: item, defaultTitle: defaultTitle) else {
+            return body
+        }
+        return body.isEmpty ? "## \(title)" : "## \(title)\n\n\(body)"
+    }
+
     /// Returns the single Markdown document used by the meeting-context
     /// workspace, creating it when necessary. Older releases allowed several
     /// independent text cards; fold those cards into one document so no
     /// existing notes disappear when the new single-editor UI opens them.
+    ///
+    /// Runs on every visit to the workspace, so it must stay idempotent:
+    /// promoted names are cleared from `title` afterwards, which is what stops
+    /// a second visit from stacking another heading onto the same document.
     @discardableResult
     mutating func ensureUnifiedContextRecord(defaultTitle: String) -> UUID {
         let textItems = contextItems.filter { $0.kind == .text }
@@ -862,26 +903,32 @@ struct Meeting: Codable, Identifiable, Hashable {
             return item.id
         }
 
+        guard let primaryIndex = contextItems.firstIndex(where: { $0.id == primary.id }) else {
+            return primary.id
+        }
+
         guard textItems.count > 1 else {
-            if let index = contextItems.firstIndex(where: { $0.id == primary.id }),
-               contextItems[index].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                contextItems[index].title = defaultTitle
+            // Rewriting the body would fight the editor over the user's own
+            // trailing whitespace, so only touch it when there is a name to
+            // rescue.
+            if Meeting.authoredContextTitle(of: primary, defaultTitle: defaultTitle) != nil {
+                contextItems[primaryIndex].extractedText = Meeting.contextSection(
+                    for: primary,
+                    defaultTitle: defaultTitle
+                )
             }
+            contextItems[primaryIndex].title = defaultTitle
             return primary.id
         }
 
         let mergedMarkdown = textItems
-            .map(\.extractedText)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { Meeting.contextSection(for: $0, defaultTitle: defaultTitle) }
+            .filter { !$0.isEmpty }
             .joined(separator: "\n\n---\n\n")
         let mergedIds = Set(textItems.dropFirst().map(\.id))
 
-        if let primaryIndex = contextItems.firstIndex(where: { $0.id == primary.id }) {
-            contextItems[primaryIndex].extractedText = mergedMarkdown
-            if contextItems[primaryIndex].title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                contextItems[primaryIndex].title = defaultTitle
-            }
-        }
+        contextItems[primaryIndex].extractedText = mergedMarkdown
+        contextItems[primaryIndex].title = defaultTitle
         contextItems.removeAll { mergedIds.contains($0.id) }
         return primary.id
     }

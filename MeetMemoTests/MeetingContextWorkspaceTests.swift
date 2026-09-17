@@ -41,10 +41,43 @@ final class MeetingContextWorkspaceTests: XCTestCase {
         XCTAssertEqual(meeting.contextItems.filter { $0.kind == .file }, [attachment])
         XCTAssertEqual(
             meeting.contextItems.first(where: { $0.kind == .text })?.extractedText,
-            "# Agenda\n\nOpening\n\n---\n\n## Risks\n\nSchedule"
+            "## First\n\n# Agenda\n\nOpening\n\n---\n\n## Second\n\n## Risks\n\nSchedule"
         )
     }
 
+    func testEnsureUnifiedContextRecordDropsTitlesTheAppStampedItself() {
+        var meeting = Meeting(contextItems: [
+            MeetingContextItem(kind: .text, title: "手动补充", extractedText: "A"),
+            MeetingContextItem(kind: .text, title: "Manual Context", extractedText: "B")
+        ])
+
+        meeting.ensureUnifiedContextRecord(defaultTitle: "记录")
+
+        XCTAssertEqual(meeting.contextItems[0].extractedText, "A\n\n---\n\nB")
+    }
+
+    func testEnsureUnifiedContextRecordKeepsAnAuthoredNameOnASingleCard() {
+        var meeting = Meeting(contextItems: [
+            MeetingContextItem(kind: .text, title: "客户背景", extractedText: "Keep me")
+        ])
+
+        meeting.ensureUnifiedContextRecord(defaultTitle: "记录")
+
+        XCTAssertEqual(meeting.contextItems[0].extractedText, "## 客户背景\n\nKeep me")
+    }
+
+    func testEnsureUnifiedContextRecordLeavesAnUnnamedCardUntouched() {
+        var meeting = Meeting(contextItems: [
+            MeetingContextItem(kind: .text, title: "记录", extractedText: "Draft\n\n")
+        ])
+
+        meeting.ensureUnifiedContextRecord(defaultTitle: "记录")
+
+        XCTAssertEqual(meeting.contextItems[0].extractedText, "Draft\n\n")
+    }
+
+    /// The workspace re-runs this on every visit, so a promoted name must not
+    /// stack a fresh heading onto the document each time.
     func testEnsureUnifiedContextRecordIsIdempotent() {
         var meeting = Meeting(contextItems: [
             MeetingContextItem(kind: .text, title: "Existing", extractedText: "Keep me")
@@ -55,6 +88,19 @@ final class MeetingContextWorkspaceTests: XCTestCase {
 
         XCTAssertEqual(firstId, secondId)
         XCTAssertEqual(meeting.contextItems.count, 1)
-        XCTAssertEqual(meeting.contextItems[0].extractedText, "Keep me")
+        XCTAssertEqual(meeting.contextItems[0].extractedText, "## Existing\n\nKeep me")
+    }
+
+    /// Switching the app language changes `defaultTitle`, which must not make
+    /// an already-promoted record look like it carries a user-authored name.
+    func testEnsureUnifiedContextRecordIsIdempotentAcrossALanguageSwitch() {
+        var meeting = Meeting(contextItems: [
+            MeetingContextItem(kind: .text, title: "Existing", extractedText: "Keep me")
+        ])
+
+        meeting.ensureUnifiedContextRecord(defaultTitle: "记录")
+        meeting.ensureUnifiedContextRecord(defaultTitle: "Note")
+
+        XCTAssertEqual(meeting.contextItems[0].extractedText, "## Existing\n\nKeep me")
     }
 }
