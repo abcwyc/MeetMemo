@@ -1,6 +1,8 @@
 import { StrictMode, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AtomicCodeMirrorEditor } from '@atomic-editor/editor';
+import { Facet } from '@codemirror/state';
+import { EditorView, ViewPlugin } from '@codemirror/view';
 import '@atomic-editor/editor/styles.css';
 // Must come after the package's stylesheet — see the header comment in
 // overrides.css for why the order is load-bearing.
@@ -27,11 +29,47 @@ import './overrides.css';
 //   preserved). Swift is responsible for only bumping documentId on real
 //   document-identity changes — never per keystroke, or every edit would
 //   remount and lose cursor/undo history.
+// Swift -> JS: window.__meetmemoBridge.updateMarkdown({ documentId, markdown })
+//   Replaces the content of the already-mounted, read-only CodeMirror view.
+//   AI generation uses this path so streamed chunks keep the exact same
+//   renderer and selected theme as the editable document without remounting
+//   CodeMirror for every chunk.
 interface LoadPayload {
   documentId: string;
   markdown: string;
   readOnly: boolean;
 }
+
+interface MarkdownUpdatePayload {
+  documentId: string;
+  markdown: string;
+}
+
+interface ActiveEditor {
+  documentId: string;
+  view: EditorView;
+}
+
+const bridgeDocumentId = Facet.define<string, string>({
+  combine: (values) => values[0] ?? '',
+});
+
+let activeEditor: ActiveEditor | null = null;
+let editorReadyListener: ((editor: ActiveEditor) => void) | null = null;
+
+const bridgeViewPlugin = ViewPlugin.define((view) => {
+  const editor = {
+    documentId: view.state.facet(bridgeDocumentId),
+    view,
+  };
+  activeEditor = editor;
+  editorReadyListener?.(editor);
+  return {
+    destroy: () => {
+      if (activeEditor?.view === view) activeEditor = null;
+    },
+  };
+});
 
 declare global {
   interface Window {
@@ -44,6 +82,7 @@ declare global {
     };
     __meetmemoBridge?: {
       load: (payload: LoadPayload) => void;
+      updateMarkdown: (payload: MarkdownUpdatePayload) => void;
     };
   }
 }
@@ -55,6 +94,47 @@ function App() {
   // at best since markdownSource is mount-only, so we just skip posting it
   // back to Swift as a no-op change) from an incoming Swift-driven update.
   const lastEmittedRef = useRef<string | null>(null);
+  const activeDocumentIdRef = useRef<string | null>(null);
+  const pendingMarkdownUpdateRef = useRef<MarkdownUpdatePayload | null>(null);
+
+  const applyMarkdownUpdate = (editor: ActiveEditor, payload: MarkdownUpdatePayload) => {
+    if (payload.documentId !== editor.documentId) return;
+
+    const { view } = editor;
+    const currentMarkdown = view.state.doc.toString();
+    if (currentMarkdown === payload.markdown) return;
+
+    const scroller = view.scrollDOM;
+    const wasFollowingTail =
+      scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 48;
+
+    // Prevent the programmatic replacement from being echoed back to
+    // Swift as though it were a user edit.
+    lastEmittedRef.current = payload.markdown;
+    let sharedPrefixLength = 0;
+    const prefixLimit = Math.min(currentMarkdown.length, payload.markdown.length);
+    while (
+      sharedPrefixLength < prefixLimit &&
+      currentMarkdown.charCodeAt(sharedPrefixLength) ===
+        payload.markdown.charCodeAt(sharedPrefixLength)
+    ) {
+      sharedPrefixLength += 1;
+    }
+
+    view.dispatch({
+      changes: {
+        from: sharedPrefixLength,
+        to: view.state.doc.length,
+        insert: payload.markdown.slice(sharedPrefixLength),
+      },
+    });
+
+    if (wasFollowingTail) {
+      requestAnimationFrame(() => {
+        scroller.scrollTop = scroller.scrollHeight;
+      });
+    }
+  };
 
   useEffect(() => {
     // Theme (palette + type scale) is pushed in natively by
@@ -63,6 +143,8 @@ function App() {
     // the system-level media query isn't the authority here.
     window.__meetmemoBridge = {
       load: (payload) => {
+        activeDocumentIdRef.current = payload.documentId;
+        pendingMarkdownUpdateRef.current = null;
         lastEmittedRef.current = payload.markdown;
         // React keeps the old tree painted until this update commits, so an
         // additional fade/delay only makes a local document switch look like
@@ -70,6 +152,26 @@ function App() {
         // in the same commit instead.
         setDoc(payload);
       },
+      updateMarkdown: (payload) => {
+        if (payload.documentId !== activeDocumentIdRef.current) return;
+        if (!activeEditor || activeEditor.documentId !== payload.documentId) {
+          // `load` updates React asynchronously. Keep only the latest chunk
+          // until the CodeMirror view for that document has actually mounted.
+          pendingMarkdownUpdateRef.current = payload;
+          return;
+        }
+        applyMarkdownUpdate(activeEditor, payload);
+      },
+    };
+    editorReadyListener = (editor) => {
+      const pending = pendingMarkdownUpdateRef.current;
+      if (
+        !pending ||
+        pending.documentId !== editor.documentId ||
+        pending.documentId !== activeDocumentIdRef.current
+      ) return;
+      pendingMarkdownUpdateRef.current = null;
+      applyMarkdownUpdate(editor, pending);
     };
     // Tell Swift the bridge object actually exists now, so it knows it's
     // safe to call window.__meetmemoBridge.load(...) — see
@@ -81,6 +183,7 @@ function App() {
     window.webkit?.messageHandlers?.editorReady?.postMessage('');
 
     return () => {
+      editorReadyListener = null;
       delete window.__meetmemoBridge;
     };
   }, []);
@@ -105,6 +208,7 @@ function App() {
         documentId={doc.documentId}
         markdownSource={doc.markdown}
         readOnly={doc.readOnly}
+        extensions={[bridgeDocumentId.of(doc.documentId), bridgeViewPlugin]}
         onMarkdownChange={handleChange}
         onLinkClick={(url) => {
           // Hand off to Swift (NSWorkspace.shared.open) — a bare WKWebView has

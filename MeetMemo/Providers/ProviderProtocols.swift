@@ -112,6 +112,12 @@ protocol LLMProvider {
         messages: [ChatMessage]
     ) -> AsyncThrowingStream<String, Error>
 
+    func chatCompletionsStreamThrowing(
+        config: LLMProviderConfig,
+        messages: [ChatMessage],
+        maxTokens: Int
+    ) -> AsyncThrowingStream<String, Error>
+
     func testConnection(config: LLMProviderConfig) async throws
 }
 
@@ -143,7 +149,7 @@ enum LLMCompletionError: LocalizedError {
         case .emptyResponse:
             return "LLM 服务没有返回可用内容，请稍后重试。"
         case .truncated:
-            return "LLM 输出达到长度上限，结构化摘要未完整生成。"
+            return "LLM 输出达到长度上限，内容未完整生成。"
         case .invalidResponse:
             return "LLM 服务返回了无法识别的响应格式。"
         }
@@ -151,6 +157,16 @@ enum LLMCompletionError: LocalizedError {
 }
 
 extension LLMProvider {
+    /// Compatibility path for providers and test doubles that do not expose
+    /// a configurable output budget. Concrete network providers override it.
+    func chatCompletionsStreamThrowing(
+        config: LLMProviderConfig,
+        messages: [ChatMessage],
+        maxTokens: Int
+    ) -> AsyncThrowingStream<String, Error> {
+        chatCompletionsStreamThrowing(config: config, messages: messages)
+    }
+
     /// Default compatibility path for test doubles and third-party providers.
     /// `LLMClient` overrides this with provider-native JSON schema/tool calling.
     func completeStructuredJSON(

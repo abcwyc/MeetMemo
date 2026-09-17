@@ -33,11 +33,31 @@ final class LLMClient: LLMProvider {
         config: LLMProviderConfig,
         messages: [ChatMessage]
     ) -> AsyncThrowingStream<String, Error> {
+        chatCompletionsStreamThrowing(
+            config: config,
+            messages: messages,
+            maxTokens: 8192
+        )
+    }
+
+    func chatCompletionsStreamThrowing(
+        config: LLMProviderConfig,
+        messages: [ChatMessage],
+        maxTokens: Int
+    ) -> AsyncThrowingStream<String, Error> {
         switch config.apiStyle {
         case .anthropicMessages:
-            return AnthropicMessagesLLMProvider().chatCompletionsStreamThrowing(config: config, messages: messages)
+            return AnthropicMessagesLLMProvider().chatCompletionsStreamThrowing(
+                config: config,
+                messages: messages,
+                maxTokens: maxTokens
+            )
         case .openAICompatibleChatCompletions:
-            return OpenAICompatibleLLMProvider().chatCompletionsStreamThrowing(config: config, messages: messages)
+            return OpenAICompatibleLLMProvider().chatCompletionsStreamThrowing(
+                config: config,
+                messages: messages,
+                maxTokens: maxTokens
+            )
         }
     }
 
@@ -77,6 +97,18 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
         config: LLMProviderConfig,
         messages: [ChatMessage]
     ) -> AsyncThrowingStream<String, Error> {
+        chatCompletionsStreamThrowing(
+            config: config,
+            messages: messages,
+            maxTokens: 8192
+        )
+    }
+
+    func chatCompletionsStreamThrowing(
+        config: LLMProviderConfig,
+        messages: [ChatMessage],
+        maxTokens: Int
+    ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -86,7 +118,12 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
                     request.timeoutInterval = 60
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-                    request.httpBody = try buildRequestBody(config: config, messages: messages, stream: true)
+                    request.httpBody = try buildRequestBody(
+                        config: config,
+                        messages: messages,
+                        stream: true,
+                        maxTokens: maxTokens
+                    )
                     request.setValue(config.apiKey, forHTTPHeaderField: "x-api-key")
                     request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
 
@@ -409,6 +446,18 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
         config: LLMProviderConfig,
         messages: [ChatMessage]
     ) -> AsyncThrowingStream<String, Error> {
+        chatCompletionsStreamThrowing(
+            config: config,
+            messages: messages,
+            maxTokens: 8192
+        )
+    }
+
+    func chatCompletionsStreamThrowing(
+        config: LLMProviderConfig,
+        messages: [ChatMessage],
+        maxTokens: Int
+    ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
@@ -419,7 +468,12 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
-                    request.httpBody = try buildRequestBody(config: config, messages: messages, stream: true)
+                    request.httpBody = try buildRequestBody(
+                        config: config,
+                        messages: messages,
+                        stream: true,
+                        maxTokens: maxTokens
+                    )
 
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
 

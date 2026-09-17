@@ -812,7 +812,7 @@ struct Meeting: Codable, Identifiable, Hashable {
     }
 
     var structuredSummaryCurrentSourceHash: String {
-        let sourceText = formattedTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sourceText = generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
         let digest = SHA256.hash(data: Data(sourceText.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }

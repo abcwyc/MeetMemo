@@ -2,6 +2,37 @@ import XCTest
 @testable import MeetMemo
 
 final class MeetingStructuredExtractorTests: XCTestCase {
+    func testUserPromptUsesGeneratedNotesWithoutTranscript() {
+        let meeting = Meeting(
+            title: "项目例会",
+            transcriptChunks: [
+                TranscriptChunk(source: .mic, text: "这段转录原文不应发送给行动摘要提取。")
+            ],
+            generatedNotes: "## 决策\n采用分阶段发布。"
+        )
+
+        let prompt = MeetingStructuredExtractor.userPrompt(
+            generatedNotes: meeting.generatedNotes
+        )
+
+        XCTAssertTrue(prompt.contains("采用分阶段发布"))
+        XCTAssertFalse(prompt.contains("这段转录原文不应发送给行动摘要提取"))
+        XCTAssertTrue(prompt.contains("行动摘要的唯一内容来源"))
+    }
+
+    func testStructuredSummaryStalenessTracksGeneratedNotesInsteadOfTranscript() {
+        var meeting = Meeting(generatedNotes: "初版 AI 会议纪要")
+        meeting.structuredSummarySourceHash = meeting.structuredSummaryCurrentSourceHash
+
+        meeting.transcriptChunks = [
+            TranscriptChunk(source: .mic, text: "转录内容发生变化。")
+        ]
+        XCTAssertFalse(meeting.isStructuredSummaryStale)
+
+        meeting.generatedNotes = "更新后的 AI 会议纪要"
+        XCTAssertTrue(meeting.isStructuredSummaryStale)
+    }
+
     func testDecodeResultParsesStructuredSummary() throws {
         let response = """
         ```json

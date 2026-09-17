@@ -54,18 +54,21 @@ See the contract documented at the top of `src/main.tsx` and in
   `documentId` with a different `readOnly` reconfigures the live view in
   place (no remount, scroll/cursor preserved) — this is how the edit/preview
   toggle works without losing your place.
+- **Swift → JS (streaming)**:
+  `window.__meetmemoBridge.updateMarkdown({ documentId, markdown })` updates the
+  mounted read-only CodeMirror document in place. AI output therefore uses the
+  same renderer and selected theme as the finished editable note without a
+  remount for every streamed chunk.
 - **JS → Swift**: `window.webkit.messageHandlers.markdownChanged.postMessage(text)`
   on every edit, and `.linkClicked.postMessage(url)` when a rendered link is
   clicked (opened via `NSWorkspace`, since a bare `WKWebView` has no window
   chrome for `window.open` to target).
 
-`markdownSource` is read only at `AtomicCodeMirrorEditor` mount time — there
-is no "push new text into an already-mounted editor" API in the library
-itself, only the `documentId`-triggered remount above. That's why active AI
-note *streaming* still renders through the plain SwiftUI `RenderedNotesView`
-(cheap re-render per published chunk) rather than this editor — mounting a
-CM6 instance per streamed token would be constant, janky remounts. The web
-editor mounts once streaming settles.
+`markdownSource` is read only at `AtomicCodeMirrorEditor` mount time. For AI
+streaming, a small CodeMirror view plugin exposes the mounted view to the
+bridge so Swift-driven replacements can be dispatched directly while the
+editor is read-only. Ordinary document swaps still use `load` and remount on
+a changed `documentId`.
 
 ## Known limitation carried over from the design discussion
 

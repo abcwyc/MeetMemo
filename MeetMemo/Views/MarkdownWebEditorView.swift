@@ -11,16 +11,14 @@ import WebKit
 ///
 /// `documentId` is the core of the contract with the JS side:
 /// `markdownSource` is read only once, at the underlying CodeMirror view's
-/// mount time — there is no API to push new text into an already-mounted
-/// editor except by changing `documentId`, which forces a full remount
-/// (fresh content, but loses cursor/scroll/undo history). Callers must
-/// therefore only change `documentId` on a genuine new-document boundary
-/// (switching meetings, a freshly-completed AI generation) — never per
-/// keystroke, or every edit would remount the editor out from under the
-/// user's cursor. The same `documentId` with a different `readOnly`
-/// reconfigures the live view in place instead (no remount) — that's how
-/// the edit/preview toggle works without losing scroll position, which is
-/// strictly better than the old implementation's two-separate-views swap.
+/// mount time. Ordinary document replacements therefore change `documentId`
+/// and force a full remount (fresh content, but no old cursor/undo state).
+/// Callers must only change it on genuine document boundaries — never per
+/// keystroke. The same `documentId` with a different `readOnly` reconfigures
+/// the live view in place. AI streaming is the one additional path: while
+/// read-only, app-driven text is dispatched through the bridge directly into
+/// the mounted CodeMirror document so every chunk keeps the final theme and
+/// layout without repeated remounts.
 ///
 /// The coordinator additionally reloads when `text` changes *without* the
 /// caller changing `documentId` and without the change having come from the
@@ -32,6 +30,10 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     @Binding var text: String
     let documentId: String
     var readOnly: Bool
+    /// Applies app-driven text changes to the mounted CodeMirror document
+    /// without remounting it. Used while AI notes stream in so generation
+    /// and editing share the exact same theme and layout.
+    var streamsExternalTextUpdates: Bool = false
     /// Increment to move keyboard focus into the CodeMirror editing surface.
     /// Keeping this separate from `documentId` avoids remounting the document
     /// merely because the user reselected the context tab or clicked Add Note.
@@ -75,7 +77,12 @@ struct MarkdownWebEditorView: NSViewRepresentable {
             theme: markdownThemeManager.theme,
             isDark: colorScheme == .dark
         )
-        context.coordinator.sync(documentId: documentId, markdown: text, readOnly: readOnly)
+        context.coordinator.sync(
+            documentId: documentId,
+            markdown: text,
+            readOnly: readOnly,
+            streamsExternalTextUpdates: streamsExternalTextUpdates
+        )
         context.coordinator.requestFocus(focusRequest)
     }
 
@@ -144,13 +151,16 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         /// Called on every SwiftUI update pass (including ones triggered by
         /// this editor's own typing echoing back through the binding). Only
         /// actually talks to JS when something meaningful changed —
-        /// `documentId` (new document: push fresh content) or `readOnly`
-        /// (toggle, same document: push without remounting). A same-
-        /// document, same-readOnly call (the common case: every keystroke)
-        /// is a no-op here, since re-pushing `markdownSource` for an
-        /// unchanged `documentId` would be ignored by the library anyway
-        /// (mount-time-only) and would just waste a JS round-trip.
-        func sync(documentId: String, markdown: String, readOnly: Bool) {
+        /// `documentId` (new document: push fresh content), `readOnly`
+        /// (toggle in place), or app-driven streaming text (dispatch into the
+        /// mounted read-only document). A same-document user-edit echo is a
+        /// no-op so typing never remounts the editor.
+        func sync(
+            documentId: String,
+            markdown: String,
+            readOnly: Bool,
+            streamsExternalTextUpdates: Bool
+        ) {
             let state = MarkdownEditorDocumentState(documentId: documentId, markdown: markdown, readOnly: readOnly)
             let action = MarkdownEditorSyncPolicy.action(
                 for: state,
@@ -162,6 +172,16 @@ struct MarkdownWebEditorView: NSViewRepresentable {
 
             guard isBridgeReady else {
                 pendingLoad = state
+                return
+            }
+
+            if remount,
+               streamsExternalTextUpdates,
+               let lastLoaded,
+               lastLoaded.documentId == state.documentId,
+               lastLoaded.readOnly == state.readOnly,
+               activeBridgeDocumentId != nil {
+                updateMarkdownInPlace(state)
                 return
             }
             push(state, remount: remount)
@@ -252,6 +272,26 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                   let json = String(data: data, encoding: .utf8) else { return }
             activeBridgeDocumentId = bridgeDocumentId
             webView?.evaluateJavaScript("window.__meetmemoBridge && window.__meetmemoBridge.load(\(json));")
+        }
+
+        private func updateMarkdownInPlace(_ state: MarkdownEditorDocumentState) {
+            guard let activeBridgeDocumentId else { return }
+            lastLoaded = state
+
+            struct Payload: Encodable {
+                let documentId: String
+                let markdown: String
+            }
+
+            let payload = Payload(
+                documentId: activeBridgeDocumentId,
+                markdown: state.markdown
+            )
+            guard let data = try? JSONEncoder().encode(payload),
+                  let json = String(data: data, encoding: .utf8) else { return }
+            webView?.evaluateJavaScript(
+                "window.__meetmemoBridge && window.__meetmemoBridge.updateMarkdown(\(json));"
+            )
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {

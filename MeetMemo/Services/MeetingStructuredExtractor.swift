@@ -10,7 +10,7 @@ enum StructuredExtractionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingNotes:
-            return "当前会议还没有可用于结构化提取的转录原文。"
+            return "当前会议还没有可用于生成行动摘要的 AI 会议纪要。"
         case .llmNotConfigured:
             return "LLM 服务尚未配置，无法提取结构化摘要。"
         case .invalidResponse:
@@ -51,11 +51,8 @@ final class MeetingStructuredExtractor {
     static let defaultTimeout: TimeInterval = 60
 
     func extract(from meeting: Meeting, timeout: TimeInterval = defaultTimeout) async throws -> StructuredSummaryResult {
-        // 压缩超长转录，避免结构化提取的 prompt 超出模型上下文窗口。
-        let transcript = TranscriptBudget.fit(
-            meeting.compactTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-        ).text
-        guard !transcript.isEmpty else {
+        let generatedNotes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !generatedNotes.isEmpty else {
             throw StructuredExtractionError.missingNotes
         }
 
@@ -73,11 +70,7 @@ final class MeetingStructuredExtractor {
             ChatMessage(role: "system", content: Self.systemPrompt),
             ChatMessage(
                 role: "user",
-                content: Self.userPrompt(
-                    meeting: meeting,
-                    generatedNotes: meeting.generatedNotes,
-                    transcript: transcript
-                )
+                content: Self.userPrompt(generatedNotes: generatedNotes)
             )
         ]
 
@@ -117,11 +110,25 @@ final class MeetingStructuredExtractor {
 
         for attempt in 1...2 {
             try Task.checkCancellation()
-            let completion = try await client.completeStructuredJSON(
-                config: config,
-                messages: attemptMessages,
-                request: structuredOutputRequest
-            )
+            let maxTokens = attempt == 1 ? 8_192 : 12_288
+            let completion: LLMCompletionResponse
+            do {
+                completion = try await client.completeStructuredJSON(
+                    config: config,
+                    messages: attemptMessages,
+                    request: structuredOutputRequest(maxTokens: maxTokens)
+                )
+            } catch LLMCompletionError.truncated {
+                logger.warning(
+                    "Structured JSON reached output limit; attempt=\(attempt, privacy: .public) maxTokens=\(maxTokens, privacy: .public)"
+                )
+                guard attempt == 1 else { throw LLMCompletionError.truncated }
+                attemptMessages.append(ChatMessage(
+                    role: "user",
+                    content: "上一次输出达到长度上限。请显著压缩表述，只保留最重要的信息并返回完整 JSON；不要重复内容，每个字符串严格遵守字数限制。"
+                ))
+                continue
+            }
 
             do {
                 return try decodeResult(from: completion.content)
@@ -140,26 +147,32 @@ final class MeetingStructuredExtractor {
         throw StructuredExtractionError.invalidResponse
     }
 
-    private static let structuredOutputRequest = LLMStructuredOutputRequest(
-        name: "meeting_action_digest",
-        jsonSchema: """
+    private static func structuredOutputRequest(maxTokens: Int) -> LLMStructuredOutputRequest {
+        LLMStructuredOutputRequest(
+            name: "meeting_action_digest",
+            jsonSchema: structuredOutputSchema,
+            maxTokens: maxTokens
+        )
+    }
+
+    private static let structuredOutputSchema = """
         {
           "type": "object",
           "additionalProperties": false,
           "required": ["one_liner", "host", "location", "discussions", "decisions", "action_items", "risks", "open_questions", "milestones"],
           "properties": {
-            "one_liner": { "type": "string" },
-            "host": { "type": "string" },
-            "location": { "type": "string" },
+            "one_liner": { "type": "string", "maxLength": 80 },
+            "host": { "type": "string", "maxLength": 80 },
+            "location": { "type": "string", "maxLength": 80 },
             "discussions": {
               "type": "array", "maxItems": 3,
               "items": {
                 "type": "object", "additionalProperties": false,
                 "required": ["title", "summary", "consensus", "has_consensus", "source_excerpt"],
                 "properties": {
-                  "title": { "type": "string" }, "summary": { "type": "string" },
-                  "consensus": { "type": "string" }, "has_consensus": { "type": "boolean" },
-                  "source_excerpt": { "type": "string" }
+                  "title": { "type": "string", "maxLength": 100 }, "summary": { "type": "string", "maxLength": 300 },
+                  "consensus": { "type": "string", "maxLength": 200 }, "has_consensus": { "type": "boolean" },
+                  "source_excerpt": { "type": "string", "maxLength": 160 }
                 }
               }
             },
@@ -169,9 +182,9 @@ final class MeetingStructuredExtractor {
                 "type": "object", "additionalProperties": false,
                 "required": ["title", "owner", "reason", "confidence", "source_excerpt"],
                 "properties": {
-                  "title": { "type": "string" }, "owner": { "type": "string" },
-                  "reason": { "type": "string" }, "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
-                  "source_excerpt": { "type": "string" }
+                  "title": { "type": "string", "maxLength": 100 }, "owner": { "type": "string", "maxLength": 80 },
+                  "reason": { "type": "string", "maxLength": 200 }, "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+                  "source_excerpt": { "type": "string", "maxLength": 160 }
                 }
               }
             },
@@ -181,12 +194,12 @@ final class MeetingStructuredExtractor {
                 "type": "object", "additionalProperties": false,
                 "required": ["title", "detail", "owner", "kind", "due_date_text", "confidence", "source_excerpt"],
                 "properties": {
-                  "title": { "type": "string" }, "detail": { "type": "string" },
-                  "owner": { "type": "string" },
+                  "title": { "type": "string", "maxLength": 100 }, "detail": { "type": "string", "maxLength": 240 },
+                  "owner": { "type": "string", "maxLength": 80 },
                   "kind": { "type": "string", "enum": ["actionItem", "confirmation", "followUp"] },
-                  "due_date_text": { "type": "string" },
+                  "due_date_text": { "type": "string", "maxLength": 80 },
                   "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
-                  "source_excerpt": { "type": "string" }
+                  "source_excerpt": { "type": "string", "maxLength": 160 }
                 }
               }
             },
@@ -196,8 +209,8 @@ final class MeetingStructuredExtractor {
                 "type": "object", "additionalProperties": false,
                 "required": ["title", "severity", "mitigation", "owner", "source_excerpt"],
                 "properties": {
-                  "title": { "type": "string" }, "severity": { "type": "string", "enum": ["high", "medium", "low"] },
-                  "mitigation": { "type": "string" }, "owner": { "type": "string" }, "source_excerpt": { "type": "string" }
+                  "title": { "type": "string", "maxLength": 100 }, "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+                  "mitigation": { "type": "string", "maxLength": 240 }, "owner": { "type": "string", "maxLength": 80 }, "source_excerpt": { "type": "string", "maxLength": 160 }
                 }
               }
             },
@@ -207,8 +220,8 @@ final class MeetingStructuredExtractor {
                 "type": "object", "additionalProperties": false,
                 "required": ["question", "owner", "next_step", "source_excerpt"],
                 "properties": {
-                  "question": { "type": "string" }, "owner": { "type": "string" },
-                  "next_step": { "type": "string" }, "source_excerpt": { "type": "string" }
+                  "question": { "type": "string", "maxLength": 200 }, "owner": { "type": "string", "maxLength": 80 },
+                  "next_step": { "type": "string", "maxLength": 200 }, "source_excerpt": { "type": "string", "maxLength": 160 }
                 }
               }
             },
@@ -218,25 +231,23 @@ final class MeetingStructuredExtractor {
                 "type": "object", "additionalProperties": false,
                 "required": ["title", "description", "target_date", "source_excerpt"],
                 "properties": {
-                  "title": { "type": "string" }, "description": { "type": "string" },
-                  "target_date": { "type": "string" }, "source_excerpt": { "type": "string" }
+                  "title": { "type": "string", "maxLength": 100 }, "description": { "type": "string", "maxLength": 240 },
+                  "target_date": { "type": "string", "maxLength": 80 }, "source_excerpt": { "type": "string", "maxLength": 160 }
                 }
               }
             }
           }
         }
-        """,
-        maxTokens: 6144
-    )
+        """
 
     private static let systemPrompt = """
-你是一个会议转录结构化提取助手。请只从会议转录原文中提取关键结构化信息。
+你是一个会议纪要结构化提取助手。请只从 AI 生成的会议纪要中提取关键结构化信息，用于生成行动摘要。
 只输出 JSON，不要输出 Markdown、解释或代码块。
 
 JSON 必须是如下对象结构：
 {
   "one_liner": "30到50字的会议总结，说明主要讨论内容，并尽量带出关键决策或待办",
-  "host": "会议主持人或发起人，从会议转录原文中提取，无法判断则为空字符串",
+  "host": "会议主持人或发起人，从 AI 会议纪要中提取，无法判断则为空字符串",
   "location": "会议地点，如'线上'、'北京办公室'等，无法判断则为空字符串",
   "discussions": [
     {
@@ -244,7 +255,7 @@ JSON 必须是如下对象结构：
       "summary": "该议题的讨论过程摘要，包括主要观点和分歧（如有），不超过120字",
       "consensus": "该议题最终达成的共识或明确结论，没有则为空字符串",
       "has_consensus": true,
-      "source_excerpt": "会议转录原文中支持该议题的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "AI 会议纪要中支持该议题的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "decisions": [
@@ -253,7 +264,7 @@ JSON 必须是如下对象结构：
       "owner": "决策人或责任方，没有则为空字符串",
       "reason": "决策原因或背景，没有则为空字符串",
       "confidence": "high 或 medium 或 low",
-      "source_excerpt": "会议转录原文中支持该决策的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "AI 会议纪要中支持该决策的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "action_items": [
@@ -262,9 +273,9 @@ JSON 必须是如下对象结构：
       "detail": "任务补充说明，没有则为空字符串",
       "owner": "负责人，没有则为空字符串",
       "kind": "actionItem、confirmation 或 followUp",
-      "due_date_text": "截止时间的原文表述，没有则为空字符串",
+      "due_date_text": "截止时间在 AI 会议纪要中的表述，没有则为空字符串",
       "confidence": "high、medium 或 low",
-      "source_excerpt": "会议转录原文中支持该待办的相关原文短句，不超过80字"
+      "source_excerpt": "AI 会议纪要中支持该待办的相关原文短句，不超过80字"
     }
   ],
   "risks": [
@@ -273,7 +284,7 @@ JSON 必须是如下对象结构：
       "severity": "high 或 medium 或 low",
       "mitigation": "缓解措施，没有则为空字符串",
       "owner": "风险负责人，没有则为空字符串",
-      "source_excerpt": "会议转录原文中支持该风险的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "AI 会议纪要中支持该风险的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "open_questions": [
@@ -281,15 +292,15 @@ JSON 必须是如下对象结构：
       "question": "待确认问题描述",
       "owner": "负责确认的人，没有则为空字符串",
       "next_step": "下一步行动，没有则为空字符串",
-      "source_excerpt": "会议转录原文中支持该问题的相关原文短句，不超过80字，没有则为空字符串"
+      "source_excerpt": "AI 会议纪要中支持该问题的相关原文短句，不超过80字，没有则为空字符串"
     }
   ],
   "milestones": [
     {
       "title": "里程碑名称，简洁",
       "description": "主要交付内容或目标，没有则为空字符串",
-      "target_date": "目标时间，直接使用原文表述如'5月底'、'下周五'，没有则为空字符串",
-      "source_excerpt": "会议转录原文中支持该里程碑的相关原文短句，不超过80字，没有则为空字符串"
+      "target_date": "目标时间，直接使用 AI 会议纪要中的表述如'5月底'、'下周五'，没有则为空字符串",
+      "source_excerpt": "AI 会议纪要中支持该里程碑的相关原文短句，不超过80字，没有则为空字符串"
     }
   ]
 }
@@ -305,24 +316,15 @@ JSON 必须是如下对象结构：
 - decisions、risks、open_questions、milestones 每类最多 5 条，只保留最重要内容。
 - one_liner 必须存在，不能为空字符串，控制在30到50个汉字左右。
 - one_liner 要帮助读者快速回忆这次会议讨论了什么；优先写清核心议题，并尽量补充最关键的决策、结论或待办，不要只写成标题式短语。
-- host 和 location 若无法从转录原文中判断，返回空字符串。
-- 「AI 会议纪要」只用于帮助定位重点，不可作为事实依据。
-- 只能使用「会议转录原文」作为事实依据。不要参考 AI 纪要、会议资料或其他外部信息。
-- source_excerpt 必须摘自会议转录原文。不要为无依据的信息编造 source_excerpt。
+- host 和 location 若无法从 AI 会议纪要中判断，返回空字符串。
+- 只能使用「AI 会议纪要」作为事实依据。不要参考转录原文、会议资料或其他外部信息补充事实。
+- source_excerpt 必须摘自 AI 会议纪要。不要为无依据的信息编造 source_excerpt。
 """
 
-    private static func userPrompt(meeting: Meeting, generatedNotes: String, transcript: String) -> String {
-        let trimmedNotes = generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
-
+    static func userPrompt(generatedNotes: String) -> String {
         return """
-会议标题：\(meeting.title.isEmpty ? "未命名会议" : meeting.title)
-会议日期：\(meeting.date.formatted(date: .long, time: .shortened))
-
-AI 会议纪要（仅用于快速定位重点，不可作为事实依据）：
-\(trimmedNotes.isEmpty ? "无" : trimmedNotes)
-
-会议转录原文（唯一事实依据，已省略时间戳和音源标签）：
-\(transcript)
+AI 会议纪要（行动摘要的唯一内容来源）：
+\(generatedNotes)
 """
     }
 

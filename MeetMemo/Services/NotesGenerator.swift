@@ -14,6 +14,11 @@ enum GenerationResult {
 /// Generates meeting notes using the configured LLM provider
 final class NotesGenerator {
     static let shared = NotesGenerator(client: LLMClient())
+    /// Long-form notes need more room than utility completions. The previous
+    /// shared 8K cap could truncate an otherwise successful generation.
+    static let notesOutputTokenBudget = 16_384
+    static let evidenceOutputTokenBudget = 4_096
+    static let titleOutputTokenBudget = 256
 
     private let client: LLMProvider
 
@@ -128,16 +133,32 @@ final class NotesGenerator {
                 }
 
                 do {
-                    let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)
                     let sanitizer = NotesStreamSanitizer()
                     var receivedContent = false
 
-                    for try await chunk in stream {
-                        receivedContent = true
-                        let cleaned = sanitizer.process(chunk)
-                        if !cleaned.isEmpty {
-                            continuation.yield(.content(cleaned))
+                    func consumeStream(maxTokens: Int) async throws {
+                        let stream = client.chatCompletionsStreamThrowing(
+                            config: config,
+                            messages: messages,
+                            maxTokens: maxTokens
+                        )
+                        for try await chunk in stream {
+                            receivedContent = true
+                            let cleaned = sanitizer.process(chunk)
+                            if !cleaned.isEmpty {
+                                continuation.yield(.content(cleaned))
+                            }
                         }
+                    }
+
+                    do {
+                        try await consumeStream(maxTokens: Self.notesOutputTokenBudget)
+                    } catch where !receivedContent && Self.isOutputBudgetRejected(error) {
+                        // Some OpenAI-compatible gateways reject a requested
+                        // max_tokens value above the model's own ceiling. The
+                        // concise prompt still fits the legacy 8K budget, so
+                        // retry before any visible content has been emitted.
+                        try await consumeStream(maxTokens: 8_192)
                     }
 
                     let tail = sanitizer.flush()
@@ -151,7 +172,15 @@ final class NotesGenerator {
 
                     continuation.finish()
                 } catch {
-                    let errorMessage = ErrorHandler.shared.handleError(error)
+                    let errorMessage: String
+                    if case LLMCompletionError.truncated = error {
+                        errorMessage = LanguageManager.shared.t(
+                            "会议纪要内容过长，模型仍达到输出上限。请改用更精简的模板或支持更长输出的模型后重试。",
+                            "The meeting notes still exceeded the model's output limit. Use a shorter template or a model with a larger output limit and try again."
+                        )
+                    } else {
+                        errorMessage = ErrorHandler.shared.handleError(error)
+                    }
                     continuation.yield(.error(errorMessage))
                     continuation.finish()
                 }
@@ -230,6 +259,7 @@ final class NotesGenerator {
 
         <task>
         根据以上资料生成会议纪要。先在内部检查重要议题、最终决策、明确行动项、风险和待确认问题是否遗漏，再去重并按模板输出。只输出最终 Markdown 纪要。
+        保持信息完整，但不要逐字复述转录或重复同一事实；通常控制在 8000 个中文字符以内。内容过多时，优先保留明确决策、行动项、负责人、时间、风险和关键结论。
         </task>
         """
     }
@@ -237,6 +267,20 @@ final class NotesGenerator {
     private static func nonEmptyOrNone(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "无" : trimmed
+    }
+
+    private static func isOutputBudgetRejected(_ error: Error) -> Bool {
+        guard let httpError = error as? HTTPError,
+              httpError.statusCode == 400 || httpError.statusCode == 422 else {
+            return false
+        }
+
+        let detail = (httpError.message ?? "").lowercased()
+        return detail.contains("max_tokens")
+            || detail.contains("max tokens")
+            || detail.contains("maximum output")
+            || detail.contains("output token")
+            || detail.contains("context length")
     }
 
     private static func xmlEscaped(_ value: String) -> String {
@@ -291,7 +335,11 @@ final class NotesGenerator {
             ]
 
             var ledger = ""
-            let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)
+            let stream = client.chatCompletionsStreamThrowing(
+                config: config,
+                messages: messages,
+                maxTokens: Self.evidenceOutputTokenBudget
+            )
             for try await piece in stream {
                 ledger += piece
             }
@@ -339,7 +387,11 @@ final class NotesGenerator {
 
         var title = ""
         do {
-            let stream = client.chatCompletionsStreamThrowing(config: config, messages: messages)
+            let stream = client.chatCompletionsStreamThrowing(
+                config: config,
+                messages: messages,
+                maxTokens: Self.titleOutputTokenBudget
+            )
             for try await chunk in stream {
                 title += chunk
             }

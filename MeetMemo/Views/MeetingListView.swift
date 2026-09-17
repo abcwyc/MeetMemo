@@ -1692,27 +1692,14 @@ struct MeetingDetailContentView: View {
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
                 .padding(.bottom, 8)
             }
-            if viewModel.isGeneratingNotes {
-                // The web editor's markdownSource is read only at mount —
-                // pushing a new document per streamed chunk would mean
-                // constant remounts. RenderedNotesView is a plain SwiftUI
-                // view that just re-renders cheaply on every published
-                // update, which is what streaming actually needs.
-                RenderedNotesView(text: viewModel.meeting.generatedNotes)
-                    .background(Color.gray.opacity(0.05))
-                    .cornerRadius(8)
-                    .frame(maxHeight: .infinity)
-            } else {
-                MarkdownWebEditorView(
-                    text: generatedNotesBinding,
-                    documentId: "\(viewModel.meeting.id.uuidString)-\(notesEditorDocumentRevision)",
-                    readOnly: false
-                )
-                .frame(minHeight: 110)
-                .background(Color.gray.opacity(0.05))
-                .cornerRadius(8)
-                .frame(maxHeight: .infinity)
-            }
+            MarkdownWebEditorView(
+                text: generatedNotesBinding,
+                documentId: "\(viewModel.meeting.id.uuidString)-\(notesEditorDocumentRevision)",
+                readOnly: viewModel.isGeneratingNotes,
+                streamsExternalTextUpdates: viewModel.isGeneratingNotes
+            )
+            .frame(minHeight: 110)
+            .frame(maxHeight: .infinity)
         }
     }
 

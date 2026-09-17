@@ -91,8 +91,8 @@ struct MeetingSummaryView: View {
             SummaryExtractingBanner(
                 title: langMgr.t("正在提取结构化内容", "Extracting structured content"),
                 message: langMgr.t(
-                    "正在分析转录原文，完成后会更新议题、决策、风险、待确认问题和待办。",
-                    "Analyzing the transcript. Topics, decisions, risks, questions, and tasks will update when complete."
+                    "正在分析 AI 会议纪要，完成后会更新议题、决策、风险、待确认问题和待办。",
+                    "Analyzing the AI meeting notes. Topics, decisions, risks, questions, and tasks will update when complete."
                 )
             )
         } else if let message = viewModel.structuredSummaryErrorMessage {
@@ -106,7 +106,7 @@ struct MeetingSummaryView: View {
         } else if viewModel.isStructuredSummaryStale {
             SummaryStatusBanner(
                 icon: "arrow.triangle.2.circlepath",
-                message: langMgr.t("转录原文已变化，行动摘要可能不是最新。", "Transcript changed. This digest may be out of date."),
+                message: langMgr.t("AI 会议纪要已变化，行动摘要可能不是最新。", "AI meeting notes changed. This digest may be out of date."),
                 tint: .orange,
                 actionTitle: langMgr.t("刷新", "Refresh"),
                 action: { viewModel.refreshStructuredSummary() }
