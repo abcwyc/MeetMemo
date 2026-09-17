@@ -5,12 +5,19 @@
 #
 # Override the version by exporting SHERPA_ONNX_VERSION before invoking.
 # Asset name is resolved at runtime by querying the GitHub release manifest.
+#
+# The version is pinned rather than tracking "latest": upstream stopped
+# attaching macOS xcframeworks to their version releases after v1.13.4 and
+# moved them to a separate rolling tag, which silently broke every fresh
+# clone. The pin also has to stay in step with the ONNX Runtime soname
+# below, which the Xcode project references by its full versioned name —
+# v1.13.4 already ships 1.27.0, so moving up means updating both.
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FRAMEWORKS_DIR="${REPO_ROOT}/Frameworks"
-SHERPA_ONNX_VERSION="${SHERPA_ONNX_VERSION:-latest}"
+SHERPA_ONNX_VERSION="${SHERPA_ONNX_VERSION:-v1.13.2}"
 FORCE_REFETCH="${SHERPA_ONNX_FORCE_REFETCH:-0}"
 
 SHERPA_XCFW="${FRAMEWORKS_DIR}/sherpa-onnx.xcframework"
