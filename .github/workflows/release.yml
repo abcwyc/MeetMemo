@@ -40,7 +40,12 @@ jobs:
             exit 1
           fi
 
+      # Runners share an outbound IP, so the unauthenticated GitHub API quota
+      # is usually already spent by the time this asks for the release
+      # manifest. The script uses the token when it finds one.
       - name: Fetch sherpa-onnx frameworks
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: ./scripts/fetch_sherpa_frameworks.sh
 
       # Same ad-hoc signing override as the release build below: the runner has
