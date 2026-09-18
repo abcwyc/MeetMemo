@@ -14,6 +14,9 @@ class RecordingSessionManager: ObservableObject {
     @Published var activeMeetingId: UUID?
     @Published var errorMessage: String?
     @Published var warningMessage: String?
+    /// 非用户主动结束的录音终止（设备异常、系统睡眠、STT 崩溃等）时设置，
+    /// 由顶层视图弹出醒目提醒。用户主动点结束录制不会设置此项。
+    @Published var recordingTerminationNotice: String?
     @Published var activeRecordingTranscriptChunksUpdated: [TranscriptChunk] = []
     @Published var activeRecordingStartedAt: Date?
     
@@ -38,6 +41,22 @@ class RecordingSessionManager: ObservableObject {
         setupDebouncedSaving()
     }
     
+    /// 在检测到非用户主动结束的录音终止时，把可用的错误原因（或默认提示）写入
+    /// `recordingTerminationNotice`，由顶层视图弹出醒目提醒。已转录的内容会正常保存。
+    private func recordPassiveTermination() {
+        guard recordingTerminationNotice == nil else { return }
+        let lang = LanguageManager.shared
+        let reason = errorMessage?.isEmpty == false
+            ? errorMessage!
+            : lang.t("录音因设备异常或系统事件被意外终止。", "Recording was unexpectedly terminated due to a device or system event.")
+        recordingTerminationNotice = lang.t(
+            "转录已停止\n\n原因：\(reason)\n\n已转录的内容已自动保存。",
+            "Transcription Stopped\n\nReason: \(reason)\n\nTranscribed content has been saved automatically."
+        )
+        // 避免同一个错误消息再触发通用错误弹窗，造成重复提醒。
+        errorMessage = nil
+    }
+
     private func setupAudioManagerBindings() {
         audioManager.$isStoppingRecording
             .sink { [weak self] value in
@@ -55,6 +74,7 @@ class RecordingSessionManager: ObservableObject {
                     // Sleep, capture failure, and other AudioManager-owned stops do not use
                     // RecordingSessionManager.stopRecording's completion. Finish them here,
                     // after the provider flush has ended, using the same durable save path.
+                    self.recordPassiveTermination()
                     self.isStoppingFromSessionManager = true
                     self.isStoppingRecording = true
                     self.finalizeStoppedSession(
@@ -92,6 +112,7 @@ class RecordingSessionManager: ObservableObject {
                 }
 
                 print("🧹 Audio manager stopped unexpectedly. Cleaning up recording session.")
+                self.recordPassiveTermination()
                 self.finishActiveSession(saveFinalTranscript: true)
             }
             .store(in: &cancellables)
@@ -109,6 +130,7 @@ class RecordingSessionManager: ObservableObject {
                 }
 
                 print("🧹 Audio manager reported a startup error. Cleaning up recording session.")
+                self.recordPassiveTermination()
                 self.finishActiveSession(saveFinalTranscript: true)
             }
             .store(in: &cancellables)
@@ -178,6 +200,8 @@ class RecordingSessionManager: ObservableObject {
 
         // 会议录音与语音输入互斥：开始录音前先静默停止正在进行的语音输入。
         VoiceInputManager.shared.cancelForRecording()
+        // 清除上一次的被动终止提醒，避免新会话开始时残留。
+        recordingTerminationNotice = nil
         print("🎙️ Starting recording for meeting: \(meetingId)")
 
         let resumableChunks = existingChunks

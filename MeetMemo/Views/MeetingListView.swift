@@ -112,6 +112,16 @@ struct MeetingListView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
+        .alert(langMgr.t("转录已停止", "Transcription Stopped"), isPresented: Binding(
+            get: { recordingSessionManager.recordingTerminationNotice != nil },
+            set: { if !$0 { recordingSessionManager.recordingTerminationNotice = nil } }
+        )) {
+            Button(langMgr.t("确定", "OK")) {
+                recordingSessionManager.recordingTerminationNotice = nil
+            }
+        } message: {
+            Text(recordingSessionManager.recordingTerminationNotice ?? "")
+        }
     }
 
     private var sidebarContent: some View {
@@ -903,6 +913,7 @@ struct MeetingDetailContentView: View {
     @StateObject private var viewModel: MeetingViewModel
     @StateObject private var recordingSessionManager = RecordingSessionManager.shared
     @EnvironmentObject var langMgr: LanguageManager
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showDeleteAlert = false
     @State private var contextEditorFocusRequest = 0
     /// An NSTextField that is being edited keeps its own text and writes it
@@ -1623,19 +1634,39 @@ struct MeetingDetailContentView: View {
             }
 
             if let record = viewModel.meeting.contextItems.first(where: { $0.kind == .text }) {
-                MarkdownWebEditorView(
-                    text: contextRecordTextBinding(for: record),
-                    documentId: "\(viewModel.meeting.id.uuidString)-context-\(record.id.uuidString)",
-                    readOnly: false,
-                    focusRequest: contextEditorFocusRequest
-                )
+                ZStack(alignment: .topLeading) {
+                    MarkdownWebEditorView(
+                        text: contextRecordTextBinding(for: record),
+                        documentId: "\(viewModel.meeting.id.uuidString)-context-\(record.id.uuidString)",
+                        readOnly: false,
+                        focusRequest: contextEditorFocusRequest
+                    )
+
+                    if record.extractedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text(langMgr.t("在此输入会议背景、讨论议题或准备资料...", "Enter meeting background, agenda, or prep notes here..."))
+                            .font(.system(size: MeetingNotesTypography.bodyFontSize))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, MeetingNotesTypography.contentInset)
+                            .padding(.top, MeetingNotesTypography.contentInset)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .frame(minHeight: 200)
-                .background(Color.gray.opacity(0.05))
+                .background(
+                    colorScheme == .dark
+                        ? Color(nsColor: .controlBackgroundColor).opacity(0.5)
+                        : Color.gray.opacity(0.05)
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color.gray.opacity(0.18), lineWidth: 1)
+                        .stroke(
+                            colorScheme == .dark
+                                ? Color(nsColor: .separatorColor)
+                                : Color.gray.opacity(0.18),
+                            lineWidth: 1
+                        )
                 }
             } else {
                 Color.clear

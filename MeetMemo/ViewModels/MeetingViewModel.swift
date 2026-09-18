@@ -243,6 +243,18 @@ class MeetingViewModel: ObservableObject {
                 print("🚨 Recording Session Manager Error: \(errorMessage)")
             }
             .store(in: &cancellables)
+
+        // 当 RecordingSessionManager 弹出專屬的“转录被意外终止”提醒时，
+        // 清除自身的通用错误消息，避免与顶层提醒重复弹窗。
+        recordingSessionManager.$recordingTerminationNotice
+            .compactMap { $0 }
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.errorMessage != nil {
+                    self.errorMessage = nil
+                }
+            }
+            .store(in: &cancellables)
         
         // If currently recording this meeting, load live transcript chunks
         if recordingSessionManager.isRecordingMeeting(meeting.id) {
