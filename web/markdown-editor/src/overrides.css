@@ -5,9 +5,25 @@
  * editing behaviour, selections, popovers, and syntax widgets.
  */
 
+:root {
+  color-scheme: light dark;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+html,
+body,
+#root,
 .meetmemo-editor-host {
   width: 100%;
   height: 100%;
+  background: transparent !important;
 }
 
 /* Keep scrollbars geometrically stable. macOS' overlay scroller grows when

@@ -64,6 +64,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.underPageBackgroundColor = .clear
+        webView.setValue(false, forKey: "drawsBackground")
         context.coordinator.webView = webView
 
         webView.load(URLRequest(url: URL(string: "\(Self.scheme)://local/index.html")!))
@@ -72,6 +73,8 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.underPageBackgroundColor = .clear
         context.coordinator.text = $text
         context.coordinator.syncTheme(
             theme: markdownThemeManager.theme,
@@ -241,6 +244,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
             (function (colorTheme, markdownTheme, vars) {
               document.documentElement.setAttribute('data-theme', colorTheme);
               document.documentElement.setAttribute('data-markdown-theme', markdownTheme);
+              document.documentElement.style.colorScheme = colorTheme;
               var style = document.documentElement.style;
               Object.keys(vars).forEach(function (key) { style.setProperty(key, vars[key]); });
             })('\(state.isDark ? "dark" : "light")', '\(state.theme.rawValue)', \(json));
@@ -318,6 +322,8 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                 NSWorkspace.shared.open(url)
             case "editorReady":
                 isBridgeReady = true
+                webView?.setValue(false, forKey: "drawsBackground")
+                webView?.underPageBackgroundColor = .clear
                 // Theme first, so the editor's first paint is already in the
                 // right palette instead of flashing the package's defaults.
                 if let pendingTheme {
@@ -335,6 +341,11 @@ struct MarkdownWebEditorView: NSViewRepresentable {
             default:
                 break
             }
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            webView.setValue(false, forKey: "drawsBackground")
+            webView.underPageBackgroundColor = .clear
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
