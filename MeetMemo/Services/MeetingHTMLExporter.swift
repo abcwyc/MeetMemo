@@ -760,7 +760,7 @@ struct MeetingHTMLExporter {
       .notes-body hr { height: .25em; margin: 24px 0; border: 0; background: #d0d7de; }
       .notes-body img { max-width: 100%; }
       .notes-body table { display: block; width: max-content; max-width: 100%; overflow: auto; border-collapse: collapse; border-spacing: 0; font-size: 1rem; font-variant-numeric: tabular-nums; }
-      .notes-body th, .notes-body td { border: 1px solid #d0d7de; padding: 6px 13px; text-align: left; vertical-align: top; }
+      .notes-body th, .notes-body td { border: 1px solid #d0d7de; padding: 6px 13px; text-align: left; vertical-align: top; word-break: break-word; overflow-wrap: break-word; }
       .notes-body th { background: transparent; font-weight: 600; }
       .notes-body tr { background: #fff; border-top: 1px solid #d8dee4; }
       .notes-body tr:nth-child(even) td { background: #f6f8fa; }

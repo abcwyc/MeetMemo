@@ -1780,7 +1780,6 @@ struct MeetingDetailContentView: View {
                 Text(viewModel.meeting.oneLiner)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .italic()
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -2939,7 +2938,6 @@ private struct DecisionRow: View {
                 Text("\u{201C}\(decision.sourceExcerpt)\u{201D}")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
-                    .italic()
                     .lineLimit(2)
             }
         }
@@ -2992,7 +2990,6 @@ private struct RiskRow: View {
                 Text("\u{201C}\(risk.sourceExcerpt)\u{201D}")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
-                    .italic()
                     .lineLimit(2)
             }
         }
@@ -3039,7 +3036,6 @@ private struct OpenQuestionRow: View {
                 Text("\u{201C}\(question.sourceExcerpt)\u{201D}")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
-                    .italic()
                     .lineLimit(2)
             }
         }

@@ -1361,19 +1361,41 @@ struct MeetingSummary: Codable, Identifiable, Hashable {
         )
     }
 
-    /// Plain text matches title/content/tags; a query starting with `#` matches tags only.
+    /// Plain text matches title/content/tags; queries starting with `#` filter by tag.
+    /// Supports multi-term search (all space-separated terms must match).
     func matches(searchText query: String) -> Bool {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
 
-        if let first = trimmed.first, first == "#" || first == "＃" {
-            let tagQuery = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
-            guard !tagQuery.isEmpty else { return !tags.isEmpty }
-            return tags.contains { $0.localizedCaseInsensitiveContains(tagQuery) }
-        }
+        let terms = trimmed.components(separatedBy: .whitespacesAndNewlines).filter { !$0.isEmpty }
+        guard !terms.isEmpty else { return true }
 
-        return searchableText.localizedCaseInsensitiveContains(trimmed)
-            || tags.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+        return terms.allSatisfy { term in
+            if term.hasPrefix("#") || term.hasPrefix("＃") {
+                let tagQuery = String(term.dropFirst()).trimmingCharacters(in: .whitespaces)
+                if tagQuery.isEmpty {
+                    return !tags.isEmpty
+                }
+                return tags.contains { $0.localizedCaseInsensitiveContains(tagQuery) }
+            }
+            return searchableText.localizedCaseInsensitiveContains(term)
+                || tags.contains { $0.localizedCaseInsensitiveContains(term) }
+        }
+    }
+
+    /// Safely updates the title without compounding multiple old titles in `searchableText`.
+    mutating func updateTitle(_ newTitle: String) {
+        let oldTitle = title
+        title = newTitle
+        guard !oldTitle.isEmpty else {
+            searchableText = [newTitle, searchableText].joined(separator: "\n")
+            return
+        }
+        if searchableText.hasPrefix(oldTitle) {
+            searchableText = newTitle + searchableText.dropFirst(oldTitle.count)
+        } else {
+            searchableText = [newTitle, searchableText].joined(separator: "\n")
+        }
     }
 
     private static func makePreview(from meeting: Meeting) -> String {
@@ -1395,13 +1417,65 @@ struct MeetingSummary: Codable, Identifiable, Hashable {
     }
 
     private static func makeSearchableText(from meeting: Meeting) -> String {
-        [
-            meeting.title,
-            String(meeting.formattedMeetingContext.prefix(500)),
-            String(meeting.generatedNotes.prefix(500)),
-            makePreview(from: meeting)
-        ]
-        .joined(separator: "\n")
+        var parts: [String] = []
+
+        if !meeting.title.isEmpty {
+            parts.append(meeting.title)
+        }
+        if !meeting.oneLiner.isEmpty {
+            parts.append(meeting.oneLiner)
+        }
+        if !meeting.tags.isEmpty {
+            parts.append(meeting.tags.joined(separator: " "))
+        }
+        if !meeting.host.isEmpty {
+            parts.append(meeting.host)
+        }
+        if !meeting.location.isEmpty {
+            parts.append(meeting.location)
+        }
+        if !meeting.speakerParticipantNames.isEmpty {
+            parts.append(meeting.speakerParticipantNames.joined(separator: " "))
+        }
+
+        let context = meeting.formattedMeetingContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !context.isEmpty {
+            parts.append(context)
+        }
+
+        let notes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !notes.isEmpty {
+            parts.append(notes)
+        }
+
+        // Full transcript chunks (final utterances)
+        let transcriptText = meeting.transcriptChunks
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .joined(separator: "\n")
+        if !transcriptText.isEmpty {
+            parts.append(transcriptText)
+        }
+
+        // Structured extraction items
+        for task in meeting.followUpTasks {
+            let taskDesc = [task.title, task.owner].filter { !$0.isEmpty }.joined(separator: " ")
+            if !taskDesc.isEmpty { parts.append(taskDesc) }
+        }
+        for decision in meeting.decisions {
+            let decDesc = [decision.title, decision.owner].filter { !$0.isEmpty }.joined(separator: " ")
+            if !decDesc.isEmpty { parts.append(decDesc) }
+        }
+        for risk in meeting.risks {
+            let riskDesc = [risk.title, risk.mitigation, risk.owner].filter { !$0.isEmpty }.joined(separator: " ")
+            if !riskDesc.isEmpty { parts.append(riskDesc) }
+        }
+        for q in meeting.openQuestions {
+            let qDesc = [q.question, q.owner, q.nextStep].filter { !$0.isEmpty }.joined(separator: " ")
+            if !qDesc.isEmpty { parts.append(qDesc) }
+        }
+
+        return parts.joined(separator: "\n")
     }
 }
 

@@ -45,6 +45,9 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
     private static let sampleRate = 16_000
     private static let fallbackDecodeSampleLimit = sampleRate * 30
     private static let leadingContextSamples = Int(Double(sampleRate) * 0.5)
+    /// Utterances shorter than 0.8s do not have enough acoustic evidence for reliable CAM++ embeddings.
+    /// They are prevented from spawning new speaker identities.
+    private static let minSamplesForNewSpeaker = Int(Double(sampleRate) * 0.8)
 
     private var runtime: SherpaOnnxRuntime?
     private var ringBuffer: [Float] = []
@@ -167,12 +170,16 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         }
         guard snapshot.count >= 2 else { return }
 
-        let embeddings = snapshot.map { $0.embedding }
+        let validIndices = snapshot.indices.filter { !snapshot[$0].embedding.isEmpty }
+        guard validIndices.count >= 2 else { return }
+
+        let embeddings = validIndices.map { snapshot[$0].embedding }
         let refined = SpeakerClustering.refineOffline(embeddings: embeddings)
 
         var corrections: [STTTranscriptCorrection] = []
-        for (index, record) in snapshot.enumerated() {
-            let newId = refined[index]
+        for (i, originalIdx) in validIndices.enumerated() {
+            let record = snapshot[originalIdx]
+            let newId = refined[i]
             if newId != record.provisionalSpeakerId {
                 corrections.append(STTTranscriptCorrection(
                     startTime: record.startMs,
@@ -284,10 +291,12 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         lastEmittedEndSampleOffset = max(lastEmittedEndSampleOffset, segment.endSampleOffset)
         lastEmittedText = text
 
+        let isShortSegment = segment.samples.count < Self.minSamplesForNewSpeaker
         let embedding = runtime.embedding(for: segment.samples)
         let speakerId = SpeakerClustering.assignOnline(
             embedding: embedding,
-            centroids: &speakerCentroids
+            centroids: &speakerCentroids,
+            allowNewSpeaker: !isShortSegment
         )
 
         let startMs = Int(Double(segment.startSampleOffset) * 1000.0 / Double(Self.sampleRate))

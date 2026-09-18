@@ -366,23 +366,41 @@
   color: var(--atomic-editor-accent);
 }
 
+.cm-line.cm-atomic-hr {
+  position: relative;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 .cm-line.cm-atomic-hr::after {
+  content: "";
+  display: block;
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  width: 100%;
   border: 0;
   height: var(--notes-hr-height);
   background: var(--notes-hr-color);
+  pointer-events: none;
 }
 
 .cm-atomic-table {
   padding: 1em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .cm-atomic-table table {
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  max-width: 100%;
   border-collapse: collapse;
   border-spacing: 0;
   font-size: 1em;
   font-variant-numeric: tabular-nums;
+  word-break: break-word;
 }
 
 .cm-atomic-table th,
@@ -392,6 +410,8 @@
   border: 1px solid var(--notes-border-default);
   background: transparent;
   vertical-align: top;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .cm-atomic-table th {

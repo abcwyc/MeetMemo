@@ -17,10 +17,11 @@ class MeetingListViewModel: ObservableObject {
     
     // Computed property to filter meetings based on search text
     var filteredMeetings: [MeetingSummary] {
-        guard !searchText.isEmpty else { return meetings }
-        
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return meetings }
+
         return meetings.filter { meeting in
-            meeting.matches(searchText: searchText)
+            meeting.matches(searchText: query)
         }
     }
 
@@ -43,12 +44,13 @@ class MeetingListViewModel: ObservableObject {
     /// All tags in use, ordered by how many meetings carry them.
     var allTags: [String] {
         var counts: [String: (tag: String, count: Int)] = [:]
-        for tag in meetings.flatMap(\.tags) {
-            let key = tag.lowercased()
-            counts[key] = (counts[key]?.tag ?? tag, (counts[key]?.count ?? 0) + 1)
+        for meeting in meetings {
+            for tag in meeting.tags {
+                counts[tag, default: (tag: tag, count: 0)].count += 1
+            }
         }
         return counts.values
-            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.tag.localizedStandardCompare($1.tag) == .orderedAscending }
+            .sorted { $0.count > $1.count }
             .map(\.tag)
     }
     
@@ -122,16 +124,16 @@ class MeetingListViewModel: ObservableObject {
     }
 
     func renameMeeting(_ meeting: MeetingSummary, title: String) {
-        var updatedSummary = meeting
-        updatedSummary.title = title
-        updatedSummary.searchableText = [title, meeting.searchableText].joined(separator: "\n")
-        upsertMeeting(updatedSummary)
-
         if var fullMeeting = LocalStorageManager.shared.loadMeeting(id: meeting.id) {
             fullMeeting.title = title
             _ = LocalStorageManager.shared.saveMeeting(fullMeeting)
+            let updatedSummary = MeetingSummary(meeting: fullMeeting)
+            upsertMeeting(updatedSummary)
             NotificationCenter.default.post(name: .meetingRenamed, object: fullMeeting)
         } else {
+            var updatedSummary = meeting
+            updatedSummary.updateTitle(title)
+            upsertMeeting(updatedSummary)
             NotificationCenter.default.post(name: .meetingRenamed, object: updatedSummary.placeholderMeeting)
         }
     }
