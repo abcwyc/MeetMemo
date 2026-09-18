@@ -244,8 +244,8 @@ struct MeetingListView: View {
             .controlSize(.large)
             .frame(minWidth: SidebarLayout.primaryButtonMinWidth)
             .layoutPriority(1)
-            .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
-            .help(recordingSessionManager.isRecording
+            .disabled(recordingSessionManager.isSessionBusy || viewModel.isImportingAudio)
+            .help(recordingSessionManager.isSessionBusy
                 ? langMgr.t("录制中无法创建新会议", "Cannot create new meeting while recording is active")
                 : langMgr.t("新建会议", "New Meeting"))
 
@@ -264,8 +264,8 @@ struct MeetingListView: View {
             .buttonStyle(SidebarSecondaryActionButtonStyle())
             .controlSize(.large)
             .layoutPriority(0)
-            .disabled(recordingSessionManager.isRecording || viewModel.isImportingAudio)
-            .help(recordingSessionManager.isRecording
+            .disabled(recordingSessionManager.isSessionBusy || viewModel.isImportingAudio)
+            .help(recordingSessionManager.isSessionBusy
                 ? langMgr.t("录制中无法导入音频", "Cannot import audio while recording is active")
                 : langMgr.t("导入音频并转录", "Import audio and transcribe it"))
         }
@@ -951,7 +951,8 @@ struct MeetingDetailContentView: View {
     }
 
     private var cannotStartRecording: Bool {
-        recordingSessionManager.isRecording && !recordingSessionManager.isRecordingMeeting(viewModel.meeting.id)
+        recordingSessionManager.isSessionBusy
+            && !recordingSessionManager.isRecordingMeeting(viewModel.meeting.id)
     }
 
     var body: some View {

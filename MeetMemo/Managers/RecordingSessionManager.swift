@@ -25,6 +25,10 @@ class RecordingSessionManager: ObservableObject {
     private var isStoppingFromSessionManager = false
     private var hasObservedAudioRecordingStart = false
     private var activeSessionToken: UUID?
+    private let transcriptPersistenceQueue = DispatchQueue(
+        label: "io.meetmemo.transcript-persistence",
+        qos: .utility
+    )
 
     // Store transcript chunks for the active recording session
     private var activeRecordingTranscriptChunks: [TranscriptChunk] = []
@@ -37,7 +41,29 @@ class RecordingSessionManager: ObservableObject {
     private func setupAudioManagerBindings() {
         audioManager.$isStoppingRecording
             .sink { [weak self] value in
-                self?.isStoppingRecording = value
+                guard let self else { return }
+                // Keep the whole app in the finalizing state until the last transcript
+                // snapshot has also reached disk, not merely until the STT providers stop.
+                if self.isStoppingFromSessionManager && !value {
+                    return
+                }
+                if !value,
+                   let activeMeetingId = self.activeMeetingId,
+                   let activeSessionToken = self.activeSessionToken,
+                   !self.audioManager.isRecording,
+                   self.hasObservedAudioRecordingStart {
+                    // Sleep, capture failure, and other AudioManager-owned stops do not use
+                    // RecordingSessionManager.stopRecording's completion. Finish them here,
+                    // after the provider flush has ended, using the same durable save path.
+                    self.isStoppingFromSessionManager = true
+                    self.isStoppingRecording = true
+                    self.finalizeStoppedSession(
+                        meetingId: activeMeetingId,
+                        sessionToken: activeSessionToken
+                    )
+                    return
+                }
+                self.isStoppingRecording = value
             }
             .store(in: &cancellables)
 
@@ -60,6 +86,7 @@ class RecordingSessionManager: ObservableObject {
 
                 guard self.activeMeetingId != nil,
                       !self.isStoppingFromSessionManager,
+                      !self.isStoppingRecording,
                       self.hasObservedAudioRecordingStart else {
                     return
                 }
@@ -117,12 +144,38 @@ class RecordingSessionManager: ObservableObject {
                 // never write its chunks into whichever meeting is recording now.
                 guard update.meetingId == activeMeetingId else { return }
                 print("💾 Debounced save triggered for meeting: \(activeMeetingId.uuidString)")
-                self.updateActiveMeetingTranscript(meetingId: activeMeetingId, chunks: update.chunks)
+                self.enqueueTranscriptSave(meetingId: activeMeetingId, chunks: update.chunks)
             }
             .store(in: &cancellables)
     }
-    
-    func startRecording(for meetingId: UUID, existingChunks: [TranscriptChunk] = []) {
+
+    /// True while a recording is starting, active, or flushing its final transcript.
+    /// Callers must treat this as a global single-session lock.
+    var isSessionBusy: Bool {
+        Self.sessionIsBusy(
+            activeMeetingId: activeMeetingId,
+            isRecording: isRecording,
+            isStoppingRecording: isStoppingRecording,
+            isStoppingFromSessionManager: isStoppingFromSessionManager
+        )
+    }
+
+    nonisolated static func sessionIsBusy(
+        activeMeetingId: UUID?,
+        isRecording: Bool,
+        isStoppingRecording: Bool,
+        isStoppingFromSessionManager: Bool
+    ) -> Bool {
+        activeMeetingId != nil || isRecording || isStoppingRecording || isStoppingFromSessionManager
+    }
+
+    @discardableResult
+    func startRecording(for meetingId: UUID, existingChunks: [TranscriptChunk] = []) -> Bool {
+        guard !isSessionBusy else {
+            print("⚠️ Refusing to start recording while another session is active or finalizing.")
+            return false
+        }
+
         // 会议录音与语音输入互斥：开始录音前先静默停止正在进行的语音输入。
         VoiceInputManager.shared.cancelForRecording()
         print("🎙️ Starting recording for meeting: \(meetingId)")
@@ -138,6 +191,7 @@ class RecordingSessionManager: ObservableObject {
         activeRecordingStartedAt = Date()
         hasObservedAudioRecordingStart = false
         audioManager.startRecording()
+        return true
     }
     
     func stopRecording() {
@@ -146,21 +200,47 @@ class RecordingSessionManager: ObservableObject {
         print("🛑 Stopping recording for meeting: \(stoppedMeetingId?.uuidString ?? "unknown")")
 
         isStoppingFromSessionManager = true
+        isStoppingRecording = true
         audioManager.stopRecording { [weak self] in
             guard let self else { return }
-            guard self.activeMeetingId == stoppedMeetingId,
+            guard let stoppedMeetingId,
+                  let stoppedSessionToken,
+                  self.activeMeetingId == stoppedMeetingId,
                   self.activeSessionToken == stoppedSessionToken else {
                 self.isStoppingFromSessionManager = false
+                self.isStoppingRecording = false
                 return
             }
-            self.finishActiveSession(saveFinalTranscript: true)
+            self.finalizeStoppedSession(
+                meetingId: stoppedMeetingId,
+                sessionToken: stoppedSessionToken
+            )
+        }
+    }
+
+    private func finalizeStoppedSession(meetingId: UUID, sessionToken: UUID) {
+        let finalChunks = activeRecordingTranscriptChunks
+        Task { [weak self] in
+            guard let self else { return }
+            _ = await self.persistTranscript(meetingId: meetingId, chunks: finalChunks)
+            guard self.activeMeetingId == meetingId,
+                  self.activeSessionToken == sessionToken else {
+                self.isStoppingFromSessionManager = false
+                self.isStoppingRecording = false
+                return
+            }
+            self.finishActiveSession(saveFinalTranscript: false)
             self.isStoppingFromSessionManager = false
+            self.isStoppingRecording = false
         }
     }
 
     private func finishActiveSession(saveFinalTranscript: Bool) {
         if saveFinalTranscript, let activeMeetingId = activeMeetingId {
-            updateActiveMeetingTranscript(meetingId: activeMeetingId, chunks: activeRecordingTranscriptChunks)
+            enqueueTranscriptSave(
+                meetingId: activeMeetingId,
+                chunks: activeRecordingTranscriptChunks
+            )
         }
 
         activeMeetingId = nil
@@ -178,17 +258,54 @@ class RecordingSessionManager: ObservableObject {
         activeMeetingId == meetingId
     }
     
-    private func updateActiveMeetingTranscript(meetingId: UUID, chunks: [TranscriptChunk]) {
-        if var meeting = LocalStorageManager.shared.loadMeeting(id: meetingId) {
-            meeting.transcriptChunks = chunks
-
-            let success = LocalStorageManager.shared.saveMeeting(meeting)
-            if success {
-                print("✅ Saved meeting transcript: \(meetingId.uuidString)")
-                NotificationCenter.default.post(name: .meetingSaved, object: meeting)
-            } else {
-                print("❌ Failed to save meeting transcript: \(meetingId.uuidString)")
+    private func enqueueTranscriptSave(meetingId: UUID, chunks: [TranscriptChunk]) {
+        transcriptPersistenceQueue.async { [weak self] in
+            let result = Self.saveTranscriptSnapshot(meetingId: meetingId, chunks: chunks)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.publishTranscriptSaveResult(result, meetingId: meetingId)
+                }
             }
+        }
+    }
+
+    /// Serializes transcript persistence off the main actor. FIFO ordering ensures a final
+    /// stop snapshot cannot be overtaken by an older debounced snapshot.
+    private func persistTranscript(meetingId: UUID, chunks: [TranscriptChunk]) async -> Bool {
+        let result: (success: Bool, meeting: Meeting?) = await withCheckedContinuation { continuation in
+            transcriptPersistenceQueue.async {
+                continuation.resume(returning: Self.saveTranscriptSnapshot(
+                    meetingId: meetingId,
+                    chunks: chunks
+                ))
+            }
+        }
+
+        publishTranscriptSaveResult(result, meetingId: meetingId)
+        return result.success
+    }
+
+    nonisolated private static func saveTranscriptSnapshot(
+        meetingId: UUID,
+        chunks: [TranscriptChunk]
+    ) -> (success: Bool, meeting: Meeting?) {
+        guard var meeting = LocalStorageManager.shared.loadMeeting(id: meetingId) else {
+            return (false, nil)
+        }
+        meeting.transcriptChunks = chunks
+        let success = LocalStorageManager.shared.saveMeeting(meeting)
+        return (success, success ? meeting : nil)
+    }
+
+    private func publishTranscriptSaveResult(
+        _ result: (success: Bool, meeting: Meeting?),
+        meetingId: UUID
+    ) {
+        if let meeting = result.meeting {
+            print("✅ Saved meeting transcript: \(meetingId.uuidString)")
+            NotificationCenter.default.post(name: .meetingSaved, object: meeting)
+        } else {
+            print("❌ Failed to save meeting transcript: \(meetingId.uuidString)")
         }
     }
     

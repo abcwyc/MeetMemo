@@ -114,6 +114,8 @@ class MeetingViewModel: ObservableObject {
     private var hasLocalUnsavedChanges = false
     private var isApplyingLoadedMeeting = false
     private var isStreamingGeneratedNotes = false
+    private var recordingStartTask: Task<Void, Never>?
+    private var recordingStartToken: UUID?
     private var generationTask: Task<Void, Never>?
     private var activeGenerationMeetingId: UUID?
     /// Full text streamed so far by the in-flight generation. Lets a meeting
@@ -329,6 +331,8 @@ class MeetingViewModel: ObservableObject {
     ) {
         guard meeting.id != self.meeting.id else { return }
 
+        cancelPendingRecordingStart()
+
         if activeGenerationMeetingId == self.meeting.id, let previous = activeGenerationPreviousNotes {
             // Leaving mid-generation: persist the notes as they were before it
             // started, not a half-streamed document. The generation commits the
@@ -353,7 +357,6 @@ class MeetingViewModel: ObservableObject {
         errorMessage = nil
         transcriptCompressionNotice = nil
         isValidatingKey = false
-        isStartingRecording = false
         isLoadingMeeting = false
         isGeneratingNotes = activeGenerationMeetingId == meeting.id
         isStreamingGeneratedNotes = activeGenerationMeetingId == meeting.id
@@ -608,12 +611,31 @@ class MeetingViewModel: ObservableObject {
     }
     
     func startRecording() {
-        guard !isStartingRecording else { return }
+        guard recordingStartTask == nil, !isStartingRecording else { return }
+        guard !recordingSessionManager.isSessionBusy else {
+            errorMessage = LanguageManager.shared.t(
+                "另一个会议正在录制或收尾中。",
+                "Another meeting is recording or finalizing."
+            )
+            return
+        }
+
+        let meetingId = meeting.id
+        let existingChunks = meeting.transcriptChunks
+        let token = UUID()
+        recordingStartToken = token
         isStartingRecording = true
         errorMessage = nil
 
-        Task { @MainActor [weak self] in
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                if self.recordingStartToken == token {
+                    self.recordingStartToken = nil
+                    self.recordingStartTask = nil
+                    self.isStartingRecording = false
+                }
+            }
             do {
                 switch UserDefaultsManager.shared.sttEngine {
                 case .appleSpeechAnalyzer:
@@ -627,14 +649,37 @@ class MeetingViewModel: ObservableObject {
                         throw FunASRNanoError.modelsNotReady
                     }
                 }
+                try Task.checkCancellation()
+                guard self.recordingStartToken == token,
+                      self.meeting.id == meetingId else {
+                    return
+                }
+                guard self.recordingSessionManager.startRecording(
+                    for: meetingId,
+                    existingChunks: existingChunks
+                ) else {
+                    self.errorMessage = LanguageManager.shared.t(
+                        "另一个会议正在录制或收尾中。",
+                        "Another meeting is recording or finalizing."
+                    )
+                    return
+                }
                 self.hasStartedRecordingSession = true
                 self.toolbarHasStartedRecordingSession = true
-                self.recordingSessionManager.startRecording(for: self.meeting.id, existingChunks: self.meeting.transcriptChunks)
+            } catch is CancellationError {
+                return
             } catch {
                 self.errorMessage = ErrorHandler.shared.handleError(error)
-                self.isStartingRecording = false
             }
         }
+        recordingStartTask = task
+    }
+
+    private func cancelPendingRecordingStart() {
+        recordingStartToken = nil
+        recordingStartTask?.cancel()
+        recordingStartTask = nil
+        isStartingRecording = false
     }
     
     func stopRecording() {
@@ -1326,6 +1371,7 @@ class MeetingViewModel: ObservableObject {
     }
     
     func deleteMeeting() {
+        cancelPendingRecordingStart()
         // If this meeting is currently being recorded, stop the recording first
         if recordingSessionManager.isRecordingMeeting(meeting.id) {
             print("🛑 Stopping recording for meeting being deleted: \(meeting.id)")

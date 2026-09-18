@@ -200,22 +200,32 @@ class LocalStorageManager {
                     return summary
                 }
 
-                let summaryIds = Set(summaries.map(\.id))
-                let meetingFileIds = meetingFileIds()
-                let hasMissingSummaries = !meetingFileIds.isSubset(of: summaryIds)
+                let summariesById = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
+                let meetingFilesById = meetingFileURLsById()
+                let summaryFilesById = Dictionary(uniqueKeysWithValues: summaryURLs.compactMap { url in
+                    UUID(uuidString: url.deletingPathExtension().lastPathComponent).map { ($0, url) }
+                })
                 let hasInvalidSummaries = summaries.count != summaryURLs.count
+                let cacheNeedsRefresh = Self.summaryCacheNeedsRefresh(
+                    meetingFilesById: meetingFilesById,
+                    summaryFilesById: summaryFilesById,
+                    decodedSummaryIds: Set(summariesById.keys),
+                    hasInvalidSummaries: hasInvalidSummaries
+                )
 
-                guard hasMissingSummaries || hasInvalidSummaries else {
+                guard cacheNeedsRefresh else {
                     return summaries.sorted { $0.date > $1.date }
                 }
 
-                print("⚠️ Meeting summaries are incomplete. Regenerating missing sidebar data.")
-                var mergedById = Dictionary(uniqueKeysWithValues: summaries.map { ($0.id, $0) })
-                for fullSummary in loadMeetings().map(MeetingSummary.init(meeting:)) {
-                    mergedById[fullSummary.id] = fullSummary
+                print("⚠️ Meeting summaries are stale or incomplete. Rebuilding sidebar data.")
+                // Full meeting files are authoritative. Starting from cached summaries here
+                // would retain orphan entries if deletion stopped between the two file writes.
+                let rebuilt = loadMeetings().map(MeetingSummary.init(meeting:))
+                let validIds = Set(rebuilt.map(\.id))
+                for (id, url) in summaryFilesById where !validIds.contains(id) {
+                    try? FileManager.default.removeItem(at: url)
                 }
-
-                return Array(mergedById.values).sorted { $0.date > $1.date }
+                return rebuilt
             }
         } catch {
             print("⚠️ Failed to read meeting summaries: \(error)")
@@ -224,18 +234,48 @@ class LocalStorageManager {
         return loadMeetings().map(MeetingSummary.init(meeting:))
     }
 
-    private func meetingFileIds() -> Set<UUID> {
+    private func meetingFileURLsById() -> [UUID: URL] {
         guard let fileURLs = try? FileManager.default.contentsOfDirectory(
             at: meetingsDirectory,
             includingPropertiesForKeys: nil
         ) else {
-            return []
+            return [:]
         }
 
-        return Set(fileURLs.compactMap { url in
+        return Dictionary(uniqueKeysWithValues: fileURLs.compactMap { url in
             guard url.pathExtension == "json" else { return nil }
-            return UUID(uuidString: url.deletingPathExtension().lastPathComponent)
+            return UUID(uuidString: url.deletingPathExtension().lastPathComponent).map { ($0, url) }
         })
+    }
+
+    /// Rebuild whenever the two cache directories disagree, decoding failed, or a meeting
+    /// file is newer than its summary. The modification-date check closes the crash window
+    /// between the authoritative meeting write and the subsequent summary write.
+    static func summaryCacheNeedsRefresh(
+        meetingFilesById: [UUID: URL],
+        summaryFilesById: [UUID: URL],
+        decodedSummaryIds: Set<UUID>,
+        hasInvalidSummaries: Bool,
+        fileModificationDate: (URL) -> Date? = { url in
+            try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        }
+    ) -> Bool {
+        let meetingIds = Set(meetingFilesById.keys)
+        let summaryIds = Set(summaryFilesById.keys)
+        guard !hasInvalidSummaries,
+              meetingIds == summaryIds,
+              decodedSummaryIds == summaryIds else {
+            return true
+        }
+
+        return meetingFilesById.contains { id, meetingURL in
+            guard let summaryURL = summaryFilesById[id],
+                  let meetingDate = fileModificationDate(meetingURL),
+                  let summaryDate = fileModificationDate(summaryURL) else {
+                return true
+            }
+            return meetingDate > summaryDate
+        }
     }
 
     private func meetingFilesContainOlderDataVersionLocked() -> Bool {

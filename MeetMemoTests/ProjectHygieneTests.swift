@@ -65,6 +65,31 @@ final class ProjectHygieneTests: XCTestCase {
         XCTAssertLessThan(disconnectRange.lowerBound, stopDoneRange.lowerBound)
     }
 
+    func testRecordingStartupIsPinnedToItsOriginalMeetingAndCancelledOnSwitch() throws {
+        let viewModel = try read("MeetMemo/ViewModels/MeetingViewModel.swift", from: repositoryRoot())
+
+        XCTAssertTrue(viewModel.contains("let meetingId = meeting.id"))
+        XCTAssertTrue(viewModel.contains("let existingChunks = meeting.transcriptChunks"))
+        XCTAssertTrue(viewModel.contains("try Task.checkCancellation()"))
+        XCTAssertTrue(viewModel.contains("self.meeting.id == meetingId"))
+
+        guard let switchRange = viewModel.range(of: "func switchToMeeting(") else {
+            XCTFail("Expected switchToMeeting implementation")
+            return
+        }
+        let switchImplementation = viewModel[switchRange.lowerBound...]
+        XCTAssertTrue(switchImplementation.contains("cancelPendingRecordingStart()"))
+    }
+
+    func testTranscriptPersistenceRunsOnDedicatedSerialQueue() throws {
+        let manager = try read("MeetMemo/Managers/RecordingSessionManager.swift", from: repositoryRoot())
+
+        XCTAssertTrue(manager.contains("io.meetmemo.transcript-persistence"))
+        XCTAssertTrue(manager.contains("transcriptPersistenceQueue.async"))
+        XCTAssertTrue(manager.contains("await self.persistTranscript"))
+        XCTAssertTrue(manager.contains("Self.saveTranscriptSnapshot"))
+    }
+
     func testAppSourcesAvoidCrashOnlyShortcutsOutsideGeneratedBridge() throws {
         let root = repositoryRoot()
         let appRoot = root.appendingPathComponent("MeetMemo")
