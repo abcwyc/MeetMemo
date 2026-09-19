@@ -386,7 +386,16 @@ enum MarkdownDocumentModel {
     /// and reuses it for the process's lifetime.
     private static nonisolated(unsafe) var regexCache: [String: NSRegularExpression] = [:]
 
+    /// `static let` is initialized exactly once, thread-safely, by the Swift runtime.
+    private static let regexCacheLock = NSLock()
+
+    /// `regexCache` is read from the editor's restyle pass (main) and from
+    /// export/preview paths off the main actor; the lock serializes
+    /// read-modify-write. Held across the one-time compile on purpose so two
+    /// threads can never both compile (and store) the same pattern.
     private static func cachedRegex(_ pattern: String) -> NSRegularExpression? {
+        regexCacheLock.lock()
+        defer { regexCacheLock.unlock() }
         if let cached = regexCache[pattern] { return cached }
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         regexCache[pattern] = regex
