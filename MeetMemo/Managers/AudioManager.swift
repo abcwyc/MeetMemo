@@ -14,6 +14,14 @@ class AudioManager: NSObject, ObservableObject {
 
     private let logger = Logger(subsystem: "com.youcai.meetmemo", category: "AudioManager")
 
+    /// Injectable collaborators. Defaults keep production behavior identical
+    /// (they are the app singletons); the seam exists so tests can construct
+    /// an AudioManager around controlled instances instead of the global ones.
+    private let errorHandler: ErrorHandler
+    private let languageManager: LanguageManager
+    private let apiKeyValidator: APIKeyValidator
+    private let speechModelInstaller: SpeechModelInstaller
+
     @Published var transcriptChunks: [TranscriptChunk] = []
     @Published var isRecording = false
     @Published var isRecoveringSTT = false
@@ -80,13 +88,35 @@ class AudioManager: NSObject, ObservableObject {
     private var willSleepObserver: NSObjectProtocol?
     private var didWakeObserver: NSObjectProtocol?
 
-    private override init() {
+    init(
+        errorHandler: ErrorHandler,
+        languageManager: LanguageManager,
+        apiKeyValidator: APIKeyValidator,
+        speechModelInstaller: SpeechModelInstaller
+    ) {
         let initialEngine = UserDefaultsManager.shared.sttEngine
         self.activeEngine = initialEngine
         self.sttProviderFactory = Self.factory(for: initialEngine)
+        self.errorHandler = errorHandler
+        self.languageManager = languageManager
+        self.apiKeyValidator = apiKeyValidator
+        self.speechModelInstaller = speechModelInstaller
         super.init()
         registerAudioEngineConfigObserver()
         registerSystemPowerObservers()
+    }
+
+    /// Production entry point: wires the app singletons. A separate overload
+    /// (rather than default arguments) because default-argument expressions
+    /// are evaluated in a nonisolated context, where @MainActor-isolated
+    /// singletons cannot be read.
+    override convenience init() {
+        self.init(
+            errorHandler: .shared,
+            languageManager: .shared,
+            apiKeyValidator: .shared,
+            speechModelInstaller: .shared
+        )
     }
 
     deinit {
@@ -141,7 +171,7 @@ class AudioManager: NSObject, ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self, self.isRecording, !self.isStoppingOrTearingDown else { return }
-                print("💤 System will sleep — finalizing recording before suspend.")
+                AppLog.audio.debug("💤 System will sleep — finalizing recording before suspend.")
                 self.errorMessage = "系统即将进入睡眠，已自动结束录音。"
                 self.stopRecording()
             }
@@ -151,15 +181,15 @@ class AudioManager: NSObject, ObservableObject {
             object: nil,
             queue: .main
         ) { _ in
-            print("☀️ System woke up. Recording was stopped at sleep; user must start again manually.")
+            AppLog.audio.debug("☀️ System woke up. Recording was stopped at sleep; user must start again manually.")
             Task { @MainActor in
-                SpeechModelInstaller.shared.handleSystemDidWake()
+                self.speechModelInstaller.handleSystemDidWake()
             }
         }
     }
 
     func startRecording() {
-        print("Starting recording...")
+        AppLog.audio.debug("Starting recording...")
 
         abortRecording()
         refreshSTTFactoryFromSettings()
@@ -189,7 +219,7 @@ class AudioManager: NSObject, ObservableObject {
     /// Immediately tears down the current recording session without waiting for final STT output.
     /// Use only for hard resets and startup failures; normal user stops should call `stopRecording`.
     private func abortRecording() {
-        print("Internal cleanup...")
+        AppLog.audio.debug("Internal cleanup...")
 
         isTearingDownRecording = true
         defer { isTearingDownRecording = false }
@@ -213,7 +243,7 @@ class AudioManager: NSObject, ObservableObject {
             processTap?.invalidate()
             processTap = nil
             isTapActive = false
-            print("System audio tap invalidated")
+            AppLog.audio.debug("System audio tap invalidated")
         }
 
         audioTimelines.removeAll()
@@ -226,7 +256,7 @@ class AudioManager: NSObject, ObservableObject {
         isStoppingRecording = false
         systemSTTConnectingSessionID = nil
 
-        print("Internal cleanup completed")
+        AppLog.audio.debug("Internal cleanup completed")
     }
 
     private func restartMicrophone() {
@@ -234,13 +264,13 @@ class AudioManager: NSObject, ObservableObject {
 
         guard micRetryCount < maxMicRetries else {
             let message = "Microphone failed to recover after \(maxMicRetries) attempts."
-            print("⛔️ \(message) Stopping recording.")
+            AppLog.audio.debug("⛔️ \(message) Stopping recording.")
             errorMessage = message
             stopRecording()
             return
         }
 
-        print("🔄 Restarting microphone capture (attempt \(micRetryCount + 1))")
+        AppLog.audio.debug("🔄 Restarting microphone capture (attempt \(self.micRetryCount + 1))")
         micRetryCount += 1
         let restartSessionID = sessionID
 
@@ -264,7 +294,7 @@ class AudioManager: NSObject, ObservableObject {
 
     /// Starts a microphone tap using the STT provider.
     private func startMicrophoneTap(sessionToken: UUID) async -> Bool {
-        print("🎤 Starting microphone tap...")
+        AppLog.audio.debug("🎤 Starting microphone tap...")
 
         guard isActiveSession(sessionToken) else { return false }
 
@@ -276,7 +306,7 @@ class AudioManager: NSObject, ObservableObject {
                                                    sampleRate: 16_000,
                                                    channels: 1,
                                                    interleaved: false) else {
-                print("❌ Failed to create target audio format for mic tap")
+                AppLog.audio.debug("❌ Failed to create target audio format for mic tap")
                 restartMicrophone()
                 return false
             }
@@ -299,7 +329,7 @@ class AudioManager: NSObject, ObservableObject {
                 inputFormat: recordingFormat,
                 targetFormat: targetFormat
             ) else {
-                print("❌ Failed to create audio pipeline for mic tap")
+                AppLog.audio.debug("❌ Failed to create audio pipeline for mic tap")
                 restartMicrophone()
                 return false
             }
@@ -310,7 +340,7 @@ class AudioManager: NSObject, ObservableObject {
                 guard let self = self else { return }
 
                 guard buffer.frameLength > 0 else {
-                    print("❌ Invalid mic buffer detected - restarting")
+                    AppLog.audio.debug("❌ Invalid mic buffer detected - restarting")
                     Task { @MainActor [weak self] in
                         self?.restartMicrophone()
                     }
@@ -327,24 +357,24 @@ class AudioManager: NSObject, ObservableObject {
             )
             guard isActiveSession(sessionToken) else { return false }
 
-            print("✅ Microphone tap started successfully")
+            AppLog.audio.debug("✅ Microphone tap started successfully")
             micRetryCount = 0
             return true
         } catch {
             guard isActiveSession(sessionToken) else { return false }
-            print("❌ Failed to start microphone tap: \(error)")
-            errorMessage = ErrorHandler.shared.handleError(error)
+            AppLog.audio.debug("❌ Failed to start microphone tap: \(error)")
+            errorMessage = errorHandler.handleError(error)
             abortRecording()
             return false
         }
     }
 
     private func cleanupAudioEngine() {
-        print("🧹 Cleaning up audio engine...")
+        AppLog.audio.debug("🧹 Cleaning up audio engine...")
 
         if audioEngine.isRunning {
             audioEngine.stop()
-            print("⏹️ Audio engine stopped")
+            AppLog.audio.debug("⏹️ Audio engine stopped")
         }
 
         micAudioPipeline?.stop()
@@ -352,14 +382,14 @@ class AudioManager: NSObject, ObservableObject {
 
         let inputNode = audioEngine.inputNode
         inputNode.removeTap(onBus: 0)
-        print("🔇 Input tap removed")
+        AppLog.audio.debug("🔇 Input tap removed")
 
         audioEngine.reset()
-        print("🔄 Audio engine reset")
+        AppLog.audio.debug("🔄 Audio engine reset")
 
         audioEngine = AVAudioEngine()
         registerAudioEngineConfigObserver()
-        print("✨ Fresh audio engine created")
+        AppLog.audio.debug("✨ Fresh audio engine created")
     }
 
     private func startSystemAudioTap(
@@ -367,7 +397,7 @@ class AudioManager: NSObject, ObservableObject {
         isInitialStart: Bool = false,
         sessionToken: UUID? = nil
     ) async {
-        print(isRestart ? "🎧 Restarting system audio tap logic..." : "🎧 Starting system audio tap for the first time...")
+        AppLog.audio.debug("\(isRestart ? "🎧 Restarting system audio tap logic..." : "🎧 Starting system audio tap for the first time...")")
         let activeSessionToken = sessionToken ?? sessionID
 
         guard isActiveSession(activeSessionToken) || isRestart else { return }
@@ -376,7 +406,7 @@ class AudioManager: NSObject, ObservableObject {
             guard await checkSystemAudioPermissions() else {
                 guard isActiveSession(activeSessionToken) else { return }
                 let errorMsg = "System audio recording permission denied."
-                print("❌ \(errorMsg)")
+                AppLog.audio.debug("❌ \(errorMsg)")
                 errorMessage = errorMsg
                 abortRecording()
                 return
@@ -401,7 +431,7 @@ class AudioManager: NSObject, ObservableObject {
             newTap.invalidate()
             guard isActiveSession(activeSessionToken) else { return }
             let errorMsg = "Failed to activate system audio tap: \(tapError)"
-            print("❌ \(errorMsg)")
+            AppLog.audio.debug("❌ \(errorMsg)")
             degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
             return
         }
@@ -421,11 +451,11 @@ class AudioManager: NSObject, ObservableObject {
                 markRecordingActive(sessionToken: activeSessionToken)
             }
             logger.notice("System audio tap started; global capture active, excluded processes: \(excludedProcessObjectIDs.count)")
-            print("✅ System audio tap started successfully (isRestart: \(isRestart))")
+            AppLog.audio.debug("✅ System audio tap started successfully (isRestart: \(isRestart))")
         } catch {
             guard isActiveSession(activeSessionToken) else { return }
             let errorMsg = "Failed to start system audio tap IO: \(error.localizedDescription)"
-            print("❌ \(errorMsg)")
+            AppLog.audio.debug("❌ \(errorMsg)")
             newTap.invalidate()
             isTapActive = false
             degradeSystemAudioToMicOnly("系统音频捕获不可用，已自动切换为仅麦克风模式。")
@@ -457,15 +487,15 @@ class AudioManager: NSObject, ObservableObject {
         audioTimelines[.system] = nil
         activeCaptureIDs[.system] = nil
 
-        print("⚠️ \(message)")
+        AppLog.audio.debug("⚠️ \(message)")
         warningMessage = message
     }
 
     private func restartSystemAudioTap() async {
-        print("🔄 Restarting system audio tap...")
+        AppLog.audio.debug("🔄 Restarting system audio tap...")
 
         guard isRecording, !isStoppingOrTearingDown else {
-            print("Recording was stopped, aborting tap restart.")
+            AppLog.audio.debug("Recording was stopped, aborting tap restart.")
             return
         }
         guard !isRestartingSystemTap else {
@@ -483,13 +513,13 @@ class AudioManager: NSObject, ObservableObject {
             processTap?.invalidate()
             processTap = nil
             isTapActive = false
-            print("System audio tap invalidated for restart.")
+            AppLog.audio.debug("System audio tap invalidated for restart.")
         }
 
         try? await Task.sleep(for: .milliseconds(800))
 
         guard isRecording, !isStoppingOrTearingDown else {
-            print("Recording was stopped during tap restart. Aborting.")
+            AppLog.audio.debug("Recording was stopped during tap restart. Aborting.")
             return
         }
 
@@ -551,15 +581,15 @@ class AudioManager: NSObject, ObservableObject {
 
         } invalidationHandler: { [weak self] _ in
             guard let self else { return }
-            print("Audio tap was invalidated.")
+            AppLog.audio.debug("Audio tap was invalidated.")
 
             if !self.isRestartingSystemTap && !self.isStoppingOrTearingDown {
-                print("Tap invalidated unexpectedly. Restarting system audio tap.")
+                AppLog.audio.debug("Tap invalidated unexpectedly. Restarting system audio tap.")
                 Task {
                     await self.restartSystemAudioTap()
                 }
             } else {
-                print("Tap invalidated as part of a restart. Not stopping recording.")
+                AppLog.audio.debug("Tap invalidated as part of a restart. Not stopping recording.")
             }
         }
     }
@@ -580,7 +610,7 @@ class AudioManager: NSObject, ObservableObject {
         let stoppedSessionID = sessionID
         recordingStateMachine.stop(sessionID: stoppedSessionID)
         isStoppingRecording = true
-        print("Stopping recording...")
+        AppLog.audio.debug("Stopping recording...")
 
         micAudioLevel = 0.0
         systemAudioLevel = 0.0
@@ -598,7 +628,7 @@ class AudioManager: NSObject, ObservableObject {
             processTap?.invalidate()
             processTap = nil
             isTapActive = false
-            print("System audio tap invalidated")
+            AppLog.audio.debug("System audio tap invalidated")
         }
 
         cleanupAudioEngine()
@@ -648,11 +678,11 @@ class AudioManager: NSObject, ObservableObject {
 
             if finalizationStatuses.contains(where: \.mayHaveMissedTailAudio) {
                 let message = "语音识别收尾超时，最后几秒转录可能未完成。"
-                print("⚠️ \(message)")
+                AppLog.audio.debug("⚠️ \(message)")
                 self.warningMessage = message
             } else if finalizationStatuses.contains(.resultDrainTimedOut) {
                 let message = "语音识别结果流关闭较慢，已保存已收到的转录内容。"
-                print("ℹ️ \(message)")
+                AppLog.audio.debug("ℹ️ \(message)")
                 self.warningMessage = message
             }
 
@@ -680,7 +710,7 @@ class AudioManager: NSObject, ObservableObject {
             self.activeCaptureIDs.removeAll()
             self.isFinalizingStoppedRecording = false
             self.isStoppingRecording = false
-            print("Recording stopped")
+            AppLog.audio.debug("Recording stopped")
             completion?()
         }
     }
@@ -738,7 +768,7 @@ class AudioManager: NSObject, ObservableObject {
             group.addTask {
                 try? await Task.sleep(for: .seconds(timeout))
                 guard !Task.isCancelled else { return }
-                print("⚠️ Timed out draining audio pipelines; discarding remaining queued audio.")
+                AppLog.audio.debug("⚠️ Timed out draining audio pipelines; discarding remaining queued audio.")
                 pipelines.forEach { $0.stop() }
             }
             await group.next()
@@ -838,8 +868,8 @@ class AudioManager: NSObject, ObservableObject {
                 )
             } catch {
                 guard self.isActiveSession(sessionToken) else { return }
-                print("⚠️ Lazy system STT connect failed: \(ErrorHandler.shared.handleError(error))")
-                self.degradeSystemAudioToMicOnly(LanguageManager.shared.t(
+                AppLog.audio.debug("⚠️ Lazy system STT connect failed: \(errorHandler.handleError(error))")
+                self.degradeSystemAudioToMicOnly(languageManager.t(
                     "系统音频转录不可用，已自动切换为仅麦克风模式。",
                     "System audio transcription is unavailable; switched to mic-only."
                 ))
@@ -921,7 +951,7 @@ class AudioManager: NSObject, ObservableObject {
         sessionToken: UUID,
         offsetMilliseconds: Int
     ) async throws -> STTProvider {
-        let config = APIKeyValidator.shared.currentSTTConfig()
+        let config = apiKeyValidator.currentSTTConfig()
         let provider = sttProviderFactory.makeProvider()
 
         provider.onTranscriptUpdate = { [weak self] update in
@@ -949,7 +979,7 @@ class AudioManager: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 guard let self, self.sessionID == sessionToken else { return }
                 guard self.isCurrentProvider(provider, for: source) else {
-                    print("ℹ️ Ignored STT error from retired \(source) provider: \(message)")
+                    AppLog.audio.debug("ℹ️ Ignored STT error from retired \(source.rawValue) provider: \(message)")
                     return
                 }
                 self.handleSTTProviderError(message, source: source)
@@ -1081,11 +1111,11 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     private func handleSTTProviderError(_ message: String, source: AudioSource) {
-        print("❌ STT provider error (\(source)): \(message)")
+        AppLog.audio.debug("❌ STT provider error (\(source.rawValue)): \(message)")
         if isStoppingOrTearingDown || isFinalizingStoppedRecording { return }
 
         if source == .system {
-            print("⚠️ System audio STT failed, degrading to mic-only: \(message)")
+            AppLog.audio.debug("⚠️ System audio STT failed, degrading to mic-only: \(message)")
             systemSTT?.disconnect()
             systemSTT = nil
             systemSTTConnectingSessionID = nil
@@ -1147,7 +1177,7 @@ class AudioManager: NSObject, ObservableObject {
     }
 
     private func handleAudioEngineConfigurationChange() {
-        print("🔔 Audio engine configuration changed - restarting mic")
+        AppLog.audio.debug("🔔 Audio engine configuration changed - restarting mic")
         restartMicrophone()
     }
 }
