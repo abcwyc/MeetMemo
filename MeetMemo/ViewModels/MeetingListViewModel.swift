@@ -43,6 +43,12 @@ class MeetingListViewModel: ObservableObject {
 
     /// All tags in use, ordered by how many meetings carry them.
     var allTags: [String] {
+        Self.sortedTags(in: meetings)
+    }
+
+    /// Uses the tag itself as a tie-breaker so rebuilding the intermediate
+    /// dictionary cannot make equally popular tags jump around in the UI.
+    static func sortedTags(in meetings: [MeetingSummary]) -> [String] {
         var counts: [String: (tag: String, count: Int)] = [:]
         for meeting in meetings {
             for tag in meeting.tags {
@@ -50,7 +56,20 @@ class MeetingListViewModel: ObservableObject {
             }
         }
         return counts.values
-            .sorted { $0.count > $1.count }
+            .sorted { lhs, rhs in
+                if lhs.count != rhs.count {
+                    return lhs.count > rhs.count
+                }
+
+                let nameOrder = lhs.tag.localizedStandardCompare(rhs.tag)
+                if nameOrder != .orderedSame {
+                    return nameOrder == .orderedAscending
+                }
+
+                // localizedStandardCompare can consider differently-cased
+                // strings equivalent, so keep a final deterministic fallback.
+                return lhs.tag < rhs.tag
+            }
             .map(\.tag)
     }
     

@@ -5,9 +5,6 @@ struct OnboardingView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @EnvironmentObject var langMgr: LanguageManager
     @ObservedObject private var sherpaModel = SherpaModelManager.shared
-    @State private var llmApiKey = ""
-    @State private var llmBaseURL = ""
-    @State private var llmModel = ""
     @State private var micPermissionGranted = false
     @State private var systemAudioPermissionGranted = false
     @State private var audioRecordingPermission = AudioRecordingPermission()
@@ -116,7 +113,6 @@ struct OnboardingView: View {
                                     Spacer()
 
                                     Button {
-                                        syncProviderFieldsToSettings()
                                         settingsViewModel.testLLMConnection()
                                     } label: {
                                         if settingsViewModel.isTestingLLM {
@@ -134,8 +130,8 @@ struct OnboardingView: View {
 
                                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                                     Text(langMgr.t(
-                                        "填写 Base URL、API Key 和 Model Name 即可。Anthropic 地址会使用 Messages API，其他地址会使用 OpenAI 兼容的 Chat Completions API。",
-                                        "Fill in Base URL, API Key, and Model Name. Anthropic URLs use the Messages API; other URLs use the OpenAI-compatible Chat Completions API."
+                                        "选择供应商后只需填写对应的 API Key；选择「自定义」可手动填写全部字段。Anthropic 地址会使用 Messages API，其他地址会使用 OpenAI 兼容的 Chat Completions API。",
+                                        "Pick a provider and paste its API key. Choose Custom to fill in every field manually. Anthropic URLs use the Messages API; other URLs use the OpenAI-compatible Chat Completions API."
                                     ))
                                     .foregroundColor(.secondary)
 
@@ -147,17 +143,7 @@ struct OnboardingView: View {
                                 }
                                 .font(.caption)
 
-                                SecureField("API Key", text: $llmApiKey)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: .infinity)
-
-                                TextField("Base URL", text: $llmBaseURL)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: .infinity)
-
-                                TextField("Model Name", text: $llmModel)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(maxWidth: .infinity)
+                                LLMProviderConfigSection(settings: $settingsViewModel.settings)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -172,7 +158,6 @@ struct OnboardingView: View {
                             .controlSize(.large)
 
                             Button(langMgr.t("开始使用", "Get Started")) {
-                                syncProviderFieldsToSettings()
                                 settingsViewModel.completeOnboarding()
                             }
                             .buttonStyle(.borderedProminent)
@@ -192,9 +177,6 @@ struct OnboardingView: View {
             UserDefaultsManager.shared.sttEngine = .sherpaSenseVoice
             checkPermissions()
             settingsViewModel.loadProviderConfig()
-            llmApiKey = settingsViewModel.settings.llmApiKey
-            llmBaseURL = settingsViewModel.settings.llmBaseURL
-            llmModel = settingsViewModel.settings.llmModel
             Task { await sherpaModel.refreshReadiness() }
         }
         .onChange(of: audioRecordingPermission.status) { oldValue, newValue in
@@ -214,18 +196,13 @@ struct OnboardingView: View {
     }
 
     private var canProceed: Bool {
-        micPermissionGranted &&
+        let llmConfig = settingsViewModel.settings
+        return micPermissionGranted &&
         sherpaModel.isReady &&
         systemAudioPermissionGranted &&
-        !llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func syncProviderFieldsToSettings() {
-        settingsViewModel.settings.llmApiKey = llmApiKey
-        settingsViewModel.settings.llmBaseURL = llmBaseURL
-        settingsViewModel.settings.llmModel = llmModel
+        !llmConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !llmConfig.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !llmConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func checkPermissions() {

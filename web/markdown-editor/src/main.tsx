@@ -57,14 +57,72 @@ const bridgeDocumentId = Facet.define<string, string>({
 let activeEditor: ActiveEditor | null = null;
 let editorReadyListener: ((editor: ActiveEditor) => void) | null = null;
 
+/// Last content height reported to Swift. Deduplicates so the update
+/// listener can run on every editor update without spamming the bridge.
+let lastReportedHeight = -1;
+
+/// Natural document height, independent of the web view's frame.
+///
+/// Built from `view.contentHeight` (CM6's measured height of the document's
+/// lines) plus the *top* paddings/borders of the editor chrome. The content
+/// element's bottom padding is deliberately excluded: it is `20vh` of the
+/// web view (a scroll-past-end buffer for the notes editor), so including
+/// it would feed the reported height back into the frame and loop. Callers
+/// that want breathing room below the text add their own fixed allowance.
+const measureNaturalHeight = (view: EditorView): number | null => {
+  const content = view.contentDOM;
+  const scroller = view.scrollDOM;
+  const editor =
+    (scroller.closest('.atomic-cm-editor') as HTMLElement | null) ??
+    scroller.parentElement;
+  if (!content || !scroller || !editor) return null;
+
+  const topSpacing = (el: Element) => {
+    const cs = getComputedStyle(el);
+    return (
+      (parseFloat(cs.paddingTop) || 0) +
+      (parseFloat(cs.borderTopWidth) || 0)
+    );
+  };
+
+  return Math.ceil(
+    view.contentHeight + topSpacing(content) + topSpacing(scroller) + topSpacing(editor)
+  );
+};
+
+const reportEditorHeight = (view: EditorView, force = false) => {
+  const height = measureNaturalHeight(view);
+  if (height == null || height <= 0) return false;
+  if (!force && Math.abs(height - lastReportedHeight) < 0.5) return false;
+  lastReportedHeight = height;
+  window.webkit?.messageHandlers?.editorHeightChanged?.postMessage(height);
+  return true;
+};
+
+/// Content height right after a fresh CodeMirror mount can still read 0 for
+/// a frame or two (CM6 measures lazily). Poll a few animation frames until
+/// the first real measurement lands.
+const reportWhenMeasured = (view: EditorView) => {
+  let attempts = 0;
+  const tick = () => {
+    if (reportEditorHeight(view)) return;
+    if (++attempts < 30) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+};
+
 const bridgeViewPlugin = ViewPlugin.define((view) => {
   const editor = {
     documentId: view.state.facet(bridgeDocumentId),
     view,
   };
   activeEditor = editor;
+  reportWhenMeasured(view);
   editorReadyListener?.(editor);
   return {
+    update: (update) => {
+      reportEditorHeight(update.view);
+    },
     destroy: () => {
       if (activeEditor?.view === view) activeEditor = null;
     },
@@ -78,12 +136,17 @@ declare global {
         markdownChanged?: { postMessage: (body: { documentId: string; markdown: string }) => void };
         linkClicked?: { postMessage: (url: string) => void };
         editorReady?: { postMessage: (body: string) => void };
+        editorHeightChanged?: { postMessage: (height: number) => void };
       };
     };
     __meetmemoBridge?: {
       load: (payload: LoadPayload) => void;
       updateMarkdown: (payload: MarkdownUpdatePayload) => void;
     };
+    /// Invoked by Swift after a theme push: CSS-variable-driven font and
+    /// padding changes reshape the document without any CodeMirror state
+    /// update, so the editor can't see them on its own.
+    __meetmemoEditorResized?: () => void;
   }
 }
 
@@ -162,6 +225,11 @@ function App() {
         }
         applyMarkdownUpdate(activeEditor, payload);
       },
+    };
+    window.__meetmemoEditorResized = () => {
+      const view = activeEditor?.view;
+      if (!view) return;
+      requestAnimationFrame(() => reportEditorHeight(view, true));
     };
     editorReadyListener = (editor) => {
       const pending = pendingMarkdownUpdateRef.current;

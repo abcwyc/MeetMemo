@@ -36,16 +36,15 @@ struct TemplateEditView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    TextEditor(text: $template.context)
-                        .scrollContentBackground(.hidden)
-                        .padding(8)
-                        .background(Color.gray.opacity(0.05))
-                        .cornerRadius(8)
-                        .frame(minHeight: 320)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                        )
+                    MarkdownPromptField(
+                        text: $template.context,
+                        documentId: "template-\(template.id.uuidString)",
+                        placeholder: langMgr.t(
+                            "描述会议类型、输出结构和关注重点…",
+                            "Describe the meeting type, output structure, and focus areas…"
+                        ),
+                        minHeight: 320
+                    )
                 }
 
                 // Save button

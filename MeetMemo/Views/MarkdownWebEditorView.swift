@@ -38,6 +38,11 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     /// Keeping this separate from `documentId` avoids remounting the document
     /// merely because the user reselected the context tab or clicked Add Note.
     var focusRequest: Int = 0
+    /// Receives the editor's natural content height (document lines plus
+    /// fixed top chrome), frame-independent, whenever it changes. Used by
+    /// auto-sizing call sites (`MarkdownPromptField`); the notes editor
+    /// leaves it nil and keeps its fixed pane with internal scrolling.
+    var onContentHeightChange: ((CGFloat) -> Void)? = nil
 
     /// Drives the editor's palette. Read from the SwiftUI environment rather
     /// than the web view's `effectiveAppearance` so it tracks the app's own
@@ -60,6 +65,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         configuration.userContentController.add(context.coordinator, name: "markdownChanged")
         configuration.userContentController.add(context.coordinator, name: "linkClicked")
         configuration.userContentController.add(context.coordinator, name: "editorReady")
+        configuration.userContentController.add(context.coordinator, name: "editorHeightChanged")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
@@ -76,6 +82,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         webView.setValue(false, forKey: "drawsBackground")
         webView.underPageBackgroundColor = .clear
         context.coordinator.text = $text
+        context.coordinator.onContentHeightChange = onContentHeightChange
         context.coordinator.syncTheme(
             theme: markdownThemeManager.theme,
             isDark: colorScheme == .dark
@@ -93,6 +100,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "markdownChanged")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "linkClicked")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "editorReady")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "editorHeightChanged")
     }
 
     func makeCoordinator() -> Coordinator {
@@ -102,6 +110,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
     final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var text: Binding<String>
         weak var webView: WKWebView?
+        var onContentHeightChange: ((CGFloat) -> Void)?
 
         /// True once the JS side's `editorReady` message has arrived —
         /// meaning `window.__meetmemoBridge` genuinely exists and it's safe
@@ -247,6 +256,7 @@ struct MarkdownWebEditorView: NSViewRepresentable {
               document.documentElement.style.colorScheme = colorTheme;
               var style = document.documentElement.style;
               Object.keys(vars).forEach(function (key) { style.setProperty(key, vars[key]); });
+              window.__meetmemoEditorResized && window.__meetmemoEditorResized();
             })('\(state.isDark ? "dark" : "light")', '\(state.theme.rawValue)', \(json));
             """
             webView?.evaluateJavaScript(script)
@@ -338,6 +348,13 @@ struct MarkdownWebEditorView: NSViewRepresentable {
                     focusEditor()
                     pendingFocusRequest = nil
                 }
+            case "editorHeightChanged":
+                // The JS side reports the document's natural height (CM6
+                // contentHeight + fixed top chrome, excluding the frame-
+                // dependent 20vh scroll buffer) on mount, on every content
+                // change, and after theme pushes.
+                guard let height = message.body as? Double, height > 0 else { return }
+                onContentHeightChange?(CGFloat(height))
             default:
                 break
             }

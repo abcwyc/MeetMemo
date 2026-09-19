@@ -154,7 +154,7 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
+                .frame(width: 200, alignment: .leading)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -168,7 +168,7 @@ struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 200)
+                .frame(width: 200, alignment: .leading)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -272,8 +272,8 @@ struct SettingsView: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(langMgr.t(
-                        "填写 Base URL、API Key 和 Model Name 即可。Anthropic 地址会使用 Messages API，其他地址会使用 OpenAI 兼容的 Chat Completions API。",
-                        "Fill in Base URL, API Key, and Model Name. Anthropic URLs use the Messages API; other URLs use the OpenAI-compatible Chat Completions API."
+                        "选择供应商后只需填写对应的 API Key；选择「自定义」可手动填写全部字段。Anthropic 地址会使用 Messages API，其他地址会使用 OpenAI 兼容的 Chat Completions API。",
+                        "Pick a provider and paste its API key. Choose Custom to fill in every field manually. Anthropic URLs use the Messages API; other URLs use the OpenAI-compatible Chat Completions API."
                     ))
                     .foregroundColor(.secondary)
 
@@ -285,17 +285,7 @@ struct SettingsView: View {
                 }
                 .font(.caption)
 
-                SecureField("API Key", text: $viewModel.settings.llmApiKey)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
-
-                TextField("Base URL", text: $viewModel.settings.llmBaseURL)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
-
-                TextField("Model Name", text: $viewModel.settings.llmModel)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: .infinity)
+                LLMProviderConfigSection(settings: $viewModel.settings)
             }
         }
     }
@@ -706,16 +696,15 @@ struct SettingsView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-                TextEditor(text: $viewModel.settings.userBlurb)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(Color.gray.opacity(0.05))
-                    .cornerRadius(8)
-                    .frame(minHeight: 100)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                    )
+                MarkdownPromptField(
+                    text: $viewModel.settings.userBlurb,
+                    documentId: "settings-user-blurb",
+                    placeholder: langMgr.t(
+                        "姓名、职位、公司及相关背景…",
+                        "Name, role, company, and background…"
+                    ),
+                    minHeight: 100
+                )
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -736,16 +725,15 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
-                TextEditor(text: $viewModel.settings.systemPrompt)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(Color.gray.opacity(0.05))
-                    .cornerRadius(8)
-                    .frame(minHeight: 200)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color.gray.opacity(0.3), lineWidth: 1)
-                    )
+                MarkdownPromptField(
+                    text: $viewModel.settings.systemPrompt,
+                    documentId: "settings-system-prompt",
+                    placeholder: langMgr.t(
+                        "留空会影响生成质量，可点击右上角「恢复默认」还原。",
+                        "Leaving this empty degrades generation. Use “Reset to Default” above to restore it."
+                    ),
+                    minHeight: 200
+                )
             }
         }
     }

@@ -45,6 +45,27 @@ class SettingsViewModel: ObservableObject {
 
         settings.llmBaseURL = providerConfig.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.llmModel = providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        settings.llmPresetID = providerConfig.llmPresetID.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 预设功能上线前的旧配置按 Base URL 反查预设 id，让已有用户无感命中对应卡片；
+        // 命中时顺带把地址归一成预设的规范写法（等价形式如缺 /v1）。
+        if settings.llmPresetID.isEmpty {
+            if let preset = LLMPresetProviders.provider(matchingBaseURL: settings.llmBaseURL) {
+                settings.llmPresetID = preset.id
+                settings.llmBaseURL = preset.baseURL
+            }
+        }
+
+        // 全新配置直接落在首个预设上，避免新用户面对三个空字段。
+        if settings.llmPresetID.isEmpty &&
+            settings.llmBaseURL.isEmpty &&
+            settings.llmApiKey.isEmpty &&
+            settings.llmModel.isEmpty {
+            let defaultPreset = LLMPresetProviders.all[0]
+            settings.llmPresetID = defaultPreset.id
+            settings.llmBaseURL = defaultPreset.baseURL
+            settings.llmModel = defaultPreset.defaultModel
+        }
     }
     
     func loadTemplates() {

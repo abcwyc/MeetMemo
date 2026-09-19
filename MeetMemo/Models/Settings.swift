@@ -4,6 +4,8 @@ struct Settings: Codable {
     var llmApiKey: String = ""
     var llmBaseURL: String = ""
     var llmModel: String = ""
+    /// 选中的 LLM 预设：供应商 id、`LLMPresetProviders.customPresetID` 或空（尚未选择）。
+    var llmPresetID: String = ""
 
     // Computed properties that access UserDefaults
     var userBlurb: String {
@@ -82,16 +84,28 @@ struct Settings: Codable {
     init(
         llmApiKey: String = "",
         llmBaseURL: String = "",
-        llmModel: String = ""
+        llmModel: String = "",
+        llmPresetID: String = ""
     ) {
         self.llmApiKey = llmApiKey
         self.llmBaseURL = llmBaseURL
         self.llmModel = llmModel
+        self.llmPresetID = llmPresetID
+    }
+
+    // Keychain 里的旧 JSON 可能缺少较新的字段（如 llmPresetID），逐字段兜底解码。
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        llmApiKey = try container.decodeIfPresent(String.self, forKey: .llmApiKey) ?? ""
+        llmBaseURL = try container.decodeIfPresent(String.self, forKey: .llmBaseURL) ?? ""
+        llmModel = try container.decodeIfPresent(String.self, forKey: .llmModel) ?? ""
+        llmPresetID = try container.decodeIfPresent(String.self, forKey: .llmPresetID) ?? ""
     }
 
     private enum CodingKeys: String, CodingKey {
         case llmApiKey
         case llmBaseURL
         case llmModel
+        case llmPresetID
     }
 }
