@@ -111,7 +111,7 @@ class RecordingSessionManager: ObservableObject {
                     return
                 }
 
-                print("🧹 Audio manager stopped unexpectedly. Cleaning up recording session.")
+                AppLog.session.debug("🧹 Audio manager stopped unexpectedly. Cleaning up recording session.")
                 self.recordPassiveTermination()
                 self.finishActiveSession(saveFinalTranscript: true)
             }
@@ -129,7 +129,7 @@ class RecordingSessionManager: ObservableObject {
                     return
                 }
 
-                print("🧹 Audio manager reported a startup error. Cleaning up recording session.")
+                AppLog.session.debug("🧹 Audio manager reported a startup error. Cleaning up recording session.")
                 self.recordPassiveTermination()
                 self.finishActiveSession(saveFinalTranscript: true)
             }
@@ -165,7 +165,7 @@ class RecordingSessionManager: ObservableObject {
                 // A session that has since finished already saved its final transcript;
                 // never write its chunks into whichever meeting is recording now.
                 guard update.meetingId == activeMeetingId else { return }
-                print("💾 Debounced save triggered for meeting: \(activeMeetingId.uuidString)")
+                AppLog.session.debug("💾 Debounced save triggered for meeting: \(activeMeetingId.uuidString)")
                 self.enqueueTranscriptSave(meetingId: activeMeetingId, chunks: update.chunks)
             }
             .store(in: &cancellables)
@@ -194,7 +194,7 @@ class RecordingSessionManager: ObservableObject {
     @discardableResult
     func startRecording(for meetingId: UUID, existingChunks: [TranscriptChunk] = []) -> Bool {
         guard !isSessionBusy else {
-            print("⚠️ Refusing to start recording while another session is active or finalizing.")
+            AppLog.session.debug("⚠️ Refusing to start recording while another session is active or finalizing.")
             return false
         }
 
@@ -202,7 +202,7 @@ class RecordingSessionManager: ObservableObject {
         VoiceInputManager.shared.cancelForRecording()
         // 清除上一次的被动终止提醒，避免新会话开始时残留。
         recordingTerminationNotice = nil
-        print("🎙️ Starting recording for meeting: \(meetingId)")
+        AppLog.session.debug("🎙️ Starting recording for meeting: \(meetingId)")
 
         let resumableChunks = existingChunks
             .filter(\.isFinal)
@@ -221,7 +221,7 @@ class RecordingSessionManager: ObservableObject {
     func stopRecording() {
         let stoppedMeetingId = activeMeetingId
         let stoppedSessionToken = activeSessionToken
-        print("🛑 Stopping recording for meeting: \(stoppedMeetingId?.uuidString ?? "unknown")")
+        AppLog.session.debug("🛑 Stopping recording for meeting: \(stoppedMeetingId?.uuidString ?? "unknown")")
 
         isStoppingFromSessionManager = true
         isStoppingRecording = true
@@ -326,10 +326,10 @@ class RecordingSessionManager: ObservableObject {
         meetingId: UUID
     ) {
         if let meeting = result.meeting {
-            print("✅ Saved meeting transcript: \(meetingId.uuidString)")
+            AppLog.session.debug("✅ Saved meeting transcript: \(meetingId.uuidString)")
             NotificationCenter.default.post(name: .meetingSaved, object: meeting)
         } else {
-            print("❌ Failed to save meeting transcript: \(meetingId.uuidString)")
+            AppLog.session.debug("❌ Failed to save meeting transcript: \(meetingId.uuidString)")
         }
     }
     

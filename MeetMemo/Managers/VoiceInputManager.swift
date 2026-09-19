@@ -365,7 +365,7 @@ final class VoiceInputManager: NSObject, ObservableObject {
     }
 
     private func fail(_ message: String) {
-        print("❌ VoiceInput failed: \(message)")
+        AppLog.audio.debug("❌ VoiceInput failed: \(message)")
         errorMessage = message
         providerConnectTask?.cancel()
         providerConnectTask = nil

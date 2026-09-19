@@ -223,7 +223,7 @@ final class SpeechModelInstaller: ObservableObject {
         try? await Task.sleep(for: .seconds(1))
         let retryStatus = await AssetInventory.status(forModules: [transcriber])
         if retryStatus == .installed {
-            print("ℹ️ Speech model became available after wake retry.")
+            AppLog.stt.debug("ℹ️ Speech model became available after wake retry.")
         }
         return retryStatus
     }

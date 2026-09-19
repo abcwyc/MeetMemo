@@ -15,7 +15,7 @@ class DataMigrationManager {
     func migrateMeeting(_ meeting: Meeting) -> Meeting? {
         // No releases prior to version 1 – any older file is considered unsupported.
         guard meeting.dataVersion >= 1 else {
-            print("🚫 Cannot migrate meeting \(meeting.id) – unsupported data version \(meeting.dataVersion)")
+            AppLog.storage.debug("🚫 Cannot migrate meeting \(meeting.id) – unsupported data version \(meeting.dataVersion)")
             return nil
         }
 
@@ -71,7 +71,7 @@ class DataMigrationManager {
         }
 
         if migratedMeeting.dataVersion < Meeting.currentDataVersion {
-            print("⚠️ No migration path for versions \(migratedMeeting.dataVersion + 1)...\(Meeting.currentDataVersion)")
+            AppLog.storage.debug("⚠️ No migration path for versions \(migratedMeeting.dataVersion + 1)...\(Meeting.currentDataVersion)")
             return nil
         }
 
@@ -84,7 +84,7 @@ class DataMigrationManager {
     /// - Returns: The backup directory URL, or nil if backup failed
     func backupMeetingsDirectory() -> URL? {
         guard let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            print("❌ Failed to resolve Documents directory for migration backup")
+            AppLog.storage.debug("❌ Failed to resolve Documents directory for migration backup")
             return nil
         }
         let meetingsDirectory = documentsDirectory.appendingPathComponent("Meetings")
@@ -97,10 +97,10 @@ class DataMigrationManager {
         
         do {
             try FileManager.default.copyItem(at: meetingsDirectory, to: backupDirectory)
-            print("✅ Created backup at: \(backupDirectory)")
+            AppLog.storage.debug("✅ Created backup at: \(backupDirectory)")
             return backupDirectory
         } catch {
-            print("❌ Failed to create backup: \(error)")
+            AppLog.storage.debug("❌ Failed to create backup: \(error)")
             return nil
         }
     }

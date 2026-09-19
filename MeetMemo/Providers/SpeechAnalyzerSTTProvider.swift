@@ -129,14 +129,14 @@ final class SpeechAnalyzerSTTProvider: NSObject, STTProvider {
 
         guard let finalized = await Self.waitForTask(finalizeTask, timeout: timeout),
               finalized else {
-            print("⚠️ SpeechAnalyzer finalization timed out after \(timeout)s.")
+            AppLog.stt.debug("⚠️ SpeechAnalyzer finalization timed out after \(timeout)s.")
             return .finalizeTimedOut
         }
 
         guard let resultsTask else { return .completed }
         let remaining = max(0.5, timeout - Date().timeIntervalSince(startedAt))
         guard await Self.waitForTask(resultsTask, timeout: remaining) != nil else {
-            print("⚠️ SpeechAnalyzer result drain timed out after finalization.")
+            AppLog.stt.debug("⚠️ SpeechAnalyzer result drain timed out after finalization.")
             return .resultDrainTimedOut
         }
 

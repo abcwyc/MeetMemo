@@ -340,8 +340,8 @@ AI 会议纪要（行动摘要的唯一内容来源）：
         do {
             raw = try decoder.decode(RawStructuredSummary.self, from: data)
         } catch {
-            print("⚠️ Structured extraction decode failed: \(error)")
-            print("⚠️ Structured extraction response prefix: \(String(cleaned.prefix(800)))")
+            AppLog.llm.debug("⚠️ Structured extraction decode failed: \(error)")
+            AppLog.llm.debug("⚠️ Structured extraction response prefix: \(String(cleaned.prefix(800)))")
             throw StructuredExtractionError.invalidResponse
         }
 

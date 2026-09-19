@@ -25,7 +25,7 @@ class LocalStorageManager {
         } else {
             let fallbackDirectory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("MeetMemo", isDirectory: true)
-            print("⚠️ Failed to resolve Documents directory. Using temporary fallback: \(fallbackDirectory)")
+            AppLog.storage.debug("⚠️ Failed to resolve Documents directory. Using temporary fallback: \(fallbackDirectory)")
             documentsDirectory = fallbackDirectory
         }
         
@@ -69,7 +69,7 @@ class LocalStorageManager {
 
     private func saveMeetingLocked(_ meeting: Meeting) -> Bool {
         guard !deletedMeetingIDs.contains(meeting.id) else {
-            print("🚫 Skipping save for deleted meeting: \(meeting.id)")
+            AppLog.storage.debug("🚫 Skipping save for deleted meeting: \(meeting.id)")
             return false
         }
 
@@ -87,11 +87,11 @@ class LocalStorageManager {
 
             try replaceFileAtomically(at: fileURL, with: data)
 
-            print("✅ Saved meeting: \(meeting.id)")
+            AppLog.storage.debug("✅ Saved meeting: \(meeting.id)")
             saveMeetingSummary(MeetingSummary(meeting: meetingToSave))
             return true
         } catch {
-            print("❌ Failed to save meeting: \(error)")
+            AppLog.storage.debug("❌ Failed to save meeting: \(error)")
             return false
         }
     }
@@ -131,12 +131,12 @@ class LocalStorageManager {
             let meetings = fileURLs.compactMap { url -> Meeting? in
                 guard let data = try? Data(contentsOf: url),
                       let meeting = try? decoder.decode(Meeting.self, from: data) else {
-                    print("⚠️ Failed to decode meeting at: \(url)")
+                    AppLog.storage.debug("⚠️ Failed to decode meeting at: \(url)")
                     return nil
                 }
                 // Forward-compatibility guard – skip if file was written by a newer build
                 if meeting.dataVersion > Meeting.currentDataVersion {
-                    print("🚫 Meeting \(meeting.id) written by newer app version (\(meeting.dataVersion)). Skipping load.")
+                    AppLog.storage.debug("🚫 Meeting \(meeting.id) written by newer app version (\(meeting.dataVersion)). Skipping load.")
                     return nil
                 }
 
@@ -146,13 +146,13 @@ class LocalStorageManager {
 
                     if let migratedMeeting = DataMigrationManager.shared.migrateMeeting(meeting) {
                         if saveMeeting(migratedMeeting) {
-                            print("✅ Migrated and saved meeting: \(migratedMeeting.id)")
+                            AppLog.storage.debug("✅ Migrated and saved meeting: \(migratedMeeting.id)")
                             return migratedMeeting
                         }
-                        print("❌ Failed to save migrated meeting: \(migratedMeeting.id)")
+                        AppLog.storage.debug("❌ Failed to save migrated meeting: \(migratedMeeting.id)")
                         return migratedMeeting
                     } else {
-                        print("❌ Failed to migrate meeting: \(meeting.id)")
+                        AppLog.storage.debug("❌ Failed to migrate meeting: \(meeting.id)")
                         quarantineMeetingFileLocked(url, meetingId: meeting.id, reason: "migration failed")
                     }
                     return nil
@@ -164,7 +164,7 @@ class LocalStorageManager {
             
             return meetings.sorted { $0.date > $1.date }
         } catch {
-            print("❌ Failed to load meetings: \(error)")
+            AppLog.storage.debug("❌ Failed to load meetings: \(error)")
             return []
         }
     }
@@ -194,7 +194,7 @@ class LocalStorageManager {
                     guard let data = try? Data(contentsOf: url),
                           let summary = try? decoder.decode(MeetingSummary.self, from: data),
                           summary.dataVersion <= Meeting.currentDataVersion else {
-                        print("⚠️ Failed to decode meeting summary at: \(url)")
+                        AppLog.storage.debug("⚠️ Failed to decode meeting summary at: \(url)")
                         return nil
                     }
                     return summary
@@ -217,7 +217,7 @@ class LocalStorageManager {
                     return summaries.sorted { $0.date > $1.date }
                 }
 
-                print("⚠️ Meeting summaries are stale or incomplete. Rebuilding sidebar data.")
+                AppLog.storage.debug("⚠️ Meeting summaries are stale or incomplete. Rebuilding sidebar data.")
                 // Full meeting files are authoritative. Starting from cached summaries here
                 // would retain orphan entries if deletion stopped between the two file writes.
                 let rebuilt = loadMeetings().map(MeetingSummary.init(meeting:))
@@ -228,7 +228,7 @@ class LocalStorageManager {
                 return rebuilt
             }
         } catch {
-            print("⚠️ Failed to read meeting summaries: \(error)")
+            AppLog.storage.debug("⚠️ Failed to read meeting summaries: \(error)")
         }
 
         return loadMeetings().map(MeetingSummary.init(meeting:))
@@ -325,20 +325,20 @@ class LocalStorageManager {
         }
 
         guard meeting.dataVersion <= Meeting.currentDataVersion else {
-            print("🚫 Meeting \(meeting.id) written by newer app version (\(meeting.dataVersion)). Skipping load.")
+            AppLog.storage.debug("🚫 Meeting \(meeting.id) written by newer app version (\(meeting.dataVersion)). Skipping load.")
             return nil
         }
 
         if meeting.dataVersion < Meeting.currentDataVersion {
             _ = createMigrationBackupIfNeededLocked()
             guard let migratedMeeting = DataMigrationManager.shared.migrateMeeting(meeting) else {
-                print("❌ Failed to migrate meeting: \(meeting.id)")
+                AppLog.storage.debug("❌ Failed to migrate meeting: \(meeting.id)")
                 quarantineMeetingFileLocked(fileURL, meetingId: meeting.id, reason: "migration failed")
                 return nil
             }
 
             if !saveMeetingLocked(migratedMeeting) {
-                print("❌ Failed to save migrated meeting: \(migratedMeeting.id). Using migrated in-memory copy.")
+                AppLog.storage.debug("❌ Failed to save migrated meeting: \(migratedMeeting.id). Using migrated in-memory copy.")
             }
             return migratedMeeting
         }
@@ -354,7 +354,7 @@ class LocalStorageManager {
 
             return try decoder.decode(Meeting.self, from: data)
         } catch {
-            print("⚠️ Failed to load meeting at \(fileURL.lastPathComponent): \(error)")
+            AppLog.storage.debug("⚠️ Failed to load meeting at \(fileURL.lastPathComponent): \(error)")
             return nil
         }
     }
@@ -376,10 +376,10 @@ class LocalStorageManager {
             deletedMeetingIDs.insert(meetingId)
             try removeFileIfPresent(at: fileURL)
             try removeFileIfPresent(at: summaryURL)
-            print("✅ Deleted meeting: \(meetingId)")
+            AppLog.storage.debug("✅ Deleted meeting: \(meetingId)")
             return true
         } catch {
-            print("❌ Failed to delete meeting: \(error)")
+            AppLog.storage.debug("❌ Failed to delete meeting: \(error)")
             return false
         }
     }
@@ -403,9 +403,9 @@ class LocalStorageManager {
             let destination = uniqueQuarantineURL(for: fileURL)
             try FileManager.default.moveItem(at: fileURL, to: destination)
             try removeFileIfPresent(at: meetingSummaryFileURL(for: meetingId))
-            print("🚧 Quarantined meeting \(meetingId) after \(reason): \(destination.lastPathComponent)")
+            AppLog.storage.debug("🚧 Quarantined meeting \(meetingId) after \(reason): \(destination.lastPathComponent)")
         } catch {
-            print("❌ Failed to quarantine meeting \(meetingId): \(error)")
+            AppLog.storage.debug("❌ Failed to quarantine meeting \(meetingId): \(error)")
         }
     }
 
@@ -432,7 +432,7 @@ class LocalStorageManager {
             let data = try encoder.encode(summary)
             try replaceFileAtomically(at: fileURL, with: data)
         } catch {
-            print("⚠️ Failed to save meeting summary \(summary.id): \(error)")
+            AppLog.storage.debug("⚠️ Failed to save meeting summary \(summary.id): \(error)")
         }
     }
 
@@ -461,10 +461,10 @@ class LocalStorageManager {
             let data = try encoder.encode(template)
             try replaceFileAtomically(at: fileURL, with: data)
 
-            print("✅ Saved template: \(template.id)")
+            AppLog.storage.debug("✅ Saved template: \(template.id)")
             return true
         } catch {
-            print("❌ Failed to save template: \(error)")
+            AppLog.storage.debug("❌ Failed to save template: \(error)")
             return false
         }
     }
@@ -498,13 +498,13 @@ class LocalStorageManager {
                         _ = saveTemplateLocked(migratedTemplate)
                     }
                     templates.append(migratedTemplate)
-                    print("✅ Loaded template: \(migratedTemplate.id)")
+                    AppLog.storage.debug("✅ Loaded template: \(migratedTemplate.id)")
                 } catch {
-                    print("❌ Failed to load template from \(fileURL): \(error)")
+                    AppLog.storage.debug("❌ Failed to load template from \(fileURL): \(error)")
                 }
             }
         } catch {
-            print("❌ Failed to read templates directory: \(error)")
+            AppLog.storage.debug("❌ Failed to read templates directory: \(error)")
         }
         
         migrateDefaultTemplatesIfNeeded(&templates)
@@ -518,7 +518,7 @@ class LocalStorageManager {
             if !existingTitles.contains(defaultTemplate.title) {
                 _ = saveTemplateLocked(defaultTemplate)
                 templates.append(defaultTemplate)
-                print("✅ Added missing default template: \(defaultTemplate.title)")
+                AppLog.storage.debug("✅ Added missing default template: \(defaultTemplate.title)")
             }
         }
         
@@ -600,7 +600,7 @@ class LocalStorageManager {
     private func deleteTemplateLocked(_ template: NoteTemplate) -> Bool {
         // Don't allow deletion of default templates
         if template.isDefault {
-            print("⚠️ Cannot delete default template")
+            AppLog.storage.debug("⚠️ Cannot delete default template")
             return false
         }
         
@@ -608,10 +608,10 @@ class LocalStorageManager {
         
         do {
             try FileManager.default.removeItem(at: fileURL)
-            print("✅ Deleted template: \(template.id)")
+            AppLog.storage.debug("✅ Deleted template: \(template.id)")
             return true
         } catch {
-            print("❌ Failed to delete template: \(error)")
+            AppLog.storage.debug("❌ Failed to delete template: \(error)")
             return false
         }
     }

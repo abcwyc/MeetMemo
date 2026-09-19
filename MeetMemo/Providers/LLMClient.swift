@@ -17,7 +17,7 @@ final class LLMClient: LLMProvider {
                         continuation.yield(chunk)
                     }
                 } catch {
-                    print("❌ LLM stream failed: \(error)")
+                    AppLog.llm.debug("❌ LLM stream failed: \(error)")
                 }
 
                 continuation.finish()

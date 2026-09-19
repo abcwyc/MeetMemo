@@ -76,7 +76,7 @@ final class AudioProcessingPipeline: @unchecked Sendable {
                 droppedBuffers += 1
                 droppedInputFrames += buffer.frameLength
                 if droppedBuffers == 1 || droppedBuffers % 50 == 0 {
-                    print("⚠️ Dropped \(droppedBuffers) \(source.rawValue) audio buffers because the processing queue is backlogged; gaps are filled with silence.")
+                    AppLog.audio.debug("⚠️ Dropped \(self.droppedBuffers) \(self.source.rawValue) audio buffers because the processing queue is backlogged; gaps are filled with silence.")
                 }
                 return nil
             }

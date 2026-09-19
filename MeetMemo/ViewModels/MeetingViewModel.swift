@@ -146,7 +146,7 @@ class MeetingViewModel: ObservableObject {
         initialHasGeneratedNotes: Bool? = nil,
         meetingIsFullyLoaded: Bool = false
     ) {
-        print("🆕 Using provided meeting placeholder: \(meeting.id)")
+        AppLog.ui.debug("🆕 Using provided meeting placeholder: \(meeting.id)")
         self.meeting = meeting
         self.transcriptDisplayChunks = meeting.transcriptDisplayChunks
         self.selectedTab = initialSelectedTab ?? Self.preferredInitialTab(for: meeting)
@@ -236,11 +236,11 @@ class MeetingViewModel: ObservableObject {
                 // Suppress non-critical, self-healing errors that should not distract the user
                 let lowercased = errorMessage.lowercased()
                 if errorMessage == ErrorMessage.sessionExpired || lowercased.contains("socket is not connected") {
-                    print("ℹ️ Suppressed non-critical error: \(errorMessage)")
+                    AppLog.ui.debug("ℹ️ Suppressed non-critical error: \(errorMessage)")
                     return
                 }
                 self.errorMessage = errorMessage
-                print("🚨 Recording Session Manager Error: \(errorMessage)")
+                AppLog.ui.debug("🚨 Recording Session Manager Error: \(errorMessage)")
             }
             .store(in: &cancellables)
 
@@ -292,7 +292,7 @@ class MeetingViewModel: ObservableObject {
                 // edit and must never be merged over the disk copy.
                 guard self.hasCompletedInitialLoad else { return }
                 self.hasLocalUnsavedChanges = true
-                print("🔄 Auto-saving meeting: \(meeting.id) - title: '\(meeting.title)', context: '\(meeting.formattedMeetingContext.prefix(50))...'")
+                AppLog.ui.debug("🔄 Auto-saving meeting: \(meeting.id) - title: '\(meeting.title)', context: '\(meeting.formattedMeetingContext.prefix(50))...'")
                 self.saveMeeting()
             }
             .store(in: &cancellables)
@@ -356,7 +356,7 @@ class MeetingViewModel: ObservableObject {
         flushPendingChanges()
         deleteIfEmpty()
 
-        print("🔁 Switching detail meeting: \(meeting.id)")
+        AppLog.ui.debug("🔁 Switching detail meeting: \(meeting.id)")
         isApplyingLoadedMeeting = true
         self.meeting = meeting
         if activeGenerationMeetingId == meeting.id, let liveNotes = activeGenerationNotes {
@@ -531,7 +531,7 @@ class MeetingViewModel: ObservableObject {
             }
             guard self.meeting.id == meetingId else { return }
 
-            print("🔄 Loaded full meeting: \(meetingId)")
+            AppLog.ui.debug("🔄 Loaded full meeting: \(meetingId)")
             self.isApplyingLoadedMeeting = true
             let isLiveRecording = self.recordingSessionManager.isRecordingMeeting(meetingId)
             if isLiveRecording {
@@ -842,7 +842,7 @@ class MeetingViewModel: ObservableObject {
                     errorMessage = error
                 }
                 hasError = true
-                print("🚨 Note Generation Error: \(error)")
+                AppLog.ui.debug("🚨 Note Generation Error: \(error)")
             }
         }
 
@@ -918,9 +918,9 @@ class MeetingViewModel: ObservableObject {
 
     func saveMeeting() {
         if isDeleted || !hasCompletedInitialLoad { return }
-        print("💾 Saving meeting: \(meeting.id)")
+        AppLog.ui.debug("💾 Saving meeting: \(self.meeting.id)")
         let success = LocalStorageManager.shared.saveMeeting(meeting)
-        print("💾 Save result: \(success ? "SUCCESS" : "FAILED")")
+        AppLog.ui.debug("💾 Save result: \(success ? "SUCCESS" : "FAILED")")
         if success {
             hasLocalUnsavedChanges = false
             NotificationCenter.default.post(name: .meetingSaved, object: meeting)
@@ -942,9 +942,9 @@ class MeetingViewModel: ObservableObject {
     }
 
     private func savePersistedMeeting(_ meeting: Meeting) {
-        print("💾 Saving background meeting: \(meeting.id)")
+        AppLog.ui.debug("💾 Saving background meeting: \(meeting.id)")
         let success = LocalStorageManager.shared.saveMeeting(meeting)
-        print("💾 Background save result: \(success ? "SUCCESS" : "FAILED")")
+        AppLog.ui.debug("💾 Background save result: \(success ? "SUCCESS" : "FAILED")")
         if success {
             if self.meeting.id == meeting.id {
                 hasLocalUnsavedChanges = false
@@ -1057,7 +1057,7 @@ class MeetingViewModel: ObservableObject {
             if meeting.id == meetingId {
                 structuredSummaryErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
-            print("⚠️ Structured extraction failed: \(error)")
+            AppLog.ui.debug("⚠️ Structured extraction failed: \(error)")
         }
     }
 
@@ -1386,7 +1386,7 @@ class MeetingViewModel: ObservableObject {
         cancelPendingRecordingStart()
         // If this meeting is currently being recorded, stop the recording first
         if recordingSessionManager.isRecordingMeeting(meeting.id) {
-            print("🛑 Stopping recording for meeting being deleted: \(meeting.id)")
+            AppLog.ui.debug("🛑 Stopping recording for meeting being deleted: \(self.meeting.id)")
             recordingSessionManager.stopRecording()
         }
 
@@ -1404,7 +1404,7 @@ class MeetingViewModel: ObservableObject {
         guard !isDeleted else { return }
         guard hasCompletedInitialLoad else { return }
         if isEmpty && !isRecording {
-            print("🗑️ Auto-deleting empty meeting")
+            AppLog.ui.debug("🗑️ Auto-deleting empty meeting")
             deleteMeeting()
         } else {
             saveMeeting()

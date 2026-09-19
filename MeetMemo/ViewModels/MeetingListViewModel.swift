@@ -60,7 +60,7 @@ class MeetingListViewModel: ObservableObject {
         // Listen for saved meeting notifications to refresh the list
         NotificationCenter.default.publisher(for: .meetingSaved)
             .sink { [weak self] notification in
-                print("🔔 Meeting saved notification received. Reloading meetings list...")
+                AppLog.ui.debug("🔔 Meeting saved notification received. Reloading meetings list...")
                 guard let self else { return }
 
                 if let meeting = notification.object as? Meeting {
@@ -73,7 +73,7 @@ class MeetingListViewModel: ObservableObject {
         
         NotificationCenter.default.publisher(for: .meetingDeleted)
             .sink { [weak self] notification in
-                print("🔔 Meeting deleted notification received. Reloading meetings list...")
+                AppLog.ui.debug("🔔 Meeting deleted notification received. Reloading meetings list...")
                 guard let self else { return }
 
                 if let meeting = notification.object as? Meeting {
@@ -95,7 +95,7 @@ class MeetingListViewModel: ObservableObject {
             let loadedMeetings = await Task.detached(priority: .userInitiated) {
                 LocalStorageManager.shared.loadMeetingSummaries()
             }.value
-            print("📋 Loaded \(loadedMeetings.count) meetings")
+            AppLog.ui.debug("📋 Loaded \(loadedMeetings.count) meetings")
 
             guard let self else { return }
             self.meetings = loadedMeetings
@@ -107,7 +107,7 @@ class MeetingListViewModel: ObservableObject {
     
     func deleteMeeting(_ meeting: MeetingSummary) {
         if recordingSessionManager.isRecordingMeeting(meeting.id) {
-            print("🛑 Stopping recording for meeting being deleted from sidebar: \(meeting.id)")
+            AppLog.ui.debug("🛑 Stopping recording for meeting being deleted from sidebar: \(meeting.id)")
             recordingSessionManager.stopRecording()
         }
 

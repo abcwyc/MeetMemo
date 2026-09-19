@@ -233,7 +233,7 @@ extension AudioObjectID {
                     inputDevices.append(AudioInputDevice(id: deviceID, uid: deviceUID, name: deviceName))
                 }
             } catch {
-                print("CoreAudioUtils: Could not fully query device \(deviceID): \(error)")
+                AppLog.audio.debug("CoreAudioUtils: Could not fully query device \(deviceID): \(error)")
             }
         }
         return inputDevices
