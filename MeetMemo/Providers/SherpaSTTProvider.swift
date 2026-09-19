@@ -86,10 +86,11 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
                         SherpaModelManager.shared.activeSenseVoiceModelFileName
                     )
                 }.value
-                runtime = try SherpaOnnxRuntime.make(
+                let runtime = try SherpaOnnxRuntime.make(
                     modelDirectory: runtimeConfig.0,
                     senseVoiceModelFileName: runtimeConfig.1
                 )
+                installRuntime(runtime)
             case .funASRNano:
                 let modelDir = try await Task { @MainActor () throws -> URL in
                     guard SherpaModelManager.shared.modelFilesReady(SherpaModelManager.funASRNanoModelFiles) else {
@@ -97,7 +98,8 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
                     }
                     return SherpaModelManager.shared.modelDirectory
                 }.value
-                runtime = try SherpaOnnxRuntime.makeFunASRNano(modelDirectory: modelDir)
+                let runtime = try SherpaOnnxRuntime.makeFunASRNano(modelDirectory: modelDir)
+                installRuntime(runtime)
             }
         } catch {
             onError?(error.localizedDescription)
@@ -105,25 +107,41 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         }
     }
 
+    /// All mutable state (runtime included) belongs to `workQueue`. Creation is
+    /// expensive and happens off-queue; the finished runtime is installed
+    /// synchronously so that audio sent right after `connect` returns is
+    /// processed, not dropped.
+    private func installRuntime(_ runtime: SherpaOnnxRuntime) {
+        workQueue.sync { self.runtime = runtime }
+    }
+
     func sendAudio(_ pcmData: Data) {
-        guard let runtime else { return }
         workQueue.async { [weak self] in
-            guard let self else { return }
+            guard let self, let runtime = self.runtime else { return }
             self.processIncomingBytes(pcmData, runtime: runtime)
         }
     }
 
     func sendLastAudio() {
-        guard let runtime else { return }
         workQueue.async { [weak self] in
-            guard let self else { return }
+            guard let self, let runtime = self.runtime else { return }
             runtime.flushVAD()
             self.drainCompletedSegments(runtime: runtime, force: true)
         }
     }
 
     func disconnect() {
-        logDebugSummary()
+        // Synchronous on purpose: disconnect must take effect before it
+        // returns, and the queue is expected to be empty by the time the host
+        // stops the stream (it awaits finalization first). Never call this
+        // from inside `workQueue` — it would deadlock.
+        workQueue.sync {
+            logDebugSummary()
+            resetState()
+        }
+    }
+
+    private func resetState() {
         runtime = nil
         ringBuffer.removeAll(keepingCapacity: false)
         totalSamplesIngested = 0
@@ -142,10 +160,11 @@ final class SherpaSTTProvider: STTProvider, @unchecked Sendable {
         let inputSeconds = Double(totalSamplesIngested) / Double(Self.sampleRate)
         let vadSeconds = Double(vadSpeechSamples) / Double(Self.sampleRate)
         let passedRatio = inputSeconds > 0 ? vadSeconds / inputSeconds : 0
-        print(String(
+        let summary = String(
             format: "🔎 SenseVoice session: input %.1fs | VAD-passed %.1fs (%.0f%%) | segments %d | empty-decodes %d | fallback %d",
             inputSeconds, vadSeconds, passedRatio * 100, emittedSegmentCount, emptyDecodeCount, fallbackDecodeCount
-        ))
+        )
+        AppLog.stt.debug("\(summary)")
     }
 
     func testConnection(config: STTProviderConfig, timeout: TimeInterval) async throws {
