@@ -13,6 +13,7 @@ enum STTEngine: String, CaseIterable {
     case appleSpeechAnalyzer = "apple"
     case sherpaSenseVoice = "sherpa"
     case funASRNano = "funasr"
+    case confuciusR2T2MLX = "confucius-mlx"
 }
 
 /// Manages non-sensitive app settings using UserDefaults

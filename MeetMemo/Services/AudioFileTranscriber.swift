@@ -42,6 +42,13 @@ final class AudioFileTranscriber {
                 url: url,
                 progress: progress
             )
+        case .confuciusR2T2MLX:
+            return try await transcribeWithProvider(
+                ConfuciusR2T2STTProviderFactory().makeProvider(),
+                config: config,
+                url: url,
+                progress: progress
+            )
         }
     }
 

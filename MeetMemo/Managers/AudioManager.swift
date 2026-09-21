@@ -1013,6 +1013,8 @@ class AudioManager: NSObject, ObservableObject {
             return SherpaSTTProviderFactory()
         case .funASRNano:
             return SherpaSTTProviderFactory(kind: .funASRNano)
+        case .confuciusR2T2MLX:
+            return ConfuciusR2T2STTProviderFactory()
         }
     }
 

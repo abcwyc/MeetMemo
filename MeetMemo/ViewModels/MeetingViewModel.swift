@@ -660,6 +660,11 @@ class MeetingViewModel: ObservableObject {
                     guard FunASRNanoModelManager.shared.isReady else {
                         throw FunASRNanoError.modelsNotReady
                     }
+                case .confuciusR2T2MLX:
+                    await ConfuciusServiceStatus.shared.refresh()
+                    guard ConfuciusServiceStatus.shared.isRunning else {
+                        throw ConfuciusServiceError.serverNotRunning
+                    }
                 }
                 try Task.checkCancellation()
                 guard self.recordingStartToken == token,

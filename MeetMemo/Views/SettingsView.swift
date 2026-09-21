@@ -9,6 +9,8 @@ struct SettingsView: View {
     @ObservedObject private var speechInstaller = SpeechModelInstaller.shared
     @ObservedObject private var sherpaModel = SherpaModelManager.shared
     @ObservedObject private var funASRNanoModel = FunASRNanoModelManager.shared
+    @ObservedObject private var confuciusService = ConfuciusServiceStatus.shared
+    @ObservedObject private var confuciusModel = ConfuciusModelManager.shared
     @ObservedObject private var audioManager = AudioManager.shared
     @ObservedObject private var voiceInputHotkey = VoiceInputHotkeyManager.shared
     @ObservedObject private var voiceInputManager = VoiceInputManager.shared
@@ -210,6 +212,7 @@ struct SettingsView: View {
                     Text("Fun-ASR-Nano").tag(STTEngine.funASRNano)
                     Text(langMgr.t("macOS 内置", "macOS Built-in")).tag(STTEngine.appleSpeechAnalyzer)
                         .disabled(!isAppleSpeechAnalyzerAvailable)
+                    Text("Confucius-R2T2").tag(STTEngine.confuciusR2T2MLX)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -241,6 +244,8 @@ struct SettingsView: View {
                     appleSpeechEngineCard
                 } else if sttEngine == .funASRNano {
                     funASRNanoEngineCard
+                } else if sttEngine == .confuciusR2T2MLX {
+                    confuciusEngineCard
                 } else {
                     sherpaSenseVoiceEngineCard
                 }
@@ -501,6 +506,11 @@ struct SettingsView: View {
                 "高精度多语言/方言识别，支持区分发言人；模型约 1GB，需先下载，下载后离线运行。基于 LLM，CPU 上比 SenseVoice 略慢、内存占用更高，转写会在每句说完后稍有延迟。",
                 "High-accuracy multilingual/dialect recognition with speaker separation. ~1 GB model, download required, runs offline afterward. LLM-based: slightly slower than SenseVoice on CPU, uses more memory, and text appears with a short delay after each utterance."
             )
+        case .confuciusR2T2MLX:
+            return langMgr.t(
+                "本地大模型流式引擎（2B，MLX 加速）：识别精度最高、边说边出字，中英混合免切换；暂不支持区分发言人，且需要先在终端启动本地服务（见下方卡片）。8GB 内存机器自动用 4bit，16GB 及以上用 8bit。",
+                "Local streaming engine with a 2B model (MLX-accelerated): top accuracy with text appearing live, mixed Chinese/English without switching; no speaker separation yet, and requires starting the local service in Terminal first (see the card below). Machines with 8 GB RAM automatically use the 4-bit model, 16 GB and above use 8-bit."
+            )
         }
     }
 
@@ -557,6 +567,147 @@ struct SettingsView: View {
         .padding(12)
         .background(Color.secondary.opacity(0.08))
         .cornerRadius(8)
+    }
+
+    private var confuciusEngineCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(langMgr.t("引擎", "Engine"))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("MLX · Confucius4-R2T2 · ws://127.0.0.1:8272")
+                    .font(.system(.body, design: .monospaced))
+            }
+
+            // 模型下载区
+            HStack(spacing: 10) {
+                if confuciusModel.isDownloading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: confuciusModel.isReady ? "checkmark.circle.fill" : "arrow.down.circle")
+                        .foregroundColor(confuciusModel.isReady ? .green : .secondary)
+                }
+                Text(confuciusModelStatusText)
+                    .foregroundColor(.secondary)
+                Spacer()
+                if confuciusModel.isDownloading {
+                    Button {
+                        confuciusModel.cancelDownload()
+                    } label: {
+                        Text(langMgr.t("取消", "Cancel"))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                } else {
+                    Button {
+                        Task {
+                            if confuciusModel.isReady {
+                                await confuciusModel.refreshReadiness()
+                            } else {
+                                try? await confuciusModel.installModels()
+                            }
+                        }
+                    } label: {
+                        Text(confuciusModel.isReady
+                             ? langMgr.t("重新检查", "Check Again")
+                             : langMgr.t("下载模型 (\(confuciusModel.activeTier.gigabytes))",
+                                        "Download Models (\(confuciusModel.activeTier.gigabytes))"))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(audioManager.isRecording)
+                }
+            }
+            .task { await confuciusModel.refreshReadiness() }
+
+            if confuciusModel.isDownloading, let progress = confuciusModel.downloadProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+            }
+
+            if let error = confuciusModel.installError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // 服务状态区
+            HStack(spacing: 10) {
+                Image(systemName: confuciusService.isRunning ? "checkmark.circle.fill" : "exclamationmark.circle")
+                    .foregroundColor(confuciusService.isRunning ? .green : .orange)
+                Text(confuciusServiceStatusText)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    Task { await confuciusService.refresh() }
+                } label: {
+                    if confuciusService.isChecking {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text(langMgr.t("检查服务", "Check Service"))
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .task { await confuciusService.refresh() }
+
+            if confuciusService.isRunning {
+                Text(langMgr.t(
+                    "服务运行中：\(confuciusService.modelName ?? "unknown")，当前连接 \(confuciusService.activeConnections) 路。模型与识别均在本机完成。",
+                    "Service running: \(confuciusService.modelName ?? "unknown"), \(confuciusService.activeConnections) active connection(s). Model and inference stay on this Mac."
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+            } else {
+                Text(langMgr.t(
+                    "模型就绪后，在终端执行以下命令启动本地服务：",
+                    "With the model downloaded, start the local service in Terminal:"
+                ))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                Text("cd ~/VibeCode/r2t2-mlx && .venv/bin/python ws_server.py")
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(4)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08))
+        .cornerRadius(8)
+    }
+
+    private var confuciusModelStatusText: String {
+        let tier = confuciusModel.activeTier
+        if confuciusModel.isDownloading {
+            let percent = Int(((confuciusModel.downloadProgress ?? 0) * 100).rounded())
+            return langMgr.t(
+                "正在下载 \(tier.displayName) 模型… \(percent)%",
+                "Downloading the \(tier.displayName) model… \(percent)%"
+            )
+        }
+        if confuciusModel.isReady {
+            return langMgr.t(
+                "模型已就绪 · \(tier.displayName)（按本机内存自动选择）",
+                "Model ready · \(tier.displayName) (auto-selected by RAM)"
+            )
+        }
+        return langMgr.t(
+            "模型未下载 · \(tier.displayName)（\(tier.gigabytes)，按本机内存自动选择）",
+            "Model not downloaded · \(tier.displayName) (\(tier.gigabytes), auto-selected by RAM)"
+        )
+    }
+
+    private var confuciusServiceStatusText: String {
+        if confuciusService.isRunning {
+            return langMgr.t("本地服务运行中", "Local service running")
+        }
+        return langMgr.t("本地服务未运行", "Local service not running")
     }
 
     private var sherpaSenseVoiceEngineCard: some View {

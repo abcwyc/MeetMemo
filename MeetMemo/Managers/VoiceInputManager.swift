@@ -204,6 +204,11 @@ final class VoiceInputManager: NSObject, ObservableObject {
                     "Built-in speech recognition requires macOS 26 or later."
                 ))
             }
+        case .confuciusR2T2MLX:
+            await ConfuciusServiceStatus.shared.refresh()
+            guard ConfuciusServiceStatus.shared.isRunning else {
+                throw VoiceInputError.modelNotReady(ConfuciusServiceError.serverNotRunning.localizedDescription)
+            }
         }
     }
 
@@ -412,6 +417,8 @@ final class VoiceInputManager: NSObject, ObservableObject {
             return SherpaSTTProviderFactory()
         case .funASRNano:
             return SherpaSTTProviderFactory(kind: .funASRNano)
+        case .confuciusR2T2MLX:
+            return ConfuciusR2T2STTProviderFactory()
         }
     }
 
