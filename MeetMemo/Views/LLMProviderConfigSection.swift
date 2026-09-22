@@ -111,7 +111,9 @@ struct LLMProviderConfigSection: View {
         LLMPresetProviders.resolve(for: settings)
     }
 
-    /// 切换预设：自动填充 Base URL 与默认模型，API Key 换成该供应商自己记忆的那把（没有则留空）。
+    /// 切换预设：自动填充 Base URL，API Key 换成该供应商自己记忆的那把（没有则留空）。
+    /// 已保存的模型名不主动改写（保留用户手选/手输的值）；仅在为空时补默认模型，
+    /// 避免新用户选完供应商后模型字段实际为空。
     private func select(_ preset: LLMPresetProvider) {
         guard activePreset?.id != preset.id else { return }
         if let current = activePreset {
@@ -119,7 +121,9 @@ struct LLMProviderConfigSection: View {
         }
         settings.llmPresetID = preset.id
         settings.llmBaseURL = preset.baseURL
-        settings.llmModel = preset.defaultModel
+        if settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            settings.llmModel = preset.defaultModel
+        }
         settings.llmApiKey = apiKeysByPreset[preset.id] ?? ""
         isManualModelEntry = false
     }
