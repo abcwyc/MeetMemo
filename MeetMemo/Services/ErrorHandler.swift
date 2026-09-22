@@ -62,6 +62,9 @@ class ErrorHandler {
         case 200...299:
             return ErrorMessage.success
         case 400:
+            if isContextTooLongDetail(detail) {
+                return ErrorMessage.contextTooLong
+            }
             return ErrorMessage.badRequest
         case 401:
             return ErrorMessage.invalidAPIKey
@@ -236,6 +239,19 @@ class ErrorHandler {
             || normalized.contains("并发额度")
     }
 
+    /// 输入超出模型上下文窗口（OpenAI `context_length_exceeded` 及各兼容网关的变体说法）。
+    private func isContextTooLongDetail(_ detail: String) -> Bool {
+        let normalized = detail.lowercased()
+        return normalized.contains("context_length_exceeded")
+            || normalized.contains("context length")
+            || normalized.contains("context window")
+            || normalized.contains("maximum context")
+            || normalized.contains("prompt is too long")
+            || normalized.contains("too many tokens")
+            || normalized.contains("上下文")
+            || normalized.contains("输入过长")
+    }
+
 }
 
 /// HTTP error type
@@ -267,6 +283,7 @@ enum ErrorMessage {
     static let insufficientFunds = "账户余额不足，请充值。"
     static let accessForbidden = "访问被拒绝。请检查凭证权限。"
     static let apiEndpointNotFound = "API 端点不存在。请检查服务地址。OpenAI 兼容服务需要填写基础地址，例如火山方舟 https://ark.cn-beijing.volces.com/api/v3，火山方舟 Coding Plan https://ark.cn-beijing.volces.com/api/coding/v3，Kimi 官方 https://api.moonshot.cn/v1。"
+    static let contextTooLong = "请求超出所选模型的上下文窗口长度。请在设置中换用上下文更长的模型后重试。"
     static let rateLimited = "API 请求频率超限，请稍后再试。"
     static let sttConcurrencyQuotaExceeded = "服务并发额度已达上限。请结束其他任务后稍后重试。"
     static let apiServerError = "服务端错误，请稍后再试。"
