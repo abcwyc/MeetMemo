@@ -22,6 +22,7 @@ struct SettingsView: View {
     @State private var inputMonitoringPermissionGranted = false
     @State private var audioRecordingPermission = AudioRecordingPermission()
     @State private var sttEngine: STTEngine = UserDefaultsManager.shared.sttEngine
+    @State private var hoveredSTTEngine: STTEngine?
     @State private var voiceInputEnabled = UserDefaultsManager.shared.voiceInputEnabled
     @State private var voiceInputTriggerMode = UserDefaultsManager.shared.voiceInputTriggerMode
     @State private var voiceInputTriggerKey = VoiceInputTriggerKey.resolve(from: UserDefaultsManager.shared.voiceInputShortcut)
@@ -207,26 +208,7 @@ struct SettingsView: View {
                     .font(.headline)
                     .foregroundColor(.primary)
 
-                Picker("", selection: $sttEngine) {
-                    Text("SenseVoice").tag(STTEngine.sherpaSenseVoice)
-                    Text("Fun-ASR-Nano").tag(STTEngine.funASRNano)
-                    Text(langMgr.t("macOS 内置", "macOS Built-in")).tag(STTEngine.appleSpeechAnalyzer)
-                        .disabled(!isAppleSpeechAnalyzerAvailable)
-                    Text("Confucius-R2T2").tag(STTEngine.confuciusR2T2MLX)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 420, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .disabled(audioManager.isRecording)
-                .onChange(of: sttEngine) { _, newValue in
-                    if newValue == .appleSpeechAnalyzer && !isAppleSpeechAnalyzerAvailable {
-                        sttEngine = .sherpaSenseVoice
-                        UserDefaultsManager.shared.sttEngine = .sherpaSenseVoice
-                        return
-                    }
-                    UserDefaultsManager.shared.sttEngine = newValue
-                }
+                sttEngineTabBar
 
                 Text(sttEngineDescriptionText)
                     .font(.caption)
@@ -483,6 +465,78 @@ struct SettingsView: View {
         .cornerRadius(8)
     }
 
+    // 不用系统 segmented 控件：macOS 26 会给选中段文字加粗，各段按内容
+    // 重排宽度，切换引擎时其余选项会左右跳动。自绘等宽分段规避此问题。
+    private var sttEngineTabBar: some View {
+        HStack(spacing: 4) {
+            ForEach(sttEngineDisplayOrder, id: \.self) { engine in
+                sttEngineTab(engine)
+            }
+        }
+        .padding(4)
+        .background {
+            Capsule(style: .continuous)
+                .fill(Color.secondary.opacity(0.08))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.32), lineWidth: 1)
+                }
+        }
+        .frame(width: 420, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(audioManager.isRecording ? 0.5 : 1)
+        .disabled(audioManager.isRecording)
+    }
+
+    private var sttEngineDisplayOrder: [STTEngine] {
+        [.sherpaSenseVoice, .funASRNano, .confuciusR2T2MLX, .appleSpeechAnalyzer]
+    }
+
+    private func sttEngineTab(_ engine: STTEngine) -> some View {
+        let isSelected = sttEngine == engine
+        let isAvailable = engine != .appleSpeechAnalyzer || isAppleSpeechAnalyzerAvailable
+        return Button {
+            guard isAvailable else { return }
+            sttEngine = engine
+            UserDefaultsManager.shared.sttEngine = engine
+        } label: {
+            // 隐藏的 semibold 文字垫住最小宽度，选中加粗不改变分段宽度
+            Text(sttEngineTitle(engine))
+                .font(.system(size: 13, weight: .semibold))
+                .hidden()
+                .overlay {
+                    Text(sttEngineTitle(engine))
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                        .foregroundColor(isSelected ? .primary : .secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+                .background {
+                    if isSelected || (hoveredSTTEngine == engine && isAvailable) {
+                        Capsule(style: .continuous)
+                            .fill(Color.secondary.opacity(isSelected ? 0.18 : 0.10))
+                    }
+                }
+                .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .opacity(isAvailable ? 1 : 0.35)
+        .onHover { hovering in
+            hoveredSTTEngine = hovering ? engine : (hoveredSTTEngine == engine ? nil : hoveredSTTEngine)
+        }
+    }
+
+    private func sttEngineTitle(_ engine: STTEngine) -> String {
+        switch engine {
+        case .sherpaSenseVoice: return "SenseVoice"
+        case .funASRNano: return "Fun-ASR-Nano"
+        case .confuciusR2T2MLX: return "Confucius-R2T2"
+        case .appleSpeechAnalyzer: return langMgr.t("macOS 内置", "macOS Built-in")
+        }
+    }
+
     private var sttEngineDescriptionText: String {
         switch sttEngine {
         case .appleSpeechAnalyzer:
@@ -508,8 +562,8 @@ struct SettingsView: View {
             )
         case .confuciusR2T2MLX:
             return langMgr.t(
-                "本地大模型流式引擎（2B，MLX 加速）：识别精度最高、边说边出字，中英混合免切换；暂不支持区分发言人，且需要先在终端启动本地服务（见下方卡片）。8GB 内存机器自动用 4bit，16GB 及以上用 8bit。",
-                "Local streaming engine with a 2B model (MLX-accelerated): top accuracy with text appearing live, mixed Chinese/English without switching; no speaker separation yet, and requires starting the local service in Terminal first (see the card below). Machines with 8 GB RAM automatically use the 4-bit model, 16 GB and above use 8-bit."
+                "本地大模型流式引擎（2B，MLX GPU 加速）：识别精度最高、边说边出字，中英混合免切换；全设备统一 4bit 量化档（1.5GB，需先下载）。注意：转写期间会持续占用 GPU 和约 2GB 内存（含本地服务进程），耗电与发热明显增加，可能影响同时运行的其他高负载任务。暂不支持区分发言人，且需先在终端启动本地服务（见下方卡片）。",
+                "Local streaming engine with a 2B model (MLX GPU-accelerated): top accuracy with live text and mixed Chinese/English without switching; a single 4-bit tier (1.5 GB) is used on all machines and must be downloaded first. Note: while transcribing it keeps the GPU busy and takes about 2 GB of RAM (including the local service process), noticeably increasing battery drain and heat, and may slow other heavy tasks running at the same time. No speaker separation yet, and the local service must be started in Terminal first (see the card below)."
             )
         }
     }
@@ -693,13 +747,13 @@ struct SettingsView: View {
         }
         if confuciusModel.isReady {
             return langMgr.t(
-                "模型已就绪 · \(tier.displayName)（按本机内存自动选择）",
-                "Model ready · \(tier.displayName) (auto-selected by RAM)"
+                "模型已就绪 · \(tier.displayName)（\(tier.gigabytes)）",
+                "Model ready · \(tier.displayName) (\(tier.gigabytes))"
             )
         }
         return langMgr.t(
-            "模型未下载 · \(tier.displayName)（\(tier.gigabytes)，按本机内存自动选择）",
-            "Model not downloaded · \(tier.displayName) (\(tier.gigabytes), auto-selected by RAM)"
+            "模型未下载 · \(tier.displayName)（\(tier.gigabytes)）",
+            "Model not downloaded · \(tier.displayName) (\(tier.gigabytes))"
         )
     }
 
@@ -1153,9 +1207,15 @@ private struct SettingsSectionTabBar: View {
                 Button {
                     selectedSection = section
                 } label: {
+                    // 隐藏的 semibold 文字固定占位宽度，避免选中态加粗导致标签间距抖动
                     Text(section.title(using: langMgr))
-                        .font(.system(size: 13, weight: selectedSection == section ? .semibold : .medium))
-                        .foregroundColor(selectedSection == section ? .primary : .secondary)
+                        .font(.system(size: 13, weight: .semibold))
+                        .hidden()
+                        .overlay {
+                            Text(section.title(using: langMgr))
+                                .font(.system(size: 13, weight: selectedSection == section ? .semibold : .medium))
+                                .foregroundColor(selectedSection == section ? .primary : .secondary)
+                        }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .background {
