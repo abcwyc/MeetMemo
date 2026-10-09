@@ -2,6 +2,7 @@
 // Handles AI-powered note generation using the configured LLM provider
 
 import Foundation
+import os
 
 /// Result type for note generation streaming
 enum GenerationResult {
@@ -51,6 +52,8 @@ final class NotesGenerator {
 
     建议、设想和讨论方向不得改写为决策或行动项。保留有用的发言人和时间戳。不要撰写最终纪要，只输出精炼的 Markdown 证据台账，在不遗漏关键信息的前提下尽量控制在 2500 个中文字以内。
     """
+
+    private static let logger = Logger(subsystem: "com.youcai.meetmemo", category: "NotesGenerator")
 
     private let client: LLMProvider
     private let evidenceCache: EvidenceLedgerCache
@@ -171,7 +174,7 @@ final class NotesGenerator {
 
                 do {
                     var receivedContent = false
-                    try await self.streamAnswerWithContinuation(
+                    let trimmedRepetition = try await self.streamAnswerWithContinuation(
                         config: config,
                         messages: messages,
                         sanitizer: NotesStreamSanitizer()
@@ -182,6 +185,11 @@ final class NotesGenerator {
 
                     if !receivedContent {
                         continuation.yield(.error("No content was returned by the model."))
+                    } else if trimmedRepetition {
+                        continuation.yield(.notice(LanguageManager.shared.t(
+                            "检测到模型重复输出，已自动截断重复部分，纪要末尾可能不完整，建议重新生成。",
+                            "The model started repeating itself; the repeated part was trimmed and the notes may end abruptly. Consider regenerating."
+                        )))
                     }
 
                     continuation.finish()
@@ -290,15 +298,23 @@ final class NotesGenerator {
     /// resumed output keeps flowing through `onChunk` in order. Throws
     /// `LLMCompletionError.truncated` when even the continuation rounds cannot
     /// finish the answer.
+    ///
+    /// Some models degenerate into endless repetition (e.g. empty table rows)
+    /// and never emit a stop token. `RepetitionGuard` detects that loop, the
+    /// repeated tail is dropped, the stream is cancelled and the notes written
+    /// so far are kept.
+    /// - Returns: `true` when a repetition loop was detected and trimmed.
+    @discardableResult
     func streamAnswerWithContinuation(
         config: LLMProviderConfig,
         messages: [ChatMessage],
         sanitizer: NotesStreamSanitizer,
         onChunk: (String) -> Void
-    ) async throws {
+    ) async throws -> Bool {
         var outputBudget = Self.notesOutputTokenBudget
         var emitted = ""
         var round = 0
+        let repetitionGuard = RepetitionGuard()
 
         while true {
             round += 1
@@ -315,13 +331,23 @@ final class NotesGenerator {
             let emittedCountBeforeRound = emitted.count
             var endedAtOutputCap = false
 
-            // 冲刷 sanitizer 中因尚未出现 Markdown 信号而滞留的缓冲内容；
+            func emit(_ text: String) {
+                let released = repetitionGuard.process(text)
+                if !released.isEmpty {
+                    emitted += released
+                    onChunk(released)
+                }
+            }
+
+            // 冲刷 sanitizer 中因尚未出现 Markdown 信号而滞留的缓冲内容，
+            // 以及重复检测器为观察窗口而扣留的尾部；
             // 截断路径也必须先冲刷再判空，否则缓冲中的输出会被误判为"无内容"。
-            func flushSanitizerTail() {
-                let tail = sanitizer.flush()
-                if !tail.isEmpty {
-                    emitted += tail
-                    onChunk(tail)
+            func flushBuffers() {
+                emit(sanitizer.flush())
+                let held = repetitionGuard.flush()
+                if !held.isEmpty {
+                    emitted += held
+                    onChunk(held)
                 }
             }
 
@@ -333,12 +359,10 @@ final class NotesGenerator {
                 )
                 for try await chunk in stream {
                     let cleaned = sanitizer.process(chunk)
-                    if !cleaned.isEmpty {
-                        emitted += cleaned
-                        onChunk(cleaned)
-                    }
+                    if !cleaned.isEmpty { emit(cleaned) }
+                    if repetitionGuard.tripped { break }
                 }
-                flushSanitizerTail()
+                flushBuffers()
             } catch {
                 // Some OpenAI-compatible gateways reject a requested max_tokens
                 // value above the model's own ceiling. Retry once at the legacy
@@ -352,17 +376,25 @@ final class NotesGenerator {
                     continue
                 }
                 guard case LLMCompletionError.truncated = error else { throw error }
-                flushSanitizerTail()
+                flushBuffers()
                 guard !emitted.isEmpty else { throw error }
                 endedAtOutputCap = true
             }
 
-            guard endedAtOutputCap else { return }
+            Self.logger.info("notes round \(round) finished: +\(emitted.count - emittedCountBeforeRound) chars, cappedByOutputLimit=\(endedAtOutputCap), repetition=\(repetitionGuard.tripped), budget=\(outputBudget)")
+
+            if repetitionGuard.tripped {
+                Self.logger.warning("repetition loop trimmed: period=\(repetitionGuard.detectedPeriod ?? 0), unit=\(repetitionGuard.detectedUnit ?? "")")
+                return true
+            }
+
+            guard endedAtOutputCap else { return false }
 
             // A round that produced nothing new cannot make progress (e.g. a
             // reasoning model spending its whole budget on thinking), so stop
             // instead of replaying identical requests.
             if emitted.count == emittedCountBeforeRound || round >= Self.maxGenerationRounds {
+                Self.logger.error("notes generation still truncated after \(round) rounds; tail=\(String(emitted.suffix(200)))")
                 throw LLMCompletionError.truncated
             }
         }
@@ -762,6 +794,100 @@ final class NotesStreamSanitizer {
                 return lineStart
             }
             searchStart = lineStart
+        }
+        return nil
+    }
+}
+
+/// Detects a model stuck in a repetition loop (the same unit emitted over and
+/// over, e.g. blank table rows or one sentence) in a streamed answer.
+///
+/// Text is held back in a small window before being released, so that when a
+/// loop is recognised the repeated copies have not been shown yet and can be
+/// dropped (one copy of the unit is kept). After that the guard is `tripped`
+/// and swallows everything else.
+final class RepetitionGuard {
+    /// Characters held back for observation. Must exceed
+    /// `maxPeriod * longRepeatThreshold` so a loop is caught before any of its
+    /// copies are released.
+    static let holdback = 800
+    static let maxPeriod = 200
+    /// Short units (table rows, `---`) need many repeats to rule out legitimate
+    /// structure; long units (a paragraph) are suspicious after three.
+    static let shortUnitLimit = 20
+    static let shortRepeatThreshold = 6
+    static let longRepeatThreshold = 3
+    /// Total length of the periodic run required to call it a loop.
+    static let minRunLength = 60
+
+    private var pending: [Character] = []
+    private(set) var tripped = false
+    private(set) var detectedPeriod: Int?
+    private(set) var detectedUnit: String?
+
+    /// Returns the text that is safe to emit now (possibly empty).
+    func process(_ chunk: String) -> String {
+        guard !tripped else { return "" }
+        pending.append(contentsOf: chunk)
+
+        if let loop = Self.findLoop(in: pending) {
+            tripped = true
+            // The periodic run can begin mid-line (it may reuse the tail of the
+            // preceding line). Start the kept copy at a line boundary so the
+            // retained unit is a whole row/paragraph rather than a fragment.
+            var copyStart = loop.start
+            if let newline = pending[loop.start..<(loop.start + loop.period)].firstIndex(of: "\n") {
+                copyStart = newline + 1
+            }
+            let copyEnd = copyStart + loop.period
+            detectedPeriod = loop.period
+            detectedUnit = String(pending[copyStart..<copyEnd])
+            let output = String(pending[..<copyEnd])
+            pending = []
+            return output
+        }
+
+        let excess = pending.count - Self.holdback
+        guard excess > 0 else { return "" }
+        let output = String(pending[..<excess])
+        pending.removeFirst(excess)
+        return output
+    }
+
+    /// Releases whatever is still held back. Call when a round ends.
+    func flush() -> String {
+        let output = String(pending)
+        pending = []
+        return output
+    }
+
+    /// Finds the smallest period `p` such that the tail of `chars` consists of
+    /// a unit of length `p` repeated enough times. `start` is where the
+    /// periodic run begins.
+    static func findLoop(in chars: [Character]) -> (start: Int, period: Int)? {
+        let n = chars.count
+        guard n >= minRunLength else { return nil }
+
+        for p in 1...min(maxPeriod, n / longRepeatThreshold) {
+            let required = p >= shortUnitLimit ? longRepeatThreshold : shortRepeatThreshold
+            guard n >= p * required else { continue }
+
+            var matched = 0
+            var i = n - 1
+            while i - p >= 0 && chars[i] == chars[i - p] {
+                matched += 1
+                i -= 1
+            }
+
+            let runLength = matched + p
+            guard runLength / p >= required, runLength >= minRunLength else { continue }
+
+            // Pure punctuation / spacing units (`------`, `|---|---|`) are
+            // legitimate Markdown, not a loop.
+            let unit = chars[(n - p)..<n]
+            guard unit.contains(where: { $0 == "\n" || $0.isLetter || $0.isNumber }) else { continue }
+
+            return (n - runLength, p)
         }
         return nil
     }

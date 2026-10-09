@@ -128,6 +128,83 @@ final class NotesGenerationContinuationTests: XCTestCase {
             "总轮数不应超过 maxGenerationRounds"
         )
     }
+
+    // MARK: - Repetition loop
+
+    func testRepetitionLoopIsTrimmedAndStopsContinuation() async throws {
+        let loopRow = "|          |            |          |\n"
+        var chunks = ["# 需求文档\n\n## 待确认问题\n| 问题 | 负责人 | 截止时间 |\n|---|---|---|\n"]
+        chunks.append(contentsOf: Array(repeating: loopRow, count: 80))
+        let provider = ScriptedNotesProvider(rounds: [
+            .contentThenTruncated(chunks),
+            .finish(["不应被请求"])
+        ])
+        let generator = makeGenerator(provider)
+
+        var collected = ""
+        let trimmed = try await generator.streamAnswerWithContinuation(
+            config: Self.testConfig,
+            messages: Self.baseMessages,
+            sanitizer: NotesStreamSanitizer()
+        ) { chunk in
+            collected += chunk
+        }
+
+        XCTAssertTrue(trimmed, "应报告检测到重复输出")
+        XCTAssertTrue(collected.hasPrefix("# 需求文档"))
+        XCTAssertEqual(
+            collected.components(separatedBy: loopRow).count - 1,
+            1,
+            "重复行只应保留一份"
+        )
+        XCTAssertEqual(provider.recordedRequests.count, 1, "检测到重复后不应再发起续写")
+    }
+
+    func testRepetitionFromTheStartKeepsSingleUnit() async throws {
+        let provider = ScriptedNotesProvider(rounds: [
+            .contentThenTruncated(Array(repeating: "会议中未明确。", count: 60))
+        ])
+        let generator = makeGenerator(provider)
+
+        var collected = ""
+        let trimmed = try await generator.streamAnswerWithContinuation(
+            config: Self.testConfig,
+            messages: Self.baseMessages,
+            sanitizer: NotesStreamSanitizer()
+        ) { chunk in
+            collected += chunk
+        }
+
+        XCTAssertTrue(trimmed)
+        XCTAssertEqual(collected, "会议中未明确。")
+        XCTAssertEqual(provider.recordedRequests.count, 1)
+    }
+
+    func testRepetitionGuardIgnoresLegitimateMarkdown() {
+        let separator = String(repeating: "-", count: 80)
+        let tableRule = "|" + String(repeating: "---|", count: 12)
+        let prose = """
+        ## 决策
+        1. 采用方案 A。
+        2. 采用方案 B。
+        3. 采用方案 C。
+        - 负责人：张三，截止时间：周五。
+        - 负责人：李四，截止时间：周六。
+        """
+
+        for text in [separator, tableRule, prose] {
+            XCTAssertNil(RepetitionGuard.findLoop(in: Array(text)), "不应误判：\(text.prefix(20))")
+        }
+    }
+
+    func testRepetitionGuardDetectsRepeatedParagraphAndBlankRows() {
+        let paragraph = "本次会议确认了发布时间与负责人，其余事项会后另行同步。\n"
+        let paragraphLoop = "# 纪要\n" + String(repeating: paragraph, count: 4)
+        let blankRows = "| a | b |\n|---|---|\n" + String(repeating: "|    |    |\n", count: 10)
+
+        XCTAssertNotNil(RepetitionGuard.findLoop(in: Array(paragraphLoop)))
+        XCTAssertNotNil(RepetitionGuard.findLoop(in: Array(blankRows)))
+    }
 }
 
 private enum ScriptedRound {
