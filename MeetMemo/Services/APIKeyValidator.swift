@@ -13,12 +13,13 @@ final class APIKeyValidator {
         )
     }
 
-    func currentLLMConfig() -> LLMProviderConfig {
+    func currentLLMConfig(sessionID: String? = nil) -> LLMProviderConfig {
         let providerConfig = KeychainHelper.shared.getProviderConfig() ?? Settings()
         return LLMProviderConfig(
             apiKey: providerConfig.llmApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
             baseURL: providerConfig.llmBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
-            model: providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines)
+            model: providerConfig.llmModel.trimmingCharacters(in: .whitespacesAndNewlines),
+            sessionID: sessionID
         )
     }
 

@@ -81,7 +81,7 @@ final class NotesGenerator {
     ) -> AsyncStream<GenerationResult> {
         AsyncStream<GenerationResult> { continuation in
             let generationTask = Task {
-                let config = APIKeyValidator.shared.currentLLMConfig()
+                let config = APIKeyValidator.shared.currentLLMConfig(sessionID: meeting.id.uuidString)
                 let validationResult = await APIKeyValidator.shared.validateLLMConfig(config)
                 switch validationResult {
                 case .failure(let error):
@@ -568,7 +568,7 @@ final class NotesGenerator {
     /// falling back to the transcript before notes exist.
     /// Returns nil if the title cannot be generated (e.g. empty source content or provider not configured).
     func generateTitle(meeting: Meeting) async -> String? {
-        let config = APIKeyValidator.shared.currentLLMConfig()
+        let config = APIKeyValidator.shared.currentLLMConfig(sessionID: meeting.id.uuidString)
         guard config.isConfigured else { return nil }
 
         let generatedNotes = meeting.generatedNotes.trimmingCharacters(in: .whitespacesAndNewlines)

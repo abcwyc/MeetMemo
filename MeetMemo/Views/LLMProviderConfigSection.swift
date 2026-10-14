@@ -119,12 +119,16 @@ struct LLMProviderConfigSection: View {
         if let current = activePreset {
             rememberAPIKey(for: current)
         }
+        let isExistingGoConfig = preset.id == "opencode-go"
+            && LLMPresetProviders.provider(matchingBaseURL: settings.llmBaseURL)?.id == preset.id
+        let existingAPIKey = settings.llmApiKey
         settings.llmPresetID = preset.id
         settings.llmBaseURL = preset.baseURL
-        if settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if settings.llmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (preset.id == "opencode-go" && !isExistingGoConfig && !preset.recommendedModels.contains(settings.llmModel)) {
             settings.llmModel = preset.defaultModel
         }
-        settings.llmApiKey = apiKeysByPreset[preset.id] ?? ""
+        settings.llmApiKey = apiKeysByPreset[preset.id] ?? (isExistingGoConfig ? existingAPIKey : "")
         isManualModelEntry = false
     }
 

@@ -121,6 +121,10 @@ Kimi 官方:               https://api.moonshot.cn/v1
 
 填写后可以点击「测试连接」确认配置是否可用。
 
+使用 OpenCode Go 时，可直接选择「OpenCode Go」供应商预设，填写 Go API Key 并从下拉菜单选择模型。预设自动填写 `https://opencode.ai/zen/go/v1`，默认模型为 `kimi-k3`，也提供 `glm-5.2`、`kimi-k2.7-code` 和 `mimo-v2.5`。这些模型使用 Chat Completions 接口；其他协议的模型需要对应的客户端支持。
+
+MeetMemo 会自动发送实际应用版本的 `User-Agent` 和 Go 要求的 `x-opencode-session`，同一场会议的纪要、标题和结构化提取共享会话 ID。Go 的适用场景与使用限制请参阅 [官方说明](https://opencode.ai/docs/go/#where-can-i-use-it)。
+
 ### 5. 创建会议并录制
 
 1. 点击侧边栏「创建会议」。

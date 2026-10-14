@@ -32,7 +32,7 @@ final class FollowUpTaskExtractor {
             throw FollowUpTaskExtractionError.missingNotes
         }
 
-        let config = APIKeyValidator.shared.currentLLMConfig()
+        let config = APIKeyValidator.shared.currentLLMConfig(sessionID: meeting.id.uuidString)
         guard config.isConfigured else {
             throw FollowUpTaskExtractionError.llmNotConfigured
         }

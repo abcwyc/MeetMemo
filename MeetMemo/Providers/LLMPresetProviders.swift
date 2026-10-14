@@ -47,6 +47,16 @@ enum LLMPresetProviders {
             badgeColor: Color(red: 0.30, green: 0.42, blue: 1.00)
         ),
         LLMPresetProvider(
+            id: "opencode-go",
+            nameZh: "OpenCode Go",
+            nameEn: "OpenCode Go",
+            baseURL: "https://opencode.ai/zen/go/v1",
+            recommendedModels: ["kimi-k3", "glm-5.2", "kimi-k2.7-code", "mimo-v2.5"],
+            apiKeyURL: "https://opencode.ai/console",
+            badgeText: "GO",
+            badgeColor: Color(red: 0.18, green: 0.23, blue: 0.30)
+        ),
+        LLMPresetProvider(
             id: "moonshot",
             nameZh: "Kimi",
             nameEn: "Kimi",

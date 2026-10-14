@@ -57,7 +57,7 @@ final class MeetingStructuredExtractor {
             throw StructuredExtractionError.missingNotes
         }
 
-        let config = APIKeyValidator.shared.currentLLMConfig()
+        let config = APIKeyValidator.shared.currentLLMConfig(sessionID: meeting.id.uuidString)
         guard config.isConfigured else {
             throw StructuredExtractionError.llmNotConfigured
         }

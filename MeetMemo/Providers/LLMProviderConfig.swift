@@ -4,6 +4,20 @@ struct LLMProviderConfig: Codable, Hashable {
     var apiKey: String
     var baseURL: String = ""
     var model: String
+    /// Runtime routing metadata, shared by all requests for one meeting.
+    var sessionID: String? = nil
+
+    private static let utilitySessionID = UUID().uuidString
+
+    func applyGoRoutingHeaders(to request: inout URLRequest) {
+        guard let url = request.url,
+              url.host?.lowercased() == "opencode.ai",
+              url.path.hasPrefix("/zen/go/") else { return }
+
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "development"
+        request.setValue("MeetMemo/\(version)", forHTTPHeaderField: "User-Agent")
+        request.setValue(sessionID ?? Self.utilitySessionID, forHTTPHeaderField: "x-opencode-session")
+    }
 
     var isConfigured: Bool {
         !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&

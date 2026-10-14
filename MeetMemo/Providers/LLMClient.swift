@@ -114,6 +114,7 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
                 do {
                     let url = try buildRequestURL(config: config)
                     var request = URLRequest(url: url)
+                    config.applyGoRoutingHeaders(to: &request)
                     request.httpMethod = "POST"
                     request.timeoutInterval = 60
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -216,6 +217,7 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
     ) async throws -> LLMCompletionResponse {
         let url = try buildRequestURL(config: config)
         var urlRequest = URLRequest(url: url)
+        config.applyGoRoutingHeaders(to: &urlRequest)
         urlRequest.httpMethod = "POST"
         // Non-streaming: no bytes arrive until the whole JSON is generated, so
         // this idle timeout must cover the full generation time.
@@ -325,6 +327,7 @@ private final class AnthropicMessagesLLMProvider: LLMProvider {
     func testConnection(config: LLMProviderConfig) async throws {
         let url = try buildRequestURL(config: config)
         var request = URLRequest(url: url)
+        config.applyGoRoutingHeaders(to: &request)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -465,6 +468,7 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
                 do {
                     let url = try buildRequestURL(config: config)
                     var request = URLRequest(url: url)
+                    config.applyGoRoutingHeaders(to: &request)
                     request.httpMethod = "POST"
                     request.timeoutInterval = 60
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -533,6 +537,7 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
     func testConnection(config: LLMProviderConfig) async throws {
         let url = try buildRequestURL(config: config)
         var request = URLRequest(url: url)
+        config.applyGoRoutingHeaders(to: &request)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -627,6 +632,7 @@ private final class OpenAICompatibleLLMProvider: LLMProvider {
     ) async throws -> LLMCompletionResponse {
         let url = try buildRequestURL(config: config)
         var urlRequest = URLRequest(url: url)
+        config.applyGoRoutingHeaders(to: &urlRequest)
         urlRequest.httpMethod = "POST"
         // Non-streaming: no bytes arrive until the whole JSON is generated, so
         // this idle timeout must cover the full generation time.
